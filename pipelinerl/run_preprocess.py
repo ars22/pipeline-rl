@@ -16,6 +16,7 @@ from functools import partial
 from pathlib import Path
 from queue import Empty, Queue
 from typing import List
+import random
 
 import transformers
 from datasets.arrow_dataset import Dataset
@@ -330,6 +331,7 @@ def run_preprocessing_loop(
     stats_aggregator = SlidingWindowAggregator(window_size=500 // cfg.preprocess.chunk_size)
 
     last_submit = 0
+    datasets = []
     with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
         with mp.Manager() as manager:
             dataset_queue = manager.Queue()
@@ -374,8 +376,15 @@ def run_preprocessing_loop(
                         if isinstance(dataset, Exception):
                             raise dataset
                         start_writing = time.time()
-                        for entry in dataset:
+                        datasets += dataset
+
+                        if len(datasets) < cfg.preprocess.min_dataset_size:
+                            continue
+
+                        random.shuffle(datasets)
+                        for entry in datasets:
                             writer.write(entry)
+                        datasets = []
                         writing_took = time.time() - start_writing
                         stats_aggregator.update([len(entry["input_ids"]) for entry in dataset])
                         processed_chunks += 1
