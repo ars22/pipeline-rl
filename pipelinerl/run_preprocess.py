@@ -387,11 +387,10 @@ def run_preprocessing_loop(
                         logger.info(f"Got {len(datasets)} samples to write")
                         for entry in datasets:
                             writer.write(entry)
-                        datasets = []
                         writing_took = time.time() - start_writing
-                        stats_aggregator.update([len(entry["input_ids"]) for entry in dataset])
-                        published_samples += len(dataset)
-                        max_model_version = max(dataset["model_version"])
+                        stats_aggregator.update([len(entry["input_ids"]) for entry in datasets])
+                        published_samples += len(datasets)
+                        max_model_version = max(datasets["model_version"])
                         samples_in_queue = dataset_queue.qsize() * cfg.preprocess.chunk_size                        
                         stats = {
                             "preprocessor/published_samples": published_samples,
@@ -404,8 +403,9 @@ def run_preprocessing_loop(
                         stats_writer.write(stats)
                         processing_took = time.time() - start_processing
                         logger.info(
-                            f"Processed {len(dataset)} samples in {processing_took:.3f}s (writing took {writing_took}) and wrote to {output_stream}, total {published_samples} samples so far, {samples_in_queue} samples in queue"
+                            f"Processed {len(datasets)} samples in {processing_took:.3f}s (writing took {writing_took}) and wrote to {output_stream}, total {published_samples} samples so far, {samples_in_queue} samples in queue"
                         )
+                        datasets = []
                     except Exception as e:
                         logger.error(f"Error in preprocessor worker: {e}")
                         raise   
