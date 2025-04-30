@@ -378,10 +378,11 @@ def run_preprocessing_loop(
                         start_writing = time.time()
                         datasets += dataset
 
-                        if len(datasets) < cfg.finetune.weight_update_interval:
+                        if len(datasets) < cfg.preprocess.min_dataset_size:
                             continue
 
                         random.shuffle(datasets)
+                        logger.debug(f"Got {len(datasets)} samples to write")
                         for entry in datasets:
                             writer.write(entry)
                         datasets = []
