@@ -378,7 +378,7 @@ def run_preprocessing_loop(
                         start_writing = time.time()
                         datasets += dataset
 
-                        if len(datasets) < cfg.preprocess.min_dataset_size:
+                        if len(datasets) < cfg.finetune.weight_update_interval:
                             continue
 
                         random.shuffle(datasets)
