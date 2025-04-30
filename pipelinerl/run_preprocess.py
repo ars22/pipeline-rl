@@ -377,6 +377,7 @@ def run_preprocessing_loop(
                             raise dataset
                         start_writing = time.time()
                         datasets += dataset
+                        processed_chunks += 1
 
                         logger.info(f"Len datasets {len(datasets)}, min dataset size {cfg.preprocess.min_dataset_size}")
                         if len(datasets) < cfg.preprocess.min_dataset_size:
@@ -389,7 +390,6 @@ def run_preprocessing_loop(
                         datasets = []
                         writing_took = time.time() - start_writing
                         stats_aggregator.update([len(entry["input_ids"]) for entry in dataset])
-                        processed_chunks += 1
                         published_samples += len(dataset)
                         max_model_version = max(dataset["model_version"])
                         samples_in_queue = dataset_queue.qsize() * cfg.preprocess.chunk_size                        
