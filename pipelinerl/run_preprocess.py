@@ -390,7 +390,7 @@ def run_preprocessing_loop(
                         writing_took = time.time() - start_writing
                         stats_aggregator.update([len(entry["input_ids"]) for entry in datasets])
                         published_samples += len(datasets)
-                        max_model_version = max(datasets["model_version"])
+                        max_model_version = max([dataset["model_version"] for dataset in datasets])
                         samples_in_queue = dataset_queue.qsize() * cfg.preprocess.chunk_size                        
                         stats = {
                             "preprocessor/published_samples": published_samples,
