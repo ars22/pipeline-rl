@@ -196,16 +196,10 @@ def rl_step(
     ratio_new_old = torch.exp(log_ratio_new_old)
     log_ratio_ref_new = ref_logprobs - new_logprobs
     assert torch.isfinite(log_ratio_ref_new).all(), f"log_ratio_ref_new is not finite: {log_ratio_ref_new}"
-
     # compute weights and KL divergence
     log_p_weights = advantages if config.use_advantages else rewards
     if config.relu_log_p_weights:
         log_p_weights = torch.clamp(log_p_weights, min=0)
-
-    # Create mask for non-zero advantages (using a small epsilon)
-    non_zero_advantage_mask = torch.abs(advantages) > 1e-6
-    # Combine with the original mask (labels != -100)
-    combined_mask = masks_shifted & non_zero_advantage_mask
 
     clamp_log_ratio_ref_new_indicators = torch.abs(log_ratio_ref_new) > config.clamp_log_ratio_ref_new_value
 
@@ -244,52 +238,45 @@ def rl_step(
     loss = loss * examples_weights  # 1 x (BxL) x 1
 
     if config.aggregate_loss == "mean":
-        # Use combined_mask for aggregation
-        final_loss = -mean_sum(loss, combined_mask, segments)
+        final_loss = -mean_sum(loss, masks_shifted, segments)
     elif config.aggregate_loss == "sum":
-        # Use combined_mask for aggregation
-        final_loss = -sum_sum(loss, combined_mask, segments)
+        final_loss = -sum_sum(loss, masks_shifted, segments)
     else:
         raise ValueError(f"{config.aggregate_loss} is not defined")
 
     # ensure loss is valid
     assert torch.isfinite(final_loss), f"Non-finite loss detected: {final_loss}"
 
-    # Track the number of tokens masked due to zero advantage
-    num_zero_advantage_tokens = sum_sum(~non_zero_advantage_mask, masks_shifted, segments).item()
-
     # All the stats are average then summed. They will be normalized by the number of sequences at the end of the step
-    # Use combined_mask for relevant statistics aggregation
     stats = {
         "loss": final_loss.item(),
-        "max_loss": final_loss.item(), # This might not be meaningful anymore if loss components are masked
-        "min_loss": final_loss.item(), # This might not be meaningful anymore if loss components are masked
-        "reward": mean_sum(rewards, masks_shifted, segments).item(), # Keep original mask for reward stats
+        "max_loss": final_loss.item(),
+        "min_loss": final_loss.item(),
+        "reward": mean_sum(rewards, masks_shifted, segments).item(),
         "max_reward": rewards[masks_shifted].max().item(),
         "min_reward": rewards[masks_shifted].min().item(),
-        "entropy": mean_sum(entropy, combined_mask, segments).item(),
-        "old_logprobs": mean_sum(old_logprobs, combined_mask, segments).item(),
-        "new_logprobs": mean_sum(new_logprobs, combined_mask, segments).item(),
-        "ref_logprobs": mean_sum(ref_logprobs, combined_mask, segments).item(),
-        "advantage": mean_sum(advantages, combined_mask, segments).item(),
-        "max_advantage": advantages[combined_mask].max().item() if combined_mask.any() else 0.0, # Use combined mask for filtering
-        "min_advantage": advantages[combined_mask].min().item() if combined_mask.any() else 0.0, # Use combined mask for filtering
-        "kl": mean_sum(approx_kl, combined_mask, segments).item(),
-        "max_kl": approx_kl[combined_mask].max().item() if combined_mask.any() else 0.0, # Use combined mask for filtering
-        "min_kl": approx_kl[combined_mask].min().item() if combined_mask.any() else 0.0, # Use combined mask for filtering
-        "policy_loss": mean_sum(policy_loss, combined_mask, segments).item(),
-        "surr1": mean_sum(surr1, combined_mask, segments).item(),
-        "surr2": mean_sum(surr2, combined_mask, segments).item(),
-        "ratio_new_old": mean_sum(ratio_new_old, combined_mask, segments).item(),
-        "ratio_ref_new": mean_sum(torch.exp(log_ratio_ref_new), combined_mask, segments).item(),
-        "ratio_ref_old": mean_sum(torch.exp(ref_logprobs - old_logprobs), combined_mask, segments).item(),
-        "clamp_log_ratio_ref_new_indicator": mean_sum(clamp_log_ratio_ref_new_indicators, combined_mask, segments).item(),
-        "clamp_log_ratio_new_old_indicator": mean_sum(clamp_log_ratio_new_old_indicators, combined_mask, segments).item(),
+        "entropy": mean_sum(entropy, masks_shifted, segments).item(),
+        "old_logprobs": mean_sum(old_logprobs, masks_shifted, segments).item(),
+        "new_logprobs": mean_sum(new_logprobs, masks_shifted, segments).item(),
+        "ref_logprobs": mean_sum(ref_logprobs, masks_shifted, segments).item(),
+        "advantage": mean_sum(advantages, masks_shifted, segments).item(),
+        "max_advantage": advantages[masks_shifted].max().item(),
+        "min_advantage": advantages[masks_shifted].min().item(),
+        "kl": mean_sum(approx_kl, masks_shifted, segments).item(),
+        "max_kl": approx_kl[masks_shifted].max().item(),
+        "min_kl": approx_kl[masks_shifted].min().item(),
+        "policy_loss": mean_sum(policy_loss, masks_shifted, segments).item(),
+        "surr1": mean_sum(surr1, masks_shifted, segments).item(),
+        "surr2": mean_sum(surr2, masks_shifted, segments).item(),
+        "ratio_new_old": mean_sum(ratio_new_old, masks_shifted, segments).item(),
+        "ratio_ref_new": mean_sum(torch.exp(log_ratio_ref_new), masks_shifted, segments).item(),
+        "ratio_ref_old": mean_sum(torch.exp(ref_logprobs - old_logprobs), masks_shifted, segments).item(),
+        "clamp_log_ratio_ref_new_indicator": mean_sum(clamp_log_ratio_ref_new_indicators, masks_shifted, segments).item(),
+        "clamp_log_ratio_new_old_indicator": mean_sum(clamp_log_ratio_new_old_indicators, masks_shifted, segments).item(),
         "num_nans": torch.isnan(loss).sum().item(),
-        "example_weight": mean_sum(examples_weights, combined_mask, segments).item(),
+        "example_weight": mean_sum(examples_weights, masks_shifted, segments).item(),
         "kl_coef": num_sequences * kl_coef,
         "entropy_bonus_coef": num_sequences * entropy_bonus_coef,
-        "num_zero_advantage_tokens": num_zero_advantage_tokens, # Add new stat
     }
 
     return final_loss, stats
