@@ -638,6 +638,7 @@ def rl_finetuning_worker(
     lag_stats = {}
 
     time_waiting_for_data = 0.0
+    time_waiting_for_data_in_optim_step = 0.0
 
     samples_per_worker_per_step = args.gradient_accumulation_passes * args.train_batch_size
     samples_per_step = samples_per_worker_per_step * get_accelerator().state.num_processes
@@ -671,6 +672,8 @@ def rl_finetuning_worker(
             versioned_batch = next(data_generator)
             is_sentinel_batch = False
 
+        time_waiting_for_data_in_optim_step += time.time() - before_getting_next_batch
+        #TODO: deprecate time_waiting_for_data?
         time_waiting_for_data += time.time() - before_getting_next_batch
         # check if too old, don't drop but count
         if (
@@ -817,6 +820,7 @@ def rl_finetuning_worker(
                     "stats/max_actor_version": lag_stats["max_version"],
                     "stats/queue_size": sample_queue.qsize(),
                     "stats/time_waiting_for_data": time_waiting_for_data,
+                    "stats/time_waiting_for_data_in_optim_step": time_waiting_for_data_in_optim_step,
                     "stats/lag": training_metrics.last_broadcasted_version - lag_stats["min_version"],
                     "throughput/tokens_perGPU_per_sec": this_worker_tokens / sum(passes_took) if passes_took else 0,
                     "throughput/tokens_per_step": this_worker_tokens * get_accelerator().state.num_processes,
@@ -858,6 +862,7 @@ def rl_finetuning_worker(
             tokens_processed = []
             passes_took = []
             micro_batches_size = []
+            time_waiting_for_data_in_optim_step = 0 
 
         if len(metrics_dict):
             log_metrics(logger, training_metrics.completed_steps, metrics_dict)
