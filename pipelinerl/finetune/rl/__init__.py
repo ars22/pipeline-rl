@@ -315,6 +315,9 @@ def rl_step(
         "surr1": mean_sum(surr1, masks_shifted, segments).item(),
         "surr2": mean_sum(surr2, masks_shifted, segments).item(),
         "ratio_new_old": mean_sum(ratio_new_old, masks_shifted, segments).item(),
+        "ratio_new_old_squared": mean_sum( # useful to estimate the ESS
+            ratio_new_old * ratio_new_old, masks_shifted, segments
+        ).item(),
         "ratio_ref_new": mean_sum(
             torch.exp(log_ratio_ref_new), masks_shifted, segments
         ).item(),
