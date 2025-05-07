@@ -22,7 +22,6 @@ class RewardTable(BaseModel):
 
 
 class RolloutResult(BaseModel):
-    llm_calls: list[LLMCall]
     training_texts: list[TrainingText]
     metrics: dict[str, float]
     latency: float
@@ -139,7 +138,6 @@ async def generate_math_rollout(
         discount_factor=cfg.discount_factor
     )
     return RolloutResult(
-        llm_calls=[llm_call],
         training_texts=[sample],
         metrics=metrics,
         latency=latency,

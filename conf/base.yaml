@@ -46,7 +46,7 @@ verifier:
 preprocess:
   input: actor
   output: training_data
-  threads_per_llm: 4
+  n_workers: 8
   queue_size: 32
   chunk_size: 16
   submit_delay: 0.

@@ -1,10 +1,15 @@
+import os
+os.environ["HF_DATASETS_DISABLE_PROGRESS_BARS"] = "1"
+
 import multiprocessing as mp
+from multiprocessing.managers import SharedMemoryManager
 from concurrent.futures import ProcessPoolExecutor
 import logging
 import queue
 import time
 
 from litellm import BaseModel, Field
+import pickle
     
 from pipelinerl.utils import wait_for_inference_servers
 from pipelinerl.world import WorldMap
@@ -38,7 +43,6 @@ from pipelinerl.streams import (
 )
 
 logger = logging.getLogger(__name__)
-TOKEN_IDS = None
 
 
 def _check_group_sizes(texts: list[dict], group_size: int) -> bool:
@@ -246,13 +250,15 @@ class SlidingWindowAggregator:
 
 def process_chunk(
     llm: TrainableLLM,
-    chunk: list[dict],
+    io_buffer,
+    slot: int,
     tokenizer: transformers.PreTrainedTokenizerBase,
     seq_length: int,
     rl_config: RLConfig,
-    dataset_queue: queue.Queue,
+    dataset_queue: Queue,
 ):
     try:
+        chunk = pickle.loads(io_buffer[slot])
         dataset = preprocess_dataset(
             llm=llm,
             data=chunk,
@@ -260,15 +266,12 @@ def process_chunk(
             seq_length=seq_length,
             rl_config=rl_config,
         )
-        try:
-            dataset_queue.put_nowait(dataset)
-        except queue.Full:
-            logger.warning(f"We are preprocessing the data faster than we can write it to the filesystem")
-            dataset_queue.put(dataset)
+        io_buffer[slot] = pickle.dumps([entry for entry in dataset])
+        dataset_queue.put(slot)
     except Exception as e:
         logger.error(f"Failed to preprocess chunk: {e}")
-        dataset_queue.put(e)
-
+        io_buffer[slot] = pickle.dumps(e)
+        dataset_queue.put(slot)
 
 
 def run_preprocessing_loop(
@@ -276,7 +279,7 @@ def run_preprocessing_loop(
 ):
     set_streams_backend(**cfg.streams)
 
-    world_map = WorldMap(cfg)
+    world_map = WorldMap(cfg, verbose=True)
     exp_root_dir = Path(cfg.output_dir)
 
     run = init_wandb(cfg, exp_root_dir / "preprocessor", flatten_dict_config(cfg))
@@ -293,7 +296,7 @@ def run_preprocessing_loop(
     output_stream = StreamRangeSpec(
         exp_path=exp_root_dir,
         topic=cfg.preprocess.output,
-        partition_range=(0, world_map.total_finetune_gpus),
+        partition_range=(0, max(world_map.total_finetune_gpus, 1)),
     )
     stats_streams = SingleStreamSpec(exp_path=exp_root_dir, topic="preprocessor_stats")
     logger.info(f"Streams initialized")
@@ -325,7 +328,7 @@ def run_preprocessing_loop(
 
     submitted_chunks = 0
     processed_chunks = 0
-    worker_pool_size = cfg.preprocess.threads_per_llm * max(len(llms), 1)
+    worker_pool_size = cfg.preprocess.n_workers
     next_llm_index = 0
 
     stats_aggregator = SlidingWindowAggregator(window_size=500 // cfg.preprocess.chunk_size)
@@ -333,24 +336,32 @@ def run_preprocessing_loop(
     last_submit = 0
     datasets = []
     with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
-        with mp.Manager() as manager:
-            dataset_queue = manager.Queue()
+        with mp.Manager() as manager, SharedMemoryManager() as smm:
+            max_dataset_queue_size = 128
+            max_pool_tasks = 2 * worker_pool_size
+            buffer_size = 2 * max_pool_tasks + max_dataset_queue_size
+            entry_size = 9999900
+            dummy = entry_size * b" " 
+            dataset_queue = manager.Queue(max_dataset_queue_size)
+            io_buffer = smm.ShareableList([dummy] * buffer_size)
+            free_slots = set(range(buffer_size))
+
+            logger.info(f"Shared memory buffer size: {buffer_size * entry_size / 2 ** 30} Gb")
             logger.info(f"Start {worker_pool_size} workers for preprocessing")
             with ProcessPoolExecutor(max_workers=worker_pool_size) as executor:
                 while True:
                     try:
                         llm = llms[next_llm_index] if llms else None
-
-                        now = time.time()
-                        waited_enough = not llms or now - last_submit > cfg.preprocess.submit_delay / len(llms)
-                        if waited_enough and submitted_chunks - processed_chunks < worker_pool_size:
+                        if submitted_chunks - processed_chunks < max_pool_tasks:
                             try:
-                                raw_chunk = raw_chunk_queue.get(timeout=0.01)
+                                raw_chunk = raw_chunk_queue.get(timeout=0.001)
                                 if isinstance(raw_chunk, Exception):
                                     raise raw_chunk
+                                slot = free_slots.pop()
+                                io_buffer[slot] = pickle.dumps(raw_chunk)
                                 future = executor.submit(
                                     process_chunk, 
-                                    llm, raw_chunk, tokenizer,
+                                    llm, io_buffer, slot, tokenizer,
                                     cfg.finetune.seq_length, rl_config, dataset_queue
                                 )
                                 future.add_done_callback(
@@ -362,17 +373,19 @@ def run_preprocessing_loop(
                                     else None
                                 )
                                 submitted_chunks += 1
-                                last_submit = now
                                 next_llm_index = (next_llm_index + 1) % len(llms) if llms else 0
                             except Empty:
                                 pass
 
+                        start_processing = time.time()
                         try:
                             # Try to write the next dataset to the output stream, if it is ready
-                            dataset = dataset_queue.get(timeout=0.01)
+                            slot = dataset_queue.get(timeout=0.001)
+                            dataset = pickle.loads(io_buffer[slot])
+                            free_slots.add(slot)
+                            fetching_took = time.time() - start_processing                            
                         except Empty:
                             continue
-                        start_processing = time.time()
                         if isinstance(dataset, Exception):
                             raise dataset
                         start_writing = time.time()
@@ -403,7 +416,7 @@ def run_preprocessing_loop(
                         stats_writer.write(stats)
                         processing_took = time.time() - start_processing
                         logger.info(
-                            f"Processed {len(datasets)} samples in {processing_took:.3f}s (writing took {writing_took}) and wrote to {output_stream}, total {published_samples} samples so far, {samples_in_queue} samples in queue"
+                            f"Processed {len(dataset)} samples in {processing_took:.3f}s (fetching_took {fetching_took:.3f}, writing took {writing_took:.3f}) and wrote to {output_stream}, total {published_samples} samples so far, {samples_in_queue} samples in queue"
                         )
                         datasets = []
                     except Exception as e:

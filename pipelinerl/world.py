@@ -47,7 +47,8 @@ class WorldMap:
         self.gpus_per_llm = tp * pp
         self.node_size = 8 if self.world_size > 1 else torch.cuda.device_count()
 
-        if not cfg.debug.mode == "finetune" or cfg.debug.place_inference_workers:
+        place_inference_jobs = not cfg.debug.mode or cfg.debug.place_inference_workers
+        if place_inference_jobs:
             self._split_gpus_by_purpose(cfg)
         else:
             self.total_finetune_gpus = self.node_size * self.world_size
@@ -58,7 +59,7 @@ class WorldMap:
         self.available_gpus: dict[int, set] = {i: set(range(self.node_size)) for i in reversed(range(self.world_size))}
         self.job_map = {i: [] for i in range(self.world_size)}
 
-        if not cfg.debug.mode == "finetune" or cfg.debug.place_inference_workers:
+        if place_inference_jobs:
             self._place_inference_jobs(cfg)
 
         # Place the finetune workers on the remaining gpus, take all remaining GPUs
