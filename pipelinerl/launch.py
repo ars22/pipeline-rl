@@ -429,7 +429,7 @@ def main(cfg: DictConfig):
     config_dir = exp_dir / "conf"
 
     os.makedirs(exp_dir / "launcher", exist_ok=True)
-    log_file = exp_dir / "launcher" / f"launcher_{os.environ.get("RANK", 0)}.log"
+    log_file = exp_dir / "launcher" / f"launcher_{os.environ.get('RANK', 0)}.log"
     setup_logging(log_file)
     world_map = WorldMap(cfg, verbose=True)
 
