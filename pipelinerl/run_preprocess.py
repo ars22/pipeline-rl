@@ -333,7 +333,6 @@ def run_preprocessing_loop(
 
     stats_aggregator = SlidingWindowAggregator(window_size=500 // cfg.preprocess.chunk_size)
 
-    last_submit = 0
     datasets = []
     with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
         with mp.Manager() as manager, SharedMemoryManager() as smm:
