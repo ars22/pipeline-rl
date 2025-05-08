@@ -334,6 +334,7 @@ def rl_step(
         "token_weight": mean_sum(tokens_weights, masks_shifted, segments).item(),
         "kl_coef": num_sequences * kl_coef,
         "entropy_bonus_coef": num_sequences * entropy_bonus_coef,
+        "num_output_tokens": masks_shifted.sum().item(),
     }
 
     return final_loss, stats
