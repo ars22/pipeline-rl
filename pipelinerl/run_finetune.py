@@ -92,13 +92,16 @@ def gather_rl_metrics(rl_metrics: Dict[str, List]) -> Dict[str, List]:
 
 def run_sample_loader(data_stream: SingleStreamSpec, sample_queue: Queue[Dict | Exception], pop_old_data: bool = False):
     with read_stream(data_stream) as stream_reader:
+        pop_count = 0  # Counter for popped items
         while True:
             try:
                 for data_item in stream_reader.read():
                     if pop_old_data:
                         if sample_queue.full():
-                            logger.info(f"Sample queue is full, popping old data")
-                            sample_queue.get()
+                            sample_queue.get()  # Pop old data
+                            pop_count += 1
+                            if pop_count % 100 == 0:
+                                logger.info(f"Popped {pop_count} old items from the sample queue")
                         sample_queue.put_nowait(data_item)
                     else:
                         sample_queue.put(data_item)

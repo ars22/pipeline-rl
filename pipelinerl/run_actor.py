@@ -302,7 +302,7 @@ class ActorLoop:
         self.smm.start()
 
         # for 8 attempts and ~10K max tokens the max entry size is ~310000 bytes
-        entry_size = 100 * ((9999900 // attempts) // 100)
+        entry_size = 9999900
         # we can have a pending almost ready group for each last rollout in progress ...
         self.max_groups_in_progress = cfg.actor.llm_max_rollouts * len(self.llms)
         max_ready_groups_waiting = 128
