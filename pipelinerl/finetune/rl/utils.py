@@ -13,6 +13,8 @@ def get_avg_rl_stats(rl_stats: dict, num_samples: int):
             op = torch.max
         elif k == "loss": # loss is already normalized
             op = torch.sum
+        elif "sum" in k:
+            op = torch.sum
         else:
             op = lambda x: torch.sum(x) / num_samples
         avg_rl_stats["rl/" + k] = op(torch.Tensor(v)).item()
