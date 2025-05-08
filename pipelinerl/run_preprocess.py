@@ -391,8 +391,9 @@ def run_preprocessing_loop(
                         datasets += dataset
                         processed_chunks += 1
 
-                        logger.info(f"Len datasets {len(datasets)}, min dataset size {cfg.preprocess.min_dataset_size}")
-                        if len(datasets) < cfg.preprocess.min_dataset_size:
+                        min_dataset_size = cfg.preprocess.get("min_dataset_size", 1)
+                        logger.info(f"Len datasets {len(datasets)}, min dataset size {min_dataset_size}")
+                        if len(datasets) < min_dataset_size:
                             continue
 
                         random.shuffle(datasets)
