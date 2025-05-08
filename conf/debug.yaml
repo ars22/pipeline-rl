@@ -1,0 +1,14 @@
+defaults:
+  - base
+  - _self_
+
+finetune:
+  seq_length: 4000
+ 
+model_path: Qwen/Qwen2.5-0.5B
+
+output_dir: results/debug1
+
+vllm_config:
+  vllm_kwargs:
+    enforce_eager: ""
