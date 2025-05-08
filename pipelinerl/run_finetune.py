@@ -853,11 +853,11 @@ def rl_finetuning_worker(
             time_waiting_for_data = 0.0
 
             average_rl_metrics = get_avg_rl_stats(gathered_rl_metrics, samples_per_step)
-            ess = average_rl_metrics["ratio_new_old_sum"] ** 2 / average_rl_metrics["ratio_new_old_squared_sum"] / average_rl_metrics["num_output_tokens_sum"]
+            ess = average_rl_metrics["rl/ratio_new_old_sum"] ** 2 / average_rl_metrics["rl/ratio_new_old_squared_sum"] / average_rl_metrics["rl/num_output_tokens_sum"]
             metrics_dict.update(average_rl_metrics)
             metrics_dict.update(
                 {
-                    "stats/ess": ess,
+                    "rl/ess": ess,
                 }
             )
 
