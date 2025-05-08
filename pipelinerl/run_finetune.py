@@ -852,8 +852,9 @@ def rl_finetuning_worker(
             gathered_rl_metrics = gather_rl_metrics(rl_metrics)
             time_waiting_for_data = 0.0
 
-            ess = gathered_rl_metrics["ratio_new_old_sum"] ** 2 / gathered_rl_metrics["ratio_new_old_squared_sum"] / gathered_rl_metrics["num_output_tokens_sum"]
-            metrics_dict.update(get_avg_rl_stats(gathered_rl_metrics, samples_per_step))
+            average_rl_metrics = get_avg_rl_stats(gathered_rl_metrics, samples_per_step)
+            ess = average_rl_metrics["ratio_new_old_sum"] ** 2 / average_rl_metrics["ratio_new_old_squared_sum"] / average_rl_metrics["num_output_tokens_sum"]
+            metrics_dict.update(average_rl_metrics)
             metrics_dict.update(
                 {
                     "stats/ess": ess,
