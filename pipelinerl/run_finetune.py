@@ -800,6 +800,9 @@ def rl_finetuning_worker(
         )
         time_to_save = time_to_save and not time_to_stop
         assert sum(micro_batches_size) == samples_per_worker_per_step
+        training_metrics.runtime += step_took
+        training_metrics.time_waiting_for_data = time_waiting_for_data
+        ess = sum(rl_metrics["ratio_new_old_sum"]) ** 2 / sum(rl_metrics["ratio_new_old_squared_sum"]) / this_worker_tokens
         if time_to_log or time_to_save:
             dt = log_time(dt, time_stats, "finetune/interim_eval")
             metrics_dict.update(
@@ -816,8 +819,10 @@ def rl_finetuning_worker(
                     "stats/min_actor_version": lag_stats["min_version"],
                     "stats/max_actor_version": lag_stats["max_version"],
                     "stats/queue_size": sample_queue.qsize(),
-                    "stats/time_waiting_for_data": time_waiting_for_data,
+                    "stats/time_waiting_for_data": training_metrics.time_waiting_for_data,
                     "stats/lag": training_metrics.last_broadcasted_version - lag_stats["min_version"],
+                    "stats/runtime": training_metrics.runtime,
+                    "stats/ess": ess,
                     "throughput/tokens_perGPU_per_sec": this_worker_tokens / sum(passes_took) if passes_took else 0,
                     "throughput/tokens_per_step": this_worker_tokens * get_accelerator().state.num_processes,
                     "throughput/micro_batches_per_step": len(tokens_processed),
@@ -847,6 +852,7 @@ def rl_finetuning_worker(
             )
 
             gathered_rl_metrics = gather_rl_metrics(rl_metrics)
+            time_waiting_for_data = 0.0
 
             metrics_dict.update(get_avg_rl_stats(gathered_rl_metrics, samples_per_step))
 

@@ -274,8 +274,7 @@ def rl_step(
             surr1 = torch.zeros_like(ratio_new_old)
             surr2 = torch.zeros_like(ratio_new_old)
             clamp_log_ratio_new_old_indicators = torch.zeros_like(ratio_new_old)
-            importance_weight = torch.clamp(ratio_new_old, 0, 1 + config.epsilon)
-            policy_loss = new_logprobs * log_p_weights * importance_weight.detach()
+            policy_loss = new_logprobs * log_p_weights * ratio_new_old.detach()
         case _:
             raise ValueError(f"Unknown algorithm {config.algo}")
 
@@ -315,7 +314,8 @@ def rl_step(
         "surr1": mean_sum(surr1, masks_shifted, segments).item(),
         "surr2": mean_sum(surr2, masks_shifted, segments).item(),
         "ratio_new_old": mean_sum(ratio_new_old, masks_shifted, segments).item(),
-        "ratio_new_old_squared": mean_sum( # useful to estimate the ESS
+        "ratio_new_old_sum": sum_sum(ratio_new_old, masks_shifted, segments).item(),
+        "ratio_new_old_squared_sum": sum_sum( # useful to estimate the ESS
             ratio_new_old * ratio_new_old, masks_shifted, segments
         ).item(),
         "ratio_ref_new": mean_sum(
