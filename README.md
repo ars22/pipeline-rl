@@ -1,6 +1,6 @@
 # Pipeline RL
 
-[![Github](https://img.shields.io/badge/Blog%20Post-000000)](https://huggingface.co/blog/ServiceNow/pipelinerl/)
+[![Github](https://img.shields.io/badge/HF%20Blog%20Post-0000)](https://huggingface.co/blog/ServiceNow/pipelinerl/)
 
 A scalable asynchronous reinforcement learning implementation with in-flight weight updates. Designed to maximize GPU utilization while staying as on-policy as possible.
 
@@ -12,8 +12,15 @@ A scalable asynchronous reinforcement learning implementation with in-flight wei
 
 PipelineRL tackles the classic trade-off between **inference throughput** (large batches on many GPUs) and **on-policy data freshness** by performing _inflight weight updates_. After each optimizer step, updated weights are broadcast to the inference servers without halting sampling. This keeps batch sizes optimal and data near on-policy, yielding fast, stable RL for large language models.
 
+<p align="center">
+    <img src="assets/losses.png" alt="Pipeline-RL Effectiveness" width="600">
+</p>
+
 - In experiments on 7B and 32B models (batch size 4096, lr=1e-6, max tokens=8192), PipelineRL matches or exceeds Open-Reasoner-Zero on AIME-2024 and MATH-500.
 - Uses a simplified GRPO algorithm: no value network, no trust-region clamping, no KL or entropy bonuses by default (though KL support is available).
+
+
+
 
 
 ## Setup
