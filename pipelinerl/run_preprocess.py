@@ -9,11 +9,11 @@ import queue
 import time
 
 from litellm import BaseModel, Field
-import pickle
     
 from pipelinerl.utils import wait_for_inference_servers
 from pipelinerl.world import WorldMap
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
+from pipelinerl.shared_memory_array import SharedMemoryArray
 
 logger = logging.getLogger(__name__)
 import threading
@@ -24,6 +24,8 @@ from typing import List
 import random
 
 import transformers
+import datasets
+datasets.disable_caching()
 from datasets.arrow_dataset import Dataset
 from datasets.fingerprint import Hasher
 from omegaconf import DictConfig
@@ -258,7 +260,7 @@ def process_chunk(
     dataset_queue: Queue,
 ):
     try:
-        chunk = pickle.loads(io_buffer[slot])
+        chunk = io_buffer[slot]
         dataset = preprocess_dataset(
             llm=llm,
             data=chunk,
@@ -266,11 +268,11 @@ def process_chunk(
             seq_length=seq_length,
             rl_config=rl_config,
         )
-        io_buffer[slot] = pickle.dumps([entry for entry in dataset])
+        io_buffer[slot] = dataset
         dataset_queue.put(slot)
     except Exception as e:
         logger.error(f"Failed to preprocess chunk: {e}")
-        io_buffer[slot] = pickle.dumps(e)
+        io_buffer[slot] = e
         dataset_queue.put(slot)
 
 
@@ -331,7 +333,7 @@ def run_preprocessing_loop(
     worker_pool_size = cfg.preprocess.n_workers
     next_llm_index = 0
 
-    stats_aggregator = SlidingWindowAggregator(window_size=500 // cfg.preprocess.chunk_size)
+    stats_aggregator = SlidingWindowAggregator(window_size=max(10, 1000 // cfg.preprocess.chunk_size))
 
     datasets = []
     with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
@@ -339,13 +341,10 @@ def run_preprocessing_loop(
             max_dataset_queue_size = 128
             max_pool_tasks = 2 * worker_pool_size
             buffer_size = 2 * max_pool_tasks + max_dataset_queue_size
-            entry_size = 9999900
-            dummy = entry_size * b" " 
             dataset_queue = manager.Queue(max_dataset_queue_size)
-            io_buffer = smm.ShareableList([dummy] * buffer_size)
+            io_buffer = SharedMemoryArray(smm, buffer_size, int(1e8))
             free_slots = set(range(buffer_size))
-
-            logger.info(f"Shared memory buffer size: {buffer_size * entry_size / 2 ** 30} Gb")
+            logger.info(f"Shared memory buffer size: {io_buffer.get_memory_size() / 2 ** 30} Gb")
             logger.info(f"Start {worker_pool_size} workers for preprocessing")
             with ProcessPoolExecutor(max_workers=worker_pool_size) as executor:
                 while True:
@@ -357,7 +356,7 @@ def run_preprocessing_loop(
                                 if isinstance(raw_chunk, Exception):
                                     raise raw_chunk
                                 slot = free_slots.pop()
-                                io_buffer[slot] = pickle.dumps(raw_chunk)
+                                io_buffer[slot] = raw_chunk
                                 future = executor.submit(
                                     process_chunk, 
                                     llm, io_buffer, slot, tokenizer,
@@ -380,7 +379,7 @@ def run_preprocessing_loop(
                         try:
                             # Try to write the next dataset to the output stream, if it is ready
                             slot = dataset_queue.get(timeout=0.001)
-                            dataset = pickle.loads(io_buffer[slot])
+                            dataset = io_buffer[slot]
                             free_slots.add(slot)
                             fetching_took = time.time() - start_processing                            
                         except Empty:
@@ -416,7 +415,10 @@ def run_preprocessing_loop(
                         stats_writer.write(stats)
                         processing_took = time.time() - start_processing
                         logger.info(
-                            f"Processed {len(dataset)} samples in {processing_took:.3f}s (fetching_took {fetching_took:.3f}, writing took {writing_took:.3f}) and wrote to {output_stream}, total {published_samples} samples so far, {samples_in_queue} samples in queue"
+                            f"Processed {len(dataset)} samples in {processing_took:.3f}s"
+                            f" (fetching_took {fetching_took:.3f}, writing took {writing_took:.3f})"
+                            f" and wrote to {output_stream}, total {published_samples} samples so far,"
+                            f" {samples_in_queue} samples in queue, max buffer entry size {io_buffer._max_written_entry_size}"
                         )
                         datasets = []
                     except Exception as e:
