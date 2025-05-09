@@ -108,10 +108,10 @@ PipelineRL is organized as a modular, Hydra-driven pipeline with five core stage
   - `ActorLoop.__init__` creates `problem_queue` and `result_queue`, then spawns multiple worker processes (via `mp.Process`) to run `rollout_maker_entrypoint`.
   - Each worker process:
       - Sets up a uvloop-based asyncio event loop.
-      - Listens for weight‐update broadcasts via `TrainerState`.
+      - Listens for weight‐update broadcasts via `TrainerState` to get model version.
       - Calls `schedule_rollouts(cfg, attempts, problem_queue, result_queue, trainer_state, llms, name)`, which:
-          * Pulls prompts from `problem_queue` (random sampling for training, sequential for testing).
-          * For each prompt group, issues exactly `cfg.attempts` concurrent HTTP calls to Actor LLM servers (`generate_math_rollout`).
+          * Pulls problems from `problem_queue` (random sampling for training, sequential for testing).
+          * For each GRPO group, issues exactly `cfg.attempts` concurrent HTTP calls to Actor LLM servers (`generate_math_rollout`).
           * Collects `RolloutResult` objects (texts, log-probs, rewards, latencies) and pushes the full batch into `result_queue` once all attempts complete.
 - Writing and stats (`ActorLoop.run`):
   - On each generator step:
@@ -157,7 +157,7 @@ PipelineRL is organized as a modular, Hydra-driven pipeline with five core stage
 - `write_to_streams(...)` and `read_stream(...)` provide a JSON-line protocol for inter-process messaging.
 
 ### Streams & Queues
-- `problem_queue` (multiprocessing.Queue): produced by `ActorLoop.run` to hold raw prompts; consumed by rollout worker processes in `rollout_maker_entrypoint` via `schedule_rollouts`.
+- `problem_queue` (multiprocessing.Queue): produced by `ActorLoop.run` to hold raw problems; consumed by rollout worker processes in `rollout_maker_entrypoint` via `schedule_rollouts`.
 - `result_queue` (multiprocessing.Queue): produced by rollout workers (lists of `RolloutResult`); consumed by `ActorLoop.run` to publish completed rollouts.
 - `actor` stream (SingleStreamSpec(topic="actor")): file- or Redis-backed stream. Produced by `ActorLoop.run` writing each sample dict; consumed by the Preprocessor stage (configured via `cfg.preprocess.input`).
 - `stats` stream (SingleStreamSpec(topic="stats")): produced by `ActorLoop.publish_stats` with sliding-window metrics; consumed by external monitoring (e.g. WANDB, logging viewers).
