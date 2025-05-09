@@ -274,7 +274,7 @@ def rl_step(
             surr1 = torch.zeros_like(ratio_new_old)
             surr2 = torch.zeros_like(ratio_new_old)
             clamp_log_ratio_new_old_indicators = torch.zeros_like(ratio_new_old)
-            ratio_new_old = torch.clamp(ratio_new_old, 0, 100)
+            ratio_new_old = torch.clamp(ratio_new_old, 0, 1 + config.epsilon)
             policy_loss = new_logprobs * log_p_weights * ratio_new_old.detach()
         case _:
             raise ValueError(f"Unknown algorithm {config.algo}")
