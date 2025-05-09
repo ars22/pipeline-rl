@@ -69,11 +69,11 @@ python -m pipelinerl.launch streams=redis output_dir=results/base1
 
 ## Architecture and pipeline stages
 
-PipelineRL is organized as a modular, Hydra-driven pipeline with five core stages. Below is a code-grounded mapping of each stage to its implementation.
-
 <p align="center">
     <img src="assets/structure.jpg" alt="Pipeline-RL Structure" width="600">
 </p>
+
+PipelineRL is organized as a modular, Hydra-driven pipeline with 6 core components driving 3 main stages of the RL training: actor, verifier and trainer. Below is a code-grounded mapping of each component:
 
 ### 1. Orchestrator
 - File: `pipelinerl/launch.py`
@@ -82,7 +82,7 @@ PipelineRL is organized as a modular, Hydra-driven pipeline with five core stage
   - Parse & validate the Hydra config, initalize directories, set up logging and streams backend.
   - Build a **WorldMap** (in `pipelinerl/world.py`) for rank-aware job & GPU placement:
     - Reads environment variables `WORLD_SIZE`, `RANK`, and `MASTER_ADDR` to determine cluster topology.
-    - Computes `gpus_per_llm` from tensor/pipeline parallel settings and allocates each node’s GPUs into actor, preprocessor, and finetuner pools based on `cfg.world.*_fraction`.
+    - Computes `gpus_per_llm` from tensor/pipeline parallel settings and allocates each node’s GPUs into actor, preprocessor, and trainer pools based on `cfg.world.*_fraction`.
   - Creates Job entries for all roles: `actor_llm`, `preprocessor_llm`, `actor`, `preprocessor`, `verifier`, and `finetune`.
   - Launch subprocesses through `launch_jobs(...)`, which invokes:
     - `run_ref_llm` → Reference LLM servers for KL penalties.
@@ -109,7 +109,7 @@ PipelineRL is organized as a modular, Hydra-driven pipeline with five core stage
   - Wait for inference servers (`wait_for_inference_servers`) and optional verifier (`wait_for_verifier`).
   - Initialize `TrainerState(exp_path)`, start listening for weight updates, and block until the first model version arrives.
 - Rollout scheduling (`ActorLoop` & `rollout_maker_entrypoint`):
-  - `ActorLoop.__init__` creates `problem_queue` and `result_queue`, then spawns multiple worker processes (via `mp.Process`) to run `rollout_maker_entrypoint`.
+  - `ActorLoop` creates `problem_queue` and `result_queue`, then spawns multiple worker processes (via `mp.Process`) to run `rollout_maker_entrypoint`.
   - Each worker process:
       - Sets up a uvloop-based asyncio event loop.
       - Listens for weight‐update broadcasts via `TrainerState` to get model version.
@@ -122,8 +122,8 @@ PipelineRL is organized as a modular, Hydra-driven pipeline with five core stage
       * Update allowed outstanding groups if a new `propagated_weight_version` arrived.
       * Refill `problem_queue` up to the lag-controlled limit (`cfg.finetune.max_lag` / `cfg.attempts`).
       * Read one batch of `RolloutResult` from `result_queue`.
-      * Write each sample dict (`.training_texts`) to `write_to_streams(SingleStreamSpec(topic="actor"))`.
-      * Aggregate prompt/output token counts, rewards, and success metrics via a sliding window (`SlidingWindowAggregator`) and write stats to `SingleStreamSpec(topic="stats")` and WANDB.
+      * Write each sample dict to the `actor` stream.
+      * Aggregate prompt/output token counts, rewards, and success metrics via a sliding window (`SlidingWindowAggregator`) and write stats to the `stats` stream and WANDB.
   - Training loops run indefinitely; test loops stop after one pass.
 - Evaluation & backpressure:
   - `run_actor_loop` can pause training scheduling to run a one-shot test loop (`is_training=False`), based on `cfg.eval_every_n_versions`.
@@ -132,33 +132,36 @@ PipelineRL is organized as a modular, Hydra-driven pipeline with five core stage
 ### 4. Preprocessor
 - Entrypoint: `pipelinerl/entrypoints/preprocess.py`
 - Workflow:
-  - `run_dataset_loader` (thread) reads raw actor traces in chunks from `SingleStreamSpec(topic=cfg.preprocess.input)`.
+  - `run_dataset_loader` (thread) reads raw actor traces in chunks from the input stream.
   - `ProcessPoolExecutor` workers run `process_chunk(...)`, which:
-    - Tokenizes and preprocesses sequences via `preprocess_fn` (`pipelinerl/finetune/data.py`).
-    - Computes rewards, advantages, and (optionally) attaches reference log-probs.
+    - Tokenizes and preprocesses sequences.
+    - Optionally attaches reference log-probs.
   - Writes processed micro-batches to `StreamRangeSpec(topic=cfg.preprocess.output)`.
 
 ### 5. Trainer (fine-tuner)
 - Entrypoint: `pipelinerl/entrypoints/finetune.py`
 - Loop structure:
-  - Create `SingleStreamSpec(topic=cfg.finetune.input)` to consume preprocessed batches.
+  - Creates the input stream to consume preprocessed batches.
   - Background threads:
-    1. `run_sample_loader` reads JSON micro-batches from the stream into a local queue.
+    1. `run_sample_loader` reads JSON micro-batches from the input stream into a local queue.
     2. `run_fixed_batch_data_loader` or `run_dynamic_batch_size_data_loader` collates samples into PyTorch tensors.
   - Main training loop:
     - Pull a batch → call `rl_step(...)` (in `pipelinerl/finetune/rl/utils.py`) to compute policy-gradient (+ KL penalty if configured) → `optimizer.step()` → `lr_scheduler.step()`.
-    - On rank 0, use `WeightUpdateManager.send_weight_update(version)` to gather model parameters, send `WeightUpdateRequest` to Actor LLMs (HTTP), broadcast tensors via NCCL, and write a `WeightUpdateSuccess` message to the stream.
+    - On rank 0, use `WeightUpdateManager.send_weight_update(version)` to gather model parameters, send `WeightUpdateRequest` to Actor LLMs (HTTP), broadcast tensors via NCCL, and write a `WeightUpdateSuccess` message to the update stream.
 
-### 6. Optional Verifier
+### 6. Verifier
 - Entrypoint: `pipelinerl/entrypoints/verifier.py`
 - Serves a FastAPI app with:
-  - `POST /verify_answer`: checks model outputs (math or countdown puzzles) via `math_verify` or `countdown_utils`.
+  - `POST / `: checks model outputs (math or countdown puzzles) via `math_verify` or `countdown_utils`.
   - `GET /health`: readiness probe.
 
 ### Streams backend
 - Defined in `pipelinerl/streams.py`.
 - Implements `SingleStreamSpec` and `StreamRangeSpec` for file-system or Redis-based queues.
 - `write_to_streams(...)` and `read_stream(...)` provide a JSON-line protocol for inter-process messaging.
+- Available backends:
+  - File system: default.
+  - Redis: requires Redis server.
 
 ### Streams & Queues
 - `problem_queue` (multiprocessing.Queue): produced by `ActorLoop.run` to hold raw problems; consumed by rollout worker processes in `rollout_maker_entrypoint` via `schedule_rollouts`.
