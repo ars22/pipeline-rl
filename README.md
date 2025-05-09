@@ -71,6 +71,10 @@ python -m pipelinerl.launch streams=redis output_dir=results/base1
 
 PipelineRL is organized as a modular, Hydra-driven pipeline with five core stages. Below is a code-grounded mapping of each stage to its implementation.
 
+<p align="center">
+    <img src="assets/structure.jpg" alt="Pipeline-RL Structure" width="600">
+</p>
+
 ### 1. Orchestrator
 - File: `pipelinerl/launch.py`
 - Entrypoint: `@hydra.main(...) def main(cfg)`
