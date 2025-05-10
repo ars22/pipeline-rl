@@ -407,7 +407,8 @@ def run_preprocessing_loop(
                         stats = {
                             "preprocessor/published_samples": published_samples,
                             "preprocessor/published_model_version": max_model_version,
-                            "preprocessor/samples_in_queue": samples_in_queue,
+                            "preprocessor/samples_in_input_queue": raw_chunk_queue.qsize() * cfg.preprocess.chunk_size,
+                            "preprocessor/samples_in_output_queue": samples_in_queue,
                         }
                         if stats_aggregator.has_enough_data():
                             stats.update({"preprocessor/" + k: v for k, v in stats_aggregator.get_stats().items()})
