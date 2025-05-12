@@ -1,31 +1,27 @@
-import pickle
+import asyncio
 import logging
 import math
-from multiprocessing.managers import SharedMemoryManager
+import multiprocessing as mp
 import os
+import pickle
 import queue
 import random
 import time
-import multiprocessing as mp
 from collections import defaultdict
+from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 
-import uvloop
 import aiohttp
-
+import uvloop
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
-
-from pipelinerl.verifier_api import wait_for_verifier
 from tapeagents.llms import TrainableLLM
-from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
 
 import wandb
+from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
 from pipelinerl.load_datasets import load_datasets
 from pipelinerl.math_rollouts import RolloutResult, generate_math_rollout
 from pipelinerl.state import TrainerState
-import asyncio
-from collections import defaultdict
 from pipelinerl.streams import (
     SingleStreamSpec,
     StreamSpec,
@@ -33,11 +29,12 @@ from pipelinerl.streams import (
     set_streams_backend,
     write_to_streams,
 )
+from pipelinerl.verifier_api import wait_for_verifier
 
 from .utils import (
     always_or_never_success_stats,
-    calculate_stats,
     calculate_per_group_stats,
+    calculate_stats,
     setup_logging,
     wait_for_inference_servers,
 )
@@ -169,7 +166,7 @@ async def schedule_rollouts(
             finished_rollouts += 1
         except Exception as e:
             # Cancel all tasks except the current one
-            logger.error("Exception in rollout", exc_info=e)
+            logger.error("Exception in rollout, stop all other rollout tasks", exc_info=e)
             current_task = asyncio.current_task(loop=loop)
             for task in asyncio.all_tasks(loop=loop):
                 if task != current_task:
