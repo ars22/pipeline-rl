@@ -3,12 +3,13 @@ defaults:
   - _self_
 
 finetune:
-  seq_length: 4000
- 
-model_path: Qwen/Qwen2.5-0.5B
+  seq_length: 5000
 
-output_dir: results/debug1
 
-vllm_config:
-  vllm_kwargs:
-    enforce_eager: ""
+output_dir: results/debug_4gpu_7b_3
+
+# model_path: Qwen/Qwen2.5-0.5B
+
+# vllm_config:
+#   vllm_kwargs:
+#     enforce_eager: ""
