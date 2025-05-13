@@ -5,8 +5,18 @@ defaults:
 finetune:
   seq_length: 5000
 
+llm:
+  parameters:
+    max_tokens: 4096
 
-output_dir: results/debug_4gpu_7b_3
+test_llm:
+  parameters:
+    max_tokens: 4096
+
+# debug:
+  # mode: open_loop
+
+output_dir: results/debug_4gpu_7b/${now:%Y_%m_%d}/${now:start_at_%H_%M_%S}
 
 # model_path: Qwen/Qwen2.5-0.5B
 
