@@ -1,6 +1,6 @@
 defaults:
   - base
-  - streams: redis
+  - override streams: redis
   - _self_
 
 finetune:

@@ -11,6 +11,7 @@ from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 
 import aiohttp
+import hydra
 import uvloop
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
@@ -19,7 +20,7 @@ from tapeagents.llms import TrainableLLM
 import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
 from pipelinerl.load_datasets import load_datasets
-from pipelinerl.math_rollouts import RolloutResult, generate_math_rollout
+from pipelinerl.math_rollouts import RolloutResult
 from pipelinerl.shared_memory_array import SharedMemoryArray
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import (
@@ -127,6 +128,8 @@ async def schedule_rollouts(
     max_group_size_bytes = 0
     # Track rollouts per problem group
     group_rollouts = {}
+    rollout_fn = hydra.utils.instantiate(cfg.actor.entrypoint)
+    logger.info(f"Loaded rollout function: {rollout_fn}")
 
     async def rollout_and_maybe_produce_result(
         problem: dict,
@@ -140,7 +143,7 @@ async def schedule_rollouts(
             llm = llms[llm_index]
             model_version = trainer_state.propagated_weight_version
             assert model_version is not None
-            rollout_result = await generate_math_rollout(cfg, llm, problem, session)
+            rollout_result = await rollout_fn(cfg, llm, problem, session)
             rollout_result.model_version = model_version
             # Make a group id that will be different from groups made by another rollout maker
             full_group_id = f"{scheduler_name}_{group_id}"
