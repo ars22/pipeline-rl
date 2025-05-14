@@ -3,7 +3,6 @@ import logging
 import math
 import multiprocessing as mp
 import os
-import pickle
 import queue
 import random
 import time
@@ -21,6 +20,7 @@ import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
 from pipelinerl.load_datasets import load_datasets
 from pipelinerl.math_rollouts import RolloutResult, generate_math_rollout
+from pipelinerl.shared_memory_array import SharedMemoryArray
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import (
     SingleStreamSpec,
@@ -153,7 +153,7 @@ async def schedule_rollouts(
             if len(group_rollouts[group_id]) == attempts:
                 # This is blocking call, but there's just one other thread reading from this queue.
                 random.shuffle(group_rollouts[group_id])
-                group_bytes = pickle.dumps(group_rollouts[group_id])
+                group_bytes = group_rollouts[group_id]
                 max_group_size_bytes = max(max_group_size_bytes, len(group_bytes))
                 io_buffer[slot] = group_bytes
                 result_queue.put(slot)
@@ -166,7 +166,7 @@ async def schedule_rollouts(
             for task in asyncio.all_tasks(loop=loop):
                 if task != current_task:
                     task.cancel()
-            io_buffer[slot] = pickle.dumps(e)
+            io_buffer[slot] = e
             result_queue.put(slot)
             logger.error("Stopped all tasks and put exception in the result queue")
         finally:
@@ -197,7 +197,7 @@ async def schedule_rollouts(
             if group_rollout_index == attempts:
                 try:
                     slot = problem_queue.get_nowait()
-                    problem = pickle.loads(io_buffer[slot])
+                    problem = io_buffer[slot]
                 except queue.Empty:
                     # give some quality time for other couroutines to work
                     await asyncio.sleep(0.01)
@@ -294,19 +294,17 @@ class ActorLoop:
         self.smm = SharedMemoryManager()
         self.smm.start()
 
-        # for 8 attempts and ~10K max tokens the max entry size is ~310000 bytes
-        entry_size = 9999900
         # we can have a pending almost ready group for each last rollout in progress ...
         self.max_groups_in_progress = cfg.actor.llm_max_rollouts * len(self.llms)
         max_ready_groups_waiting = 128
         self.problem_queue = mp.Queue()
         self.result_queue = mp.Queue(max_ready_groups_waiting)
         self.buffer_size = self.max_groups_in_progress + max_ready_groups_waiting
-        self.io_buffer = self.smm.ShareableList([entry_size * b" "] * self.buffer_size)
+        self.io_buffer = SharedMemoryArray(self.smm, self.buffer_size, int(1e7))
         self.free_slots = set(range(self.buffer_size))
         logger.info(f"Initialized {'train' if self.is_training else 'test'} actor loop")
         logger.info(f"Max groups in progress: {self.max_groups_in_progress}, buffer size: {self.buffer_size}")
-        logger.info(f"Shared memory buffer size: {self.buffer_size * entry_size / 2**30} Gb")
+        logger.info(f"Shared memory buffer size: {self.io_buffer.get_memory_size() / 2**30} Gb")
 
         # Create and start multiple rollout processes
         self.rollout_processes = []
@@ -421,7 +419,7 @@ class ActorLoop:
                             try:
                                 problem = next(problem_iter)
                                 slot = self.free_slots.pop()
-                                self.io_buffer[slot] = pickle.dumps(problem)
+                                self.io_buffer[slot] = problem
                                 self.problem_queue.put_nowait(slot)
                                 submitted_groups += 1
                             except StopIteration:
@@ -432,7 +430,7 @@ class ActorLoop:
                 # Second, try return a result
                 try:
                     slot = self.result_queue.get_nowait()
-                    rollout_results = pickle.loads(self.io_buffer[slot])
+                    rollout_results = self.io_buffer[slot]
                     self.free_slots.add(slot)
                     if isinstance(rollout_results, Exception):
                         logger.error("Stop actor loop due to error")
