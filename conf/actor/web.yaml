@@ -1,10 +1,7 @@
 log_each_n_secs: 10
 llm_max_rollouts: 128
 rollout_workers: 1
-
-entrypoint:
-  _target_: hydra.utils.get_method
-  path: pipelinerl.tapeagents_rollouts.generate_rollout
+rollout_policy: pipelinerl.tapeagents_rollouts.generate_rollout
 
 environment:
   _target_: tapeagents.mcp.MCPEnvironment

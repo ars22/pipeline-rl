@@ -128,8 +128,8 @@ async def schedule_rollouts(
     max_group_size_bytes = 0
     # Track rollouts per problem group
     group_rollouts = {}
-    rollout_fn = hydra.utils.instantiate(cfg.actor.entrypoint)
-    logger.info(f"Loaded rollout function: {rollout_fn}")
+    rollout_policy = hydra.utils.get_method(cfg.actor.rollout_policy)
+    logger.info(f"Use rollout policy: {rollout_policy}")
 
     async def rollout_and_maybe_produce_result(
         problem: dict,
@@ -143,7 +143,7 @@ async def schedule_rollouts(
             llm = llms[llm_index]
             model_version = trainer_state.propagated_weight_version
             assert model_version is not None
-            rollout_result = await rollout_fn(cfg, llm, problem, session)
+            rollout_result = await rollout_policy(cfg, llm, problem, session)
             rollout_result.model_version = model_version
             # Make a group id that will be different from groups made by another rollout maker
             full_group_id = f"{scheduler_name}_{group_id}"
