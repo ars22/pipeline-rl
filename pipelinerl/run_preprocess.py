@@ -391,9 +391,8 @@ def run_preprocessing_loop(
                         stats = {
                             "preprocessor/published_samples": published_samples,
                             "preprocessor/published_model_version": max_model_version,
-                            "preprocessor/samples_in_queue": samples_in_queue,
-                            "preprocessor/dataset_queue_size": dataset_queue.qsize(),
-                            "preprocessor/samples_in_output_stream": len(writer),
+                            "preprocessor/queue/dataset_samples": samples_in_queue,
+                            "preprocessor/queue/dataset": dataset_queue.qsize(),
                         }
                         if stats_aggregator.has_enough_data():
                             stats.update({"preprocessor/" + k: v for k, v in stats_aggregator.get_stats().items()})

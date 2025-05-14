@@ -38,6 +38,7 @@ finetune:
   weight_update_interval: 1
   pop_old_data: ${..pop_old_data}
 actor:
+  log_each_n_secs: 10
   llm_max_rollouts: 128
   rollout_workers: 1
 verifier:
@@ -94,6 +95,7 @@ task_template: |-
   {task}
 
 eval_every_n_versions: 78000
+initial_eval: true
 
 # changed
 model_path: Qwen/Qwen2.5-7B

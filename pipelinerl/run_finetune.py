@@ -822,7 +822,7 @@ def rl_finetuning_worker(
                     "stats/epoch": training_metrics.epoch,
                     "stats/min_actor_version": lag_stats["min_version"],
                     "stats/max_actor_version": lag_stats["max_version"],
-                    "stats/queue_size": sample_queue.qsize(),
+                    "stats/queue/samples": sample_queue.qsize(),
                     "stats/time_waiting_for_data": time_waiting_for_data,
                     "stats/lag": training_metrics.last_broadcasted_version - lag_stats["min_version"],
                     "throughput/tokens_perGPU_per_sec": this_worker_tokens / sum(passes_took) if passes_took else 0,

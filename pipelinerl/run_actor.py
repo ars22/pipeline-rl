@@ -353,6 +353,7 @@ class ActorLoop:
         published_samples = 0
         submitted_groups = 0
         finished_groups = 0
+        last_log_time = 0
         expected_number_of_samples = -1 if self.is_training else len(dataset)
         if expected_number_of_samples > 0:
             logger.info(f"Will stop after {expected_number_of_samples} samples")
@@ -474,24 +475,22 @@ class ActorLoop:
                 # if we are training publish stats at every step else if all tapes are finished, publish stats
                 if self.is_training or published_samples == expected_number_of_samples:
                     if self.is_training:
-                        loop_stats = {
-                            "published_samples": published_samples,
-                            "samples_in_output_stream": len(data_stream_writer),
-                            "problems_in_queue": self.problem_queue.qsize(),
-                            "samples_in_queue": samples_in_queue,
-                            "finished_groups": finished_groups,
-                            "published_model_version": max_model_version,
-                            "latency": max_latency,
-                            "time_since_start": time.time() - loop_start_time,
-                        }
+                        log_time = time.monotonic()
+                        if log_time - last_log_time > self.cfg.actor.log_each_n_secs:
+                            loop_stats = {
+                                "published_samples": published_samples,
+                                "queue/problems": self.problem_queue.qsize(),
+                                "queue/samples": samples_in_queue,
+                                "finished_groups": finished_groups,
+                                "published_model_version": max_model_version,
+                                "latency": max_latency,
+                                "time_since_start": time.time() - loop_start_time,
+                            }
+                            self.publish_stats(stats_writer=stats_writer, loop_stats=loop_stats, split_name=split_name)
+                            last_log_time = log_time
                     else:
                         loop_stats = {"published_model_version": max_model_version}
-
-                    self.publish_stats(
-                        stats_writer=stats_writer,
-                        loop_stats=loop_stats,
-                        split_name=split_name,
-                    )
+                        self.publish_stats(stats_writer=stats_writer, loop_stats=loop_stats, split_name=split_name)
 
                 if published_samples == expected_number_of_samples:
                     logger.info(f"Finished {expected_number_of_samples} samples, stopping actor loop")
@@ -628,6 +627,7 @@ def run_actor_loop(cfg: DictConfig):
             and trainer_state.propagated_weight_version >= next_regular_eval
             and test_dataset
             and test_loop_run is None
+            and (last_regular_eval >= 0 or cfg.initial_eval)
         ):
             logger.info("Create test loop")
             test_loop_run = test_loop.run(
