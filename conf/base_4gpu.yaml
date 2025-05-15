@@ -3,5 +3,5 @@ defaults:
   - _self_
 
 finetune:
-  seq_length: 5000
+  seq_length: 4000
   
