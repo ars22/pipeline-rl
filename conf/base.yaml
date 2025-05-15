@@ -87,7 +87,6 @@ world:
   actor_group_port: 9000
 
 eval_every_n_versions: 78000
-initial_eval: true
 
 # changed
 model_path: Qwen/Qwen2.5-7B

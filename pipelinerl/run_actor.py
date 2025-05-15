@@ -630,7 +630,6 @@ def run_actor_loop(cfg: DictConfig):
             and trainer_state.propagated_weight_version >= next_regular_eval
             and test_dataset
             and test_loop_run is None
-            and (last_regular_eval >= 0 or cfg.initial_eval)
         ):
             logger.info("Create test loop")
             test_loop_run = test_loop.run(

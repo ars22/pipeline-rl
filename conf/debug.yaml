@@ -18,7 +18,6 @@ test_llm:
 # debug:
   # mode: open_loop
 
-initial_eval: false
 output_dir: results/debug_4gpu_7b/${now:%Y_%m_%d}/${now:start_at_%H_%M_%S}
 
 # model_path: Qwen/Qwen2.5-0.5B
