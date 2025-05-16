@@ -352,7 +352,7 @@ def watch_processes_running(exp_path: Path, processes: List[subprocess.Popen], d
                     gently_stop_all_processes()
                     sys.exit(1)
             # TODO: make the watcdog code below more stable
-            # if (trainer_state is not None
+            # if (trainer_state is not Noneq
             #     and (version := trainer_state.propagated_weight_version is not None) 
             #     and version > last_trainer_version):
             #     last_trainer_version = version
