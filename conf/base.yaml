@@ -68,7 +68,6 @@ test_llm:
 vllm_config:
   vllm_kwargs:
     dtype: bfloat16
-    download-dir: /mnt/llmd/base_models/ 
     gpu-memory-utilization: 0.9
     num-scheduler-steps: 1
     disable-log-requests: ""
@@ -129,3 +128,7 @@ debug:
   mode: ""
   streams_from: null
   place_inference_workers: true
+
+hydra:
+  run:
+    dir: ${output_dir}
