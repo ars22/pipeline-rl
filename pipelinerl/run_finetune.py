@@ -823,7 +823,6 @@ def rl_finetuning_worker(
                     "stats/queue_size": sample_queue.qsize(),
                     "stats/time_waiting_for_data": training_metrics.time_waiting_for_data,
                     "stats/lag": training_metrics.last_broadcasted_version - lag_stats["min_version"],
-                    "stats/runtime": training_metrics.runtime,
                     "throughput/tokens_perGPU_per_sec": this_worker_tokens / sum(passes_took) if passes_took else 0,
                     "throughput/tokens_per_step": this_worker_tokens * get_accelerator().state.num_processes,
                     "throughput/micro_batches_per_step": len(tokens_processed),
