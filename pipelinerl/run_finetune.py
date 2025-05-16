@@ -803,7 +803,6 @@ def rl_finetuning_worker(
         )
         time_to_save = time_to_save and not time_to_stop
         assert sum(micro_batches_size) == samples_per_worker_per_step
-        training_metrics.runtime += step_took
         training_metrics.time_waiting_for_data += time_waiting_for_data
         if time_to_log or time_to_save:
             dt = log_time(dt, time_stats, "finetune/interim_eval")
