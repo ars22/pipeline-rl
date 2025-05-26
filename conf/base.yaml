@@ -78,6 +78,7 @@ vllm_config:
     return-tokens-as-token-ids: ""
     tensor-parallel-size: 1
     pipeline-parallel-size: 1
+    generation-config: vllm
 
 world:
   actors: 1
