@@ -55,7 +55,7 @@ def init_extra_process_group(
         backend,
         store,
         group_name=group_name,
-        pg_options=pg_options,
+        backend_options=pg_options,
         timeout=timeout,
     )
 

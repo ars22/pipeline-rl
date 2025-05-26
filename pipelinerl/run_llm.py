@@ -198,27 +198,19 @@ async def run_server(args, **uvicorn_kwargs) -> None:
     engine_config.parallel_config.worker_cls = (
         "pipelinerl.run_llm.AsyncRLMultiStepWorker" if multi_step else "pipelinerl.run_llm.AsyncRLWorker" 
     )
-    engine = AsyncLLMEngine.from_engine_args(
-        engine_args=engine_args,
-        engine_config=engine_config,
-        usage_context=UsageContext.OPENAI_API_SERVER
+    engine = AsyncLLMEngine.from_vllm_config(
+        vllm_config=engine_config,
+        usage_context=UsageContext.OPENAI_API_SERVER,
+        stat_loggers=None,
+        start_engine_loop=True,
+        disable_log_stats=engine_args.disable_log_stats,
+        disable_log_requests=engine_args.disable_log_requests,
     )
 
     assert isinstance(engine.engine.model_executor, AsyncRLExecutor)
     weight_update_manager = WeightUpdateManager(args, engine.engine.model_executor)
     if not args.disable_weight_updates:
         weight_update_manager.input_process_groups()
-
-    # weight_update_stream = SingleStreamSpec(exp_path=args.exp_root_dir, topic="weight_update_request")
-    # async def weight_update_receiver():
-    #     async with AsyncStreamReader(weight_update_stream) as reader:
-    #         async for line in reader.read():
-    #             message = TypeAdapter(TrainerMessage).validate_python(line)
-    #             if isinstance(message, WeightUpdateRequest):
-    #                 await weight_update_manager.receive_weight_update(message)
-    # if not args.disable_weight_updates:
-    #     logger.info(f"Create weight update background task")
-    #     asyncio.create_task(weight_update_receiver())
 
     # Run HTTP server
     sock_addr = (args.host or "", args.port)
