@@ -4,6 +4,7 @@ from multiprocessing.managers import SharedMemoryManager
 from typing import Any
 
 
+
 class SharedMemoryArray:
     """
     A class that manages an array of Python objects in shared memory.

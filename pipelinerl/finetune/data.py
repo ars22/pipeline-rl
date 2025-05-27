@@ -204,9 +204,7 @@ def collate_packed(
         end_idx = seq_boundaries[i + 1].item()
         seq_len = end_idx - start_idx
 
-        base_tensors["input_ids"][0, start_idx:end_idx] = torch.tensor(
-            example["input_ids"], dtype=torch.long
-        )
+        base_tensors["input_ids"][0, start_idx:end_idx] = torch.tensor(example["input_ids"], dtype=torch.long)
 
         # use arange to fill position_ids
         base_tensors["position_ids"][0, start_idx:end_idx] = torch.arange(seq_len)

@@ -164,33 +164,35 @@ def run_verifier(cfg: DictConfig):
     app = FastAPI()
     # Create a process pool with 4 workers
     with ProcessPoolExecutor(max_workers=4) as process_pool:
+
         @app.post("/verify_answer")
         async def verify(request: dict):
             prediction = request["prediction"]
             gold = request["gold"]
             strict = request["strict"]
             max_prediction_length = request["max_prediction_length"]
-            
+
             # Run verification in the process pool to avoid blocking the main thread
             loop = asyncio.get_event_loop()
             answer_status = await loop.run_in_executor(
-                process_pool,
-                partial(verify_answer, prediction, gold, strict, max_prediction_length)
+                process_pool, partial(verify_answer, prediction, gold, strict, max_prediction_length)
             )
             return JSONResponse(content={"answer_status": answer_status})
+
         @app.get("/health")
         async def health():
             return JSONResponse(content={"status": "ok"})
+
         uvicorn.run(app, host="0.0.0.0", port=cfg.verifier.port, timeout_keep_alive=60)
 
 
 async def verify_answer_rpc(
-    session: aiohttp.ClientSession, 
-    verifier_cfg: DictConfig, 
-    prediction: str, 
-    gold: str, 
-    strict: bool = True, 
-    max_prediction_length: int = 1000
+    session: aiohttp.ClientSession,
+    verifier_cfg: DictConfig,
+    prediction: str,
+    gold: str,
+    strict: bool = True,
+    max_prediction_length: int = 1000,
 ):
     """
     Verify the answer using the verifier API.
@@ -212,7 +214,7 @@ async def verify_answer_rpc(
             logger.error(f"Error verifying answer: {response.status}")
             logger.error(f"Response: {await response.text()}")
             raise ValueError("Error verifying answer")
-    
+
 
 def wait_for_verifier(verifier_cfg: DictConfig):
     """
@@ -223,7 +225,7 @@ def wait_for_verifier(verifier_cfg: DictConfig):
         try:
             response = requests.get(f"http://{verifier_cfg.host}:{verifier_cfg.port}/health")
             if response.status_code == 200:
-                break            
+                break
         except:
             logger.info("Verifier not ready yet, waiting...")
             time.sleep(5.0)

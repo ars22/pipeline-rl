@@ -502,14 +502,38 @@ class ActorLoop:
     def publish_stats(self, stats_writer: StreamWriter, loop_stats, split_name: str = ""):
         sliding_stats = self.stats_aggregator.get_stats()
         stats = (
-            {"reward_" + k: v for k, v in calculate_per_group_stats(self.reward_stats).items()}
-            | {"success_" + k: v for k, v in calculate_per_group_stats(self.success_stats).items()}
-            | {"no_error_" + k: v for k, v in calculate_per_group_stats(self.no_errors_stats).items()}
-            | {"no_answer_" + k: v for k, v in calculate_per_group_stats(self.no_answer_stats).items()}
-            | {"prompt_tokens_" + k: v for k, v in calculate_per_group_stats(self.prompt_tokens).items()}
-            | {"output_tokens_" + k: v for k, v in calculate_per_group_stats(self.output_tokens).items()}
-            | {"overflows_" + k: v for k, v in calculate_per_group_stats(self.overflows).items()}
-            | {k: v for k, v in always_or_never_success_stats(self.success_stats).items()}
+            {
+                (split_name + "_" if split_name else "") + "reward_" + k: v
+                for k, v in calculate_per_group_stats(self.reward_stats).items()
+            }
+            | {
+                (split_name + "_" if split_name else "") + "success_" + k: v
+                for k, v in calculate_per_group_stats(self.success_stats).items()
+            }
+            | {
+                (split_name + "_" if split_name else "") + "no_error_" + k: v
+                for k, v in calculate_per_group_stats(self.no_errors_stats).items()
+            }
+            | {
+                (split_name + "_" if split_name else "") + "no_answer_" + k: v
+                for k, v in calculate_per_group_stats(self.no_answer_stats).items()
+            }
+            | {
+                (split_name + "_" if split_name else "") + "prompt_tokens_" + k: v
+                for k, v in calculate_per_group_stats(self.prompt_tokens).items()
+            }
+            | {
+                (split_name + "_" if split_name else "") + "output_tokens_" + k: v
+                for k, v in calculate_per_group_stats(self.output_tokens).items()
+            }
+            | {
+                (split_name + "_" if split_name else "") + "overflows_" + k: v
+                for k, v in calculate_per_group_stats(self.overflows).items()
+            }
+            | {
+                (split_name + "_" if split_name else "") + k: v
+                for k, v in always_or_never_success_stats(self.success_stats).items()
+            }
         )
 
         for dataset_name in self.reward_stats.keys():

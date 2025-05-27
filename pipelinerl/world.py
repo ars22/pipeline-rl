@@ -3,10 +3,13 @@ import os
 from pydantic import BaseModel
 from omegaconf import DictConfig
 import torch
+
 logger = logging.getLogger(__name__)
+
 
 class Job(BaseModel):
     """Represent the decision to launch a replica of a particular worker (e.g. actor) at a particular rank"""
+
     kind: str
     # The global index of this job among jobs of the same kind
     replica_idx: int
@@ -21,19 +24,18 @@ class Job(BaseModel):
 
 
 class WorldMap:
-
     def __init__(self, cfg: DictConfig, verbose: bool = False):
         self._log_info = logger.info if verbose else lambda x: None
 
         self.cfg = cfg
         self.world_size = int(os.environ.get("WORLD_SIZE", 1))
         self.my_rank = int(os.environ.get("RANK", 0))
-        self.address_map = {}        
+        self.address_map = {}
         if self.world_size > 1:
             self.master_addr = os.environ["MASTER_ADDR"]
             # e.g.: dns-f6c9712f-4d9b-4c8d-a648-f8d94cf12113-0
             for rank in range(self.world_size):
-                basename = self.master_addr[:self.master_addr.rfind("-")]
+                basename = self.master_addr[: self.master_addr.rfind("-")]
                 self.address_map[rank] = f"{basename}-{rank}"
         else:
             self.master_addr = "localhost"
@@ -84,9 +86,7 @@ class WorldMap:
         total_gpus = self.world_size * self.node_size
         desired_actor_gpu_share = max(int(total_gpus * actor_fraction), self.gpus_per_llm)
         desired_preprocessor_gpu_share = (
-            max(int(total_gpus * preprocessor_fraction), self.gpus_per_llm)
-            if cfg.world.preprocessor_fraction
-            else 0
+            max(int(total_gpus * preprocessor_fraction), self.gpus_per_llm) if cfg.world.preprocessor_fraction else 0
         )
         desired_finetune_gpu_share = total_gpus - desired_actor_gpu_share - desired_preprocessor_gpu_share
         self._log_info(
@@ -96,11 +96,15 @@ class WorldMap:
 
         gpus_per_actor = int(desired_actor_gpu_share / cfg.world.actors) if cfg.world.actors > 0 else 0
         gpus_per_actor = gpus_per_actor - (gpus_per_actor % self.gpus_per_llm)
-        gpus_per_preprocessor = int(desired_preprocessor_gpu_share / cfg.world.preprocessors) if cfg.world.preprocessors > 0 else 0
+        gpus_per_preprocessor = (
+            int(desired_preprocessor_gpu_share / cfg.world.preprocessors) if cfg.world.preprocessors > 0 else 0
+        )
         gpus_per_preprocessor = gpus_per_preprocessor - (gpus_per_preprocessor % self.gpus_per_llm)
         self.llms_per_actor = max(int(gpus_per_actor / self.gpus_per_llm), 1) if gpus_per_actor > 0 else 0
         self.total_actor_llms = self.llms_per_actor * cfg.world.actors
-        self.llms_per_preprocessor = max(int(gpus_per_preprocessor / self.gpus_per_llm), 1) if gpus_per_preprocessor > 0 else 0
+        self.llms_per_preprocessor = (
+            max(int(gpus_per_preprocessor / self.gpus_per_llm), 1) if gpus_per_preprocessor > 0 else 0
+        )
         self.gpus_per_actor = gpus_per_actor
         self.gpus_per_preprocessor = gpus_per_preprocessor
 
@@ -114,7 +118,9 @@ class WorldMap:
             f"and with {self.gpus_per_llm} per each LLM.\n"
         )
         self._log_info("I have adjusted the GPU shares to accomodate these constraints.")
-        self. _log_info(f"Actual GPU share: {total_actor_gpus} for actors, {total_preprocessor_gpus} for preprocessors, {self.total_finetune_gpus} for finetune")
+        self._log_info(
+            f"Actual GPU share: {total_actor_gpus} for actors, {total_preprocessor_gpus} for preprocessors, {self.total_finetune_gpus} for finetune"
+        )
         if self.total_finetune_gpus < 0:
             raise ValueError("Not enough gpus to place all workers")
         if self.total_finetune_gpus == 0:
@@ -126,45 +132,51 @@ class WorldMap:
         actor_placed = False
         for worker_idx in range(cfg.world.actors):
             for actor_llm_idx in range(self.llms_per_actor):
-                node = next((node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_llm), None)
+                node = next(
+                    (node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_llm), None
+                )
                 if node is None:
                     raise ValueError("Not enough gpus to place all actors")
                 if not actor_placed:
-                    self.job_map[node].append(
-                        Job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[])
-                    )
-                    self.job_map[node].append(
-                        Job(kind="verifier", replica_idx=worker_idx, node_rank=node, gpus=[])
-                    )
+                    self.job_map[node].append(Job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[]))
+                    self.job_map[node].append(Job(kind="verifier", replica_idx=worker_idx, node_rank=node, gpus=[]))
                     actor_placed = True
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_llm)]
                 local_idx = min(gpus)
                 llm_url = f"http://{self.address_map[node]}:{8080 + local_idx}"
                 self.job_map[node].append(
                     Job(
-                        kind="actor_llm", replica_idx=actor_llm_idx, 
-                        local_idx=local_idx, node_rank=node, gpus=gpus, url=llm_url
+                        kind="actor_llm",
+                        replica_idx=actor_llm_idx,
+                        local_idx=local_idx,
+                        node_rank=node,
+                        gpus=gpus,
+                        url=llm_url,
                     )
                 )
 
         preprocessor_placed = False
         for worker_idx in range(cfg.world.preprocessors):
             for preprocessor_llm_idx in range(self.llms_per_preprocessor):
-                node = next((node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_llm), None)
+                node = next(
+                    (node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_llm), None
+                )
                 if node is None:
                     raise ValueError("Not enough gpus to place all preprocessors")
                 if not preprocessor_placed:
-                    self.job_map[node].append(
-                        Job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[])
-                    )
+                    self.job_map[node].append(Job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[]))
                     preprocessor_placed = True
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_llm)]
                 local_idx = min(gpus)
                 ref_url = f"http://{self.address_map[node]}:{8180 + local_idx}"
                 self.job_map[node].append(
                     Job(
-                        kind="preprocessor_llm", replica_idx=preprocessor_llm_idx, 
-                        local_idx=local_idx, node_rank=node, gpus=gpus, url=ref_url
+                        kind="preprocessor_llm",
+                        replica_idx=preprocessor_llm_idx,
+                        local_idx=local_idx,
+                        node_rank=node,
+                        gpus=gpus,
+                        url=ref_url,
                     )
                 )
         if not preprocessor_placed:
@@ -173,13 +185,12 @@ class WorldMap:
                 Job(kind="preprocessor", replica_idx=0, node_rank=self.world_size - 1, gpus=[])
             )
 
-
     def my_jobs(self) -> list[Job]:
         return self.job_map[self.my_rank]
-    
+
     def nodes_with_finetuning(self) -> list[int]:
         return [node for node, jobs in self.job_map.items() if any(job.kind == "finetune" for job in jobs)]
-    
+
     def my_finetuning_rank(self) -> int:
         return self.nodes_with_finetuning().index(self.my_rank)
 
@@ -187,11 +198,7 @@ class WorldMap:
         return [job for jobs in self.job_map.values() for job in jobs]
 
     def get_actor_urls(self) -> list[str]:
-        return [
-            job.url for job in self.get_all_jobs() if job.kind == "actor_llm"
-        ]
-    
+        return [job.url for job in self.get_all_jobs() if job.kind == "actor_llm"]
+
     def get_preprocessor_urls(self) -> list[str]:
-        return [
-            job.url for job in self.get_all_jobs() if job.kind == "preprocessor_llm"
-        ]
+        return [job.url for job in self.get_all_jobs() if job.kind == "preprocessor_llm"]

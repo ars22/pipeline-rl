@@ -22,6 +22,7 @@ from tapeagents.core import Prompt
 
 logger = logging.getLogger(__name__)
 
+
 def generate_cuda_device_strings(total_gpus: int, gpus_per_model: int) -> List[str]:
     """
     Generate a list of CUDA device strings for assigning GPUs to models.
@@ -73,7 +74,6 @@ def setup_logging(output_dir):
 
     stdout_handler = logging.StreamHandler()
     stdout_handler.setLevel(logging.INFO)
-
 
     # Create formatters and set them to the handlers
     formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -158,7 +158,7 @@ def always_or_never_success_stats(success_stats: Mapping[str, Mapping[str, list[
             always_success[problem] = all(success_stats[dataset][problem])
             never_success[problem] = not any(success_stats[dataset][problem])
             sometimes_success[problem] = not always_success[problem] and not never_success[problem]
-    return { # type: ignore
+    return {  # type: ignore
         "always_success": float(np.mean(list(always_success.values()))),
         "never_success": float(np.mean(list(never_success.values()))),
         "sometimes_success": float(np.mean(list(sometimes_success.values()))),
@@ -167,7 +167,7 @@ def always_or_never_success_stats(success_stats: Mapping[str, Mapping[str, list[
 
 def calculate_per_group_stats(stats):
     merged_stats = defaultdict(list)
-    
+
     # Iterate through each dataset
     for dataset_name, dataset_stats in stats.items():
         # Iterate through each data point
@@ -179,12 +179,12 @@ def calculate_per_group_stats(stats):
         merged_stats[dataset_name].append(np.mean(dataset_stats_list))
     # merged stats is a dictionary with dataset names as keys and a list with one element as values
     return calculate_stats(merged_stats)
-            
+
 
 def calculate_stats(stats):
     if isinstance(stats, list):
         stats = {"key": stats}
-        
+
     aggregated_stats = {
         "max": float(np.mean([max(stat) for stat in stats.values() if stat])),
         "min": float(np.mean([min(stat) for stat in stats.values() if stat])),
@@ -234,7 +234,7 @@ def wait_for_inference_servers(urls: list[str]):
         if all_servers_up:
             break
         logger.info(f"Still waiting for {still_not_up} ...")
-        time.sleep(3.)
+        time.sleep(3.0)
     logger.info("All inference servers are up")
 
 
@@ -251,6 +251,7 @@ def better_crashing(entrypoint_name: str):
         terminate_with_children(process_id)
         logger.error(f"I should not even be here...")
         import sys
+
         sys.exit(1)
 
 
@@ -259,23 +260,23 @@ def terminate_with_children(process_id: int):
     try:
         parent = psutil.Process(process_id)
         children = parent.children(recursive=True)
-        
+
         # First attempt graceful termination of children
         for child in children:
             child.terminate()
-        
+
         # Wait for children to terminate
         _, alive = psutil.wait_procs(children, timeout=5)
-        
+
         if alive:
             logger.info(f"{len(alive)} children still alive, trying SIGKILL")
             for child in alive:
                 child.kill()
-            
+
         # Terminate parent process
         parent.terminate()
         parent.wait(timeout=3)
-        
+
         # Force kill parent if still alive
         if parent.is_running():
             parent.kill()

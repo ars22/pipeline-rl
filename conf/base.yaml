@@ -49,6 +49,7 @@ preprocess:
   chunk_size: 16
   submit_delay: 0.
   pop_old_data: ${..pop_old_data} 
+  buffer_size: 0
 llm:
   parameters:
     # changed
@@ -75,6 +76,7 @@ vllm_config:
     return-tokens-as-token-ids: ""
     tensor-parallel-size: 1
     pipeline-parallel-size: 1
+    generation-config: vllm
 
 world:
   actors: 1

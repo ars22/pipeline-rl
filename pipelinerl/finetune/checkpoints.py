@@ -75,8 +75,7 @@ def load_model(args, model_class, current_dir):
     )
     if args.use_flash_attention:
         assert version.parse(transformers.__version__) >= version.parse("4.34.0"), (
-            "flash_attention is only supported for transformers>=4.34.0. "
-            "Please upgrade transformers to use it"
+            "flash_attention is only supported for transformers>=4.34.0. Please upgrade transformers to use it"
         )
         loading_args["attn_implementation"] = "flash_attention_2"
         logger.info(f"FlashAttention available: {torch.backends.cuda.flash_sdp_enabled()}")
@@ -131,7 +130,9 @@ def load_model(args, model_class, current_dir):
         if has_lora_checkpoint(current_dir):
             lora_load(current_dir, model)
     elif args.gradient_checkpointing:
-        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": args.reentrant_checkpointing})
+        model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": args.reentrant_checkpointing}
+        )
 
     get_accelerator().wait_for_everyone()
     return model
@@ -166,9 +167,9 @@ def _save_training_state(
     Modified from https://github.com/huggingface/accelerate/blob/main/examples/by_feature/deepspeed_with_config_support.py#L247
     More details at: https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html
     """
-    assert (
-        not os.path.exists(training_state_dir) or training_state_dir.is_dir()
-    ), f"output_dir {training_state_dir} must be a directory"
+    assert not os.path.exists(training_state_dir) or training_state_dir.is_dir(), (
+        f"output_dir {training_state_dir} must be a directory"
+    )
 
     if is_deepspeed_model(model):
         # Save both model and optimizer, as well as lr_scheduler if supported by deepspeed
@@ -206,9 +207,9 @@ def load_training_checkpoint(
     - Without deepspeed, this will *only* load optimizer, lr_scheduler states in-place,
         but *not* model states!
     """
-    assert (
-        not os.path.exists(training_state_dir) or training_state_dir.is_dir()
-    ), f"output_dir {training_state_dir} must be a directory"
+    assert not os.path.exists(training_state_dir) or training_state_dir.is_dir(), (
+        f"output_dir {training_state_dir} must be a directory"
+    )
 
     if is_deepspeed_model(model):
         logger.info("Load deepspeed training state")
@@ -391,7 +392,7 @@ def load_training_state(
     training_state = load_training_checkpoint(training_state_dir, model, optimizer, lr_scheduler)
     if training_state is None:
         raise ValueError(f"Could not load training state from {training_state_dir}")
-    
+
     # Update training_metrics with loaded training state (hasattr check is to avoid potential mismatches between training_metrics and training_state)
     vars(training_metrics).update({key: val for key, val in training_state.items() if hasattr(training_metrics, key)})
     return training_metrics

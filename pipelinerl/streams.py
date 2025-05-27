@@ -9,6 +9,7 @@ from typing import Any, Iterator, Literal, Self, TextIO
 import orjson
 import redis
 from pydantic import BaseModel
+import redis.exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ class StreamReader(ABC):
 
 
 def connect_to_redis(config: RedisConfig):
-    """Connect to the Redis server.  Unlimited retries."""
+    """Connect to the Redis server. Unlimited retries."""
     while True:
         try:
             logger.info(f"Trying to connect to Redis server at {config.host}:{config.port}")
@@ -114,8 +115,8 @@ def connect_to_redis(config: RedisConfig):
             client.ping()
             logger.info("Connected to Redis server")
             return client
-        except redis.ConnectionError:
-            logger.info("Waiting for Redis server. Retrying in 5 seconds.")
+        except (redis.exceptions.TimeoutError, redis.ConnectionError) as e:
+            logger.info(f"Waiting for Redis server ({type(e)}). Retrying in 5 seconds.")
             time.sleep(5)
 
 
