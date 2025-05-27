@@ -8,7 +8,7 @@ from tapeagents.llms.trainable import TrainableLLM
 
 from pipelinerl.async_llm import llm_async_generate
 from pipelinerl.finetune.data import MASKED_TOKEN_ID
-from pipelinerl.verifier_api import verify_answer_rpc
+from pipelinerl.math.verifier_api import verify_answer_rpc
 
 
 class RewardTable(BaseModel):

@@ -20,7 +20,7 @@ from tapeagents.llms import TrainableLLM
 import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
 from pipelinerl.load_datasets import load_datasets
-from pipelinerl.math_rollouts import RolloutResult
+from pipelinerl.math.rollouts import RolloutResult
 from pipelinerl.shared_memory_array import SharedMemoryArray
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import (
@@ -30,7 +30,7 @@ from pipelinerl.streams import (
     set_streams_backend,
     write_to_streams,
 )
-from pipelinerl.verifier_api import wait_for_verifier
+from pipelinerl.math.verifier_api import wait_for_verifier
 
 from .utils import (
     always_or_never_success_stats,

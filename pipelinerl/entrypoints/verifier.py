@@ -1,7 +1,7 @@
 import hydra
 from omegaconf import DictConfig
 
-from pipelinerl.verifier_api import run_verifier
+from pipelinerl.math.verifier_api import run_verifier
 from pipelinerl.utils import better_crashing
 
 
