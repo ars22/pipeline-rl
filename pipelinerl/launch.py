@@ -24,6 +24,7 @@ os.environ["NCCL_CUMEM_ENABLE"] = "0"
 os.environ["TORCH_DISABLE_SHARE_RDZV_TCP_STORE"] = "1"
 os.environ["HF_DATASETS_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
+os.environ["VLLM_USE_V1"] = "0"
 
 
 def _popen(

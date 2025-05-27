@@ -34,7 +34,7 @@ cd pipelinerl
 Create the environments with dependencies.
 ```bash
 conda create -n pipeline-rl -y python=3.11
-conda run --no-capture-output -n pipeline-rl pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121 
+conda run --no-capture-output -n pipeline-rl pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu121 
 conda run --no-capture-output -n pipeline-rl pip install -r requirements.txt --no-build-isolation
 ```
 
