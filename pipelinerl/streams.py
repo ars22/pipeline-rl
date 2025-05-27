@@ -18,11 +18,14 @@ _REREAD_DELAY = 0.1
 # Every time we recheck if a stream is createed we print a warning, best not to do it too often.
 _RECHECK_DELAY = 3.0
 
+
 class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
 
+
 _backend: RedisConfig | Literal["files"] | None = None
+
 
 def set_streams_backend(backend: Literal["redis"] | Literal["files"], **kwargs):
     """Set the backend for the streams. Currently only redis is supported."""
@@ -35,7 +38,8 @@ def set_streams_backend(backend: Literal["redis"] | Literal["files"], **kwargs):
         _backend = "files"
     else:
         raise ValueError(f"Invalid backend: {backend}. Only 'redis' and 'files' are supported.")
-    
+
+
 def raise_if_backend_not_set():
     """Raise an error if the backend is not set. This is used to check if the backend is set before using it."""
     if _backend is None:
@@ -60,12 +64,12 @@ class StreamRangeSpec(BaseModel):
 
     def __str__(self):
         return f"{self.topic}/{self.instance}/{self.partition_range[0]}-{self.partition_range[1]}"
-    
+
 
 # Inferfaces
 
-class StreamWriter(ABC):
 
+class StreamWriter(ABC):
     @abstractmethod
     def __enter__(self) -> Self:
         pass
@@ -77,10 +81,9 @@ class StreamWriter(ABC):
     @abstractmethod
     def write(self, data: Any):
         pass
-    
+
 
 class StreamReader(ABC):
-
     @abstractmethod
     def __enter__(self) -> Self:
         pass
@@ -93,8 +96,9 @@ class StreamReader(ABC):
     def read(self) -> Iterator[Any]:
         pass
 
-    
+
 # Redis-based streaming
+
 
 def connect_to_redis(config: RedisConfig):
     """Connect to the Redis server. Unlimited retries."""
@@ -103,7 +107,7 @@ def connect_to_redis(config: RedisConfig):
             logger.info(f"Trying to connect to Redis server at {config.host}:{config.port}")
             client = redis.Redis(host=config.host, port=config.port)
             client.ping()
-            logger.info(f"Connected to Redis server")            
+            logger.info(f"Connected to Redis server")
             return client
         except (redis.exceptions.TimeoutError, redis.ConnectionError) as e:
             logger.info(f"Waiting for Redis server ({type(e)}). Retrying in 5 seconds.")
@@ -111,7 +115,6 @@ def connect_to_redis(config: RedisConfig):
 
 
 class RedisStreamWriter(StreamWriter):
-
     def __init__(self, stream: SingleStreamSpec, mode: Literal["w", "a"] = "a"):
         self.stream = stream
         assert isinstance(_backend, RedisConfig)
@@ -136,10 +139,10 @@ class RedisStreamWriter(StreamWriter):
             self._index = 0
         else:
             raise ValueError(f"Invalid mode: {mode}. Only 'w' and 'a' are supported.")
-        
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_value, traceback):
         self._redis.close()
 
@@ -152,7 +155,6 @@ class RedisStreamWriter(StreamWriter):
 
 
 class RedisStreamReader(StreamReader):
-
     def __init__(self, stream: SingleStreamSpec):
         self.stream = stream
         assert isinstance(_backend, RedisConfig)
@@ -163,7 +165,7 @@ class RedisStreamReader(StreamReader):
 
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_value, traceback):
         self._redis.close()
 
@@ -182,9 +184,8 @@ class RedisStreamReader(StreamReader):
                 if int(entry["index"]) != self._index:
                     raise ValueError(f"Index mismatch: expected {self._index}, got {entry['index']}")
                 self._last_id = entry_id
-                self._index += 1                
+                self._index += 1
                 yield json.loads(entry["data"])
-
 
 
 class RoundRobinRedisStreamWriter(StreamWriter):
@@ -199,17 +200,18 @@ class RoundRobinRedisStreamWriter(StreamWriter):
                     exp_path=self.streams.exp_path,
                     topic=self.streams.topic,
                     instance=self.streams.instance,
-                    partition=i
+                    partition=i,
                 ),
-                mode=mode
-            ) for i in range(*self.streams.partition_range)
+                mode=mode,
+            )
+            for i in range(*self.streams.partition_range)
         ]
 
     def __enter__(self):
         for writer in self._writers:
             writer.__enter__()
         return self
-    
+
     def __exit__(self, exc_type, exc_value, traceback):
         for writer in self._writers:
             writer.__exit__(exc_type, exc_value, traceback)
@@ -221,6 +223,7 @@ class RoundRobinRedisStreamWriter(StreamWriter):
 
 # File-based streaming
 
+
 def stream_dir(exp_path: Path, topic: str, instance: int, partition: int) -> Path:
     return exp_path / "streams" / topic / str(instance) / str(partition)
 
@@ -231,10 +234,10 @@ def stream_file(stream_dir: Path, shard_id: int) -> Path:
 
 StreamSpec = SingleStreamSpec | StreamRangeSpec
 
+
 class FileStreamWriter(StreamWriter):
-        
     def __init__(self, stream: SingleStreamSpec, mode: Literal["w", "a"] = "a"):
-        self.stream = stream      
+        self.stream = stream
         self.mode = mode
 
     def __enter__(self):
@@ -244,7 +247,7 @@ class FileStreamWriter(StreamWriter):
         self._file_path = stream_file(_file_dir, 0)
         self._file = open(self._file_path, self.mode)
         return self
-    
+
     def __exit__(self, exc_type, exc_value, traceback):
         self._file.close()
 
@@ -252,24 +255,24 @@ class FileStreamWriter(StreamWriter):
         if isinstance(data, BaseModel):
             data = data.model_dump()
         self._file.write(orjson.dumps(data).decode("utf-8"))
-        self._file.write("\n")    
-        self._file.flush()    
+        self._file.write("\n")
+        self._file.flush()
 
 
 def read_jsonl_stream(f: TextIO, retry_delay: float = _REREAD_DELAY) -> Iterator[Any]:
     position = f.tell()
-    
+
     while True:
         line = f.readline()
-        
+
         # Handle line ending
-        if line.endswith('\n'):
+        if line.endswith("\n"):
             try:
                 yield json.loads(line)
                 position = f.tell()
             except json.JSONDecodeError as e:
                 e.msg += f" (position {position})"
-                e.position = position # type: ignore
+                e.position = position  # type: ignore
                 raise e
         else:
             f.seek(position)
@@ -278,7 +281,6 @@ def read_jsonl_stream(f: TextIO, retry_delay: float = _REREAD_DELAY) -> Iterator
 
 
 class FileStreamReader(StreamReader):
-
     def __init__(self, stream: SingleStreamSpec):
         self.stream = stream
 
@@ -311,21 +313,22 @@ class FileStreamReader(StreamReader):
                 # we get lines like \0x00\0x00\0x00\0x00\0x00\0x00\0x00\0x00 that break the JSON decoder.
                 # We have to reopen the file and seek to the previous position to try again.
                 if cur_retries < max_retries:
-                    logger.warning(f"Could not decode JSON from {self.stream}, might have run into end of the file. Will reopen the file and retry ({cur_retries}/{max_retries}), starting from position {e.position})") # type: ignore
+                    logger.warning(
+                        f"Could not decode JSON from {self.stream}, might have run into end of the file. Will reopen the file and retry ({cur_retries}/{max_retries}), starting from position {e.position})"
+                    )  # type: ignore
                     time.sleep(retry_time)
                     self._file.close()
                     self._file = open(self._file_path, "r")
                     self._file.seek(e.position)
                     retry_time *= 2
-                    cur_retries += 1                    
+                    cur_retries += 1
                     continue
-                else:   
+                else:
                     logger.error(f"Error reading stream {self.stream}, giving up after {max_retries} retries")
                     raise e
 
 
 class RoundRobinFileStreamWriter(StreamWriter):
-
     def __init__(self, streams: StreamRangeSpec, mode: Literal["w", "a"] = "a"):
         self.streams = streams
         self._next_stream = 0
@@ -335,17 +338,18 @@ class RoundRobinFileStreamWriter(StreamWriter):
                     exp_path=self.streams.exp_path,
                     topic=self.streams.topic,
                     instance=self.streams.instance,
-                    partition=i
+                    partition=i,
                 ),
-                mode=mode
-            ) for i in range(*self.streams.partition_range)
-        ]        
+                mode=mode,
+            )
+            for i in range(*self.streams.partition_range)
+        ]
 
     def __enter__(self):
         for writer in self._writers:
             writer.__enter__()
         return self
-    
+
     def __exit__(self, exc_type, exc_value, traceback):
         for writer in self._writers:
             writer.__exit__(exc_type, exc_value, traceback)
@@ -354,7 +358,9 @@ class RoundRobinFileStreamWriter(StreamWriter):
         self._writers[self._next_stream].write(data)
         self._next_stream = (self._next_stream + 1) % len(self._writers)
 
+
 # Below are the public stream APIs. Easy to replace files with Redis or another pubsub system.
+
 
 def read_stream(stream: SingleStreamSpec) -> StreamReader:
     """Start reading the stream from the beginning"""
@@ -365,7 +371,7 @@ def read_stream(stream: SingleStreamSpec) -> StreamReader:
         return RedisStreamReader(stream)
     elif _backend == "files":
         return FileStreamReader(stream)
-    else:   
+    else:
         assert False
 
 
@@ -390,4 +396,3 @@ def write_to_streams(streams: StreamSpec, mode: Literal["w", "a"] = "a") -> Stre
             assert False
     else:
         assert False
-    

@@ -19,14 +19,16 @@ async def llm_async_generate(llm: TrainableLLM, prompt: Prompt, session: aiohttp
         "stream": llm.stream,
     }
     if llm.collect_logprobs:
-        data.update({
-            "logprobs": 1,
-            "include_stop_str_in_output": True,
-            "skip_special_tokens": False,
-        })
-    
+        data.update(
+            {
+                "logprobs": 1,
+                "include_stop_str_in_output": True,
+                "skip_special_tokens": False,
+            }
+        )
+
     logger.debug(f"POST request to {llm.base_url}/v1/chat/completions")
-    
+
     async with session.post(
         url=f"{llm.base_url}/v1/chat/completions",
         json=data | llm.parameters,
@@ -38,7 +40,7 @@ async def llm_async_generate(llm: TrainableLLM, prompt: Prompt, session: aiohttp
             logger.error(f"Failed to get completion: {error_text}")
             response.raise_for_status()
         data = await response.json()
-    
+
     try:
         content = data["choices"][0]["message"]["content"]
         if not content:
@@ -60,7 +62,7 @@ async def llm_async_generate(llm: TrainableLLM, prompt: Prompt, session: aiohttp
     except Exception as e:
         logger.exception(f"Failed to parse llm response: {data}")
         raise e
-        
+
     output = LLMOutput(content=content)
     llm_call = llm.log_output(prompt, output)
     assert llm_call is not None, "llm_call is None"

@@ -47,12 +47,8 @@ class RLConfig(BaseModel):
         default=True,
         description="Use advantages instead of rewards to compute the loss",
     )
-    epsilon: float = Field(
-        default=0.2, description="Clip parameter for the ration of log probs"
-    )
-    batch_size: int = Field(
-        default=0, description="Batch size is required for normalization"
-    )
+    epsilon: float = Field(default=0.2, description="Clip parameter for the ration of log probs")
+    batch_size: int = Field(default=0, description="Batch size is required for normalization")
     reward_minus_kl_coef: float = Field(
         default=0.0,
         # https://arxiv.org/abs/2402.14740
@@ -86,9 +82,7 @@ class RLConfig(BaseModel):
         default=True,
         description="Normalize the advantage by the standard deviation",
     )
-    overlong_filtering: bool = Field(
-        default=False, description="Filter out sequence that do not have eos_token_id"
-    )
+    overlong_filtering: bool = Field(default=False, description="Filter out sequence that do not have eos_token_id")
     group_normalization: bool = Field(
         default=False,
         description="Divide the weight of each sequence by the (average) number of tokens in the group",
@@ -110,9 +104,7 @@ def make_rl_data_callback(args, current_dir, rl_config, model):
     return populate_rl_data_
 
 
-def linear_decay_coef(
-    current_step: int, max_step: int, initial_coef: float, final_coef: float
-) -> float:
+def linear_decay_coef(current_step: int, max_step: int, initial_coef: float, final_coef: float) -> float:
     """
     Linearly decay the coefficient from initial to final value over the course of training.
 
@@ -170,9 +162,7 @@ def rl_step(
 
         # ensure we have valid sequence boundaries
         assert num_sequences > 0, "No sequences found in packed batch"
-        assert seq_boundaries[-1] == position_ids.shape[0], (
-            "Sequence boundaries don't match input length"
-        )
+        assert seq_boundaries[-1] == position_ids.shape[0], "Sequence boundaries don't match input length"
 
         # pre-compute segment boundaries
         segments = list(zip(seq_boundaries[:-1], seq_boundaries[1:]))
@@ -199,12 +189,8 @@ def rl_step(
     del logits, probs
 
     # get log probs for actual tokens
-    new_logprobs = torch.gather(
-        logprobs, dim=2, index=batch["input_ids"][:, 1:].unsqueeze(2)
-    ).squeeze(2)
-    assert torch.isfinite(new_logprobs).all(), (
-        f"new_logprobs is not finite: {new_logprobs}"
-    )
+    new_logprobs = torch.gather(logprobs, dim=2, index=batch["input_ids"][:, 1:].unsqueeze(2)).squeeze(2)
+    assert torch.isfinite(new_logprobs).all(), f"new_logprobs is not finite: {new_logprobs}"
     del logprobs
 
     # get shifted values and compute ratios
@@ -230,17 +216,13 @@ def rl_step(
     log_ratio_new_old = new_logprobs - old_logprobs
     ratio_new_old = torch.exp(log_ratio_new_old)
     log_ratio_ref_new = ref_logprobs - new_logprobs
-    assert torch.isfinite(log_ratio_ref_new).all(), (
-        f"log_ratio_ref_new is not finite: {log_ratio_ref_new}"
-    )
+    assert torch.isfinite(log_ratio_ref_new).all(), f"log_ratio_ref_new is not finite: {log_ratio_ref_new}"
     # compute weights and KL divergence
     log_p_weights = advantages if config.use_advantages else rewards
     if config.relu_log_p_weights:
         log_p_weights = torch.clamp(log_p_weights, min=0)
 
-    clamp_log_ratio_ref_new_indicators = (
-        torch.abs(log_ratio_ref_new) > config.clamp_log_ratio_ref_new_value
-    )
+    clamp_log_ratio_ref_new_indicators = torch.abs(log_ratio_ref_new) > config.clamp_log_ratio_ref_new_value
 
     log_ratio_ref_new_clamp = torch.clamp(
         log_ratio_ref_new,
@@ -248,25 +230,17 @@ def rl_step(
         max=config.clamp_log_ratio_ref_new_value,
     )
 
-    approx_kl = (
-        torch.exp(log_ratio_ref_new_clamp) - log_ratio_ref_new_clamp - 1
-    )  # Schulman KL approx
+    approx_kl = torch.exp(log_ratio_ref_new_clamp) - log_ratio_ref_new_clamp - 1  # Schulman KL approx
 
     assert torch.isfinite(approx_kl).all(), f"approx_kl is not finite: {approx_kl}"
-    entropy_bonus_coef = linear_decay_coef(
-        current_step, max_step, config.entropy_bonus, config.final_entropy_bonus
-    )
-    kl_coef = linear_decay_coef(
-        current_step, max_step, config.kl_coef, config.final_kl_coef
-    )
+    entropy_bonus_coef = linear_decay_coef(current_step, max_step, config.entropy_bonus, config.final_entropy_bonus)
+    kl_coef = linear_decay_coef(current_step, max_step, config.kl_coef, config.final_kl_coef)
 
     # compute algorithm-specific losses
     match config.algo:
         case "grpo":
             surr1 = ratio_new_old * log_p_weights
-            clamped_ratio = torch.clamp(
-                ratio_new_old, 1 - config.epsilon, 1 + config.epsilon
-            )
+            clamped_ratio = torch.clamp(ratio_new_old, 1 - config.epsilon, 1 + config.epsilon)
             clamp_log_ratio_new_old_indicators = clamped_ratio != ratio_new_old
             surr2 = clamped_ratio * log_p_weights
             policy_loss = torch.min(surr1, surr2)
@@ -280,9 +254,7 @@ def rl_step(
             raise ValueError(f"Unknown algorithm {config.algo}")
 
     # combine loss components
-    loss = (
-        policy_loss - kl_coef * approx_kl + entropy_bonus_coef * entropy
-    )  # 1 x (BxL) x 1
+    loss = policy_loss - kl_coef * approx_kl + entropy_bonus_coef * entropy  # 1 x (BxL) x 1
     assert loss.shape == tokens_weights.shape, (
         f"Loss shape {loss.shape} does not match example weights shape {tokens_weights.shape}"
     )
@@ -316,15 +288,11 @@ def rl_step(
         "surr2": mean_sum(surr2, masks_shifted, segments).item(),
         "ratio_new_old": mean_sum(ratio_new_old, masks_shifted, segments).item(),
         "ratio_new_old_sum": sum_sum(ratio_new_old, masks_shifted, segments).item(),
-        "ratio_new_old_squared_sum": sum_sum( # useful to estimate the ESS
+        "ratio_new_old_squared_sum": sum_sum(  # useful to estimate the ESS
             ratio_new_old * ratio_new_old, masks_shifted, segments
         ).item(),
-        "ratio_ref_new": mean_sum(
-            torch.exp(log_ratio_ref_new), masks_shifted, segments
-        ).item(),
-        "ratio_ref_old": mean_sum(
-            torch.exp(ref_logprobs - old_logprobs), masks_shifted, segments
-        ).item(),
+        "ratio_ref_new": mean_sum(torch.exp(log_ratio_ref_new), masks_shifted, segments).item(),
+        "ratio_ref_old": mean_sum(torch.exp(ref_logprobs - old_logprobs), masks_shifted, segments).item(),
         "clamp_log_ratio_ref_new_indicator": mean_sum(
             clamp_log_ratio_ref_new_indicators, masks_shifted, segments
         ).item(),
@@ -395,22 +363,16 @@ def populate_rl_data(dataset: Dataset, eos_token_id: int, config: RLConfig) -> D
 
     # Handle overflow
     df["overflow"] = df.apply(
-        lambda row: [0.0] * len(row["overflow"])
-        if eos_token_id in row["input_ids"]
-        else [1.0] * len(row["overflow"]),
+        lambda row: [0.0] * len(row["overflow"]) if eos_token_id in row["input_ids"] else [1.0] * len(row["overflow"]),
         axis=1,
     )
 
     # Broadcast group tokens
-    df["new_group_tokens"] = df.apply(
-        lambda row: [row["new_group_tokens"]] * len(row["input_ids"]), axis=1
-    )
+    df["new_group_tokens"] = df.apply(lambda row: [row["new_group_tokens"]] * len(row["input_ids"]), axis=1)
 
     # Replace columns in the dataset
     dataset = replace_dataset_column(dataset, "advantages", df["advantages"].tolist())
-    dataset = replace_dataset_column(
-        dataset, "group_tokens", df["new_group_tokens"].tolist()
-    )
+    dataset = replace_dataset_column(dataset, "group_tokens", df["new_group_tokens"].tolist())
     dataset = replace_dataset_column(dataset, "overflow", df["overflow"].tolist())
 
     logger.debug("Finish Populate RL Data")
@@ -433,12 +395,8 @@ def prepare_rl_fields(
 
     encoding["rewards"] = [reward] * len(encoding["labels"])
     encoding["advantages"] = [0.0] * len(encoding["labels"])  # place holder
-    encoding["old_logprobs"] = [0] * (
-        len(encoding["labels"]) - len(old_logprobs)
-    ) + old_logprobs
-    encoding["ref_logprobs"] = [0] * (
-        len(encoding["labels"]) - len(ref_logprobs)
-    ) + ref_logprobs
+    encoding["old_logprobs"] = [0] * (len(encoding["labels"]) - len(old_logprobs)) + old_logprobs
+    encoding["ref_logprobs"] = [0] * (len(encoding["labels"]) - len(ref_logprobs)) + ref_logprobs
     encoding["overflow"] = [0] * len(encoding["labels"])  # place holder
     encoding["group_tokens"] = [0] * len(encoding["labels"])  # place holder
     return encoding
