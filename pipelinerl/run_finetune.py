@@ -730,11 +730,13 @@ def rl_finetuning_worker(
                 # Final boundary before optimizer step
                 model.set_gradient_accumulation_boundary(True)
                 model.step()
-                grad_norm = model.get("_global_grad_norm", None)
-                print("Loss scale: ", model.loss_scale)
-                if grad_norm is not None:
-                    # The grad norm 
-                    training_metrics.grad_norm = min(grad_norm.item(), args.gradient_clipping_threshold)
+                grad_norm = model._global_grad_norm if hasattr(model, "_global_grad_norm") else None
+                max_grad_norm = model.gradient_clipping() if hasattr(model, "gradient_clipping") else None
+                if grad_norm:
+                    if max_grad_norm is not None:
+                        training_metrics.grad_norm = min(grad_norm.item(), max_grad_norm)
+                    else:
+                        training_metrics.grad_norm = grad_norm.item()
                 else:
                     # If not, use the default behavior
                     training_metrics.grad_norm = -1.0
