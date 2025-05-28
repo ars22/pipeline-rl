@@ -178,7 +178,7 @@ class WorldMap:
             )
 
     def _place_inference_jobs(self, cfg):
-        for worker_idx in range(cfg.world.replicas):
+        for _ in range(cfg.world.replicas):
             for actor_llm_idx in range(self.llms_per_actor):
                 node = next(
                     (node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_llm), None
@@ -198,7 +198,7 @@ class WorldMap:
                     url=llm_url,
                 )
 
-        for worker_idx in range(cfg.world.replicas):
+        for _ in range(cfg.world.replicas):
             for preprocessor_llm_idx in range(self.llms_per_preprocessor):
                 node = next(
                     (node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_llm), None
