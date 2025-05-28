@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Literal
 from pydantic import BaseModel
 from omegaconf import DictConfig
 import torch
@@ -9,14 +10,18 @@ logger = logging.getLogger(__name__)
 
 class Job(BaseModel):
     """Represent the decision to launch a replica of a particular worker (e.g. actor) at a particular rank"""
-
+    # The job kind 
     kind: str
-    # The global index of this job among jobs of the same kind
+    # The global index of this job among all jobs
+    idx: int 
+    # The index of this job among jobs of the same kind
     replica_idx: int
     # The index of this job among similar jobs on the same node
     local_idx: int = 0
     # Where this job should run
     node_rank: int
+    hostname: str 
+    port: int | None = None
     # Which GPUs the job will use
     gpus: list[int] = []
     # The URL of the job
@@ -68,7 +73,7 @@ class WorldMap:
         for node, remaining_gpus in self.available_gpus.items():
             gpus = list(remaining_gpus)
             if gpus:
-                self.job_map[node].append(Job(kind="finetune", replica_idx=node, node_rank=node, gpus=gpus))
+                self.add_job(node_rank=node, kind="finetune", replica_idx=node, gpus=gpus)
 
         # Pretty-log the world map
         self._log_info("--- WORLD MAP ---")
@@ -76,6 +81,25 @@ class WorldMap:
             self._log_info(f"Node {node} has {len(jobs)} jobs:")
             for job in jobs:
                 self._log_info(f"  {job.kind} {job.replica_idx} on gpus {job.gpus}, local idx {job.local_idx}")
+
+    def add_job(self, node_rank: int, kind: str, replica_idx: int, local_idx: int = 0, port: int | None = None, gpus: list[int] | None = None, url: str = "") -> Job:
+        """Add a job to the world map."""
+        if gpus is None:
+            gpus = []
+        job = Job(
+            kind=kind,             
+            idx=len(self.job_map[node_rank]),
+            replica_idx=replica_idx,
+            local_idx=local_idx, 
+            node_rank=node_rank, 
+            hostname=self.address_map[node_rank],
+            port=port,
+            gpus=gpus,
+            url=url
+        )       
+        self.job_map[node_rank].append(job)
+        return job
+
 
     def _split_gpus_by_purpose(self, cfg):
         fraction_sum = cfg.world.actor_fraction + cfg.world.preprocessor_fraction + cfg.world.finetune_fraction
@@ -138,21 +162,20 @@ class WorldMap:
                 if node is None:
                     raise ValueError("Not enough gpus to place all actors")
                 if not actor_placed:
-                    self.job_map[node].append(Job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[]))
-                    self.job_map[node].append(Job(kind="verifier", replica_idx=worker_idx, node_rank=node, gpus=[]))
+                    self.add_job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[])
+                    self.add_job(kind="environment", replica_idx=worker_idx, node_rank=node, port=cfg.world.environment_start_port, gpus=[])
                     actor_placed = True
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_llm)]
                 local_idx = min(gpus)
                 llm_url = f"http://{self.address_map[node]}:{8080 + local_idx}"
-                self.job_map[node].append(
-                    Job(
-                        kind="actor_llm",
-                        replica_idx=actor_llm_idx,
-                        local_idx=local_idx,
-                        node_rank=node,
-                        gpus=gpus,
-                        url=llm_url,
-                    )
+                self.add_job(
+                    kind="actor_llm",
+                    replica_idx=actor_llm_idx,
+                    local_idx=local_idx,
+                    node_rank=node,
+                    gpus=gpus,
+                    port=8080 + local_idx,
+                    url=llm_url,
                 )
 
         preprocessor_placed = False
@@ -164,26 +187,22 @@ class WorldMap:
                 if node is None:
                     raise ValueError("Not enough gpus to place all preprocessors")
                 if not preprocessor_placed:
-                    self.job_map[node].append(Job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[]))
+                    self.add_job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[])
                     preprocessor_placed = True
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_llm)]
                 local_idx = min(gpus)
                 ref_url = f"http://{self.address_map[node]}:{8180 + local_idx}"
-                self.job_map[node].append(
-                    Job(
-                        kind="preprocessor_llm",
-                        replica_idx=preprocessor_llm_idx,
-                        local_idx=local_idx,
-                        node_rank=node,
-                        gpus=gpus,
-                        url=ref_url,
-                    )
+                self.add_job(
+                    kind="preprocessor_llm",
+                    replica_idx=preprocessor_llm_idx,
+                    local_idx=local_idx,
+                    node_rank=node,
+                    gpus=gpus,
+                    url=ref_url,
                 )
         if not preprocessor_placed:
             assert cfg.world.preprocessor_fraction == 0
-            self.job_map[self.world_size - 1].append(
-                Job(kind="preprocessor", replica_idx=0, node_rank=self.world_size - 1, gpus=[])
-            )
+            self.add_job(kind="preprocessor", replica_idx=0, node_rank=self.world_size - 1, gpus=[])
 
     def my_jobs(self) -> list[Job]:
         return self.job_map[self.my_rank]

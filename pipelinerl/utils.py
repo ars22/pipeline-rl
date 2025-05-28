@@ -10,6 +10,7 @@ import traceback
 from typing import Dict, Mapping, Optional, TextIO, Union, List
 import threading
 import numpy as np
+from omegaconf import DictConfig
 import psutil
 import requests
 import torch
@@ -236,6 +237,23 @@ def wait_for_inference_servers(urls: list[str]):
         logger.info(f"Still waiting for {still_not_up} ...")
         time.sleep(3.0)
     logger.info("All inference servers are up")
+
+
+def wait_for_environments(cfg: DictConfig):
+    """
+    Wait for the verifier to be ready.
+    """
+    env_jobs = [job for job in cfg.jobs if job.kind == "environment"]
+    for job in env_jobs:
+        while True:
+            # use requests
+            try:
+                response = requests.get(f"http://{job.host}:{job.port}/health")
+                if response.status_code == 200:
+                    break
+            except:
+                logger.info("Verifier not ready yet, waiting...")
+                time.sleep(5.0)
 
 
 @contextlib.contextmanager

@@ -30,13 +30,13 @@ from pipelinerl.streams import (
     set_streams_backend,
     write_to_streams,
 )
-from pipelinerl.math.verifier_api import wait_for_verifier
 
 from .utils import (
     always_or_never_success_stats,
     calculate_per_group_stats,
     calculate_stats,
     setup_logging,
+    wait_for_environments,
     wait_for_inference_servers,
 )
 
@@ -613,7 +613,7 @@ def run_actor_loop(cfg: DictConfig):
     ]
 
     wait_for_inference_servers(llm_urls)
-    wait_for_verifier(cfg.verifier)
+    wait_for_environments(cfg)
     trainer_state = TrainerState(exp_path)
     if cfg.debug.mode in ["actor", "open_loop"]:
         trainer_state.propagated_weight_version = 0

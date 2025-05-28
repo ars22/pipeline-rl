@@ -3,7 +3,7 @@ import time
 import aiohttp
 from omegaconf import DictConfig
 from pydantic import BaseModel
-from tapeagents.core import LLMCall, Prompt, TrainingText
+from tapeagents.core import Prompt, TrainingText
 from tapeagents.llms.trainable import TrainableLLM
 
 from pipelinerl.async_llm import llm_async_generate
@@ -40,18 +40,30 @@ def make_prompt(problem: dict, cfg: DictConfig) -> Prompt:
     return Prompt(messages=messages)
 
 
-async def process_llm_call(
-    session: aiohttp.ClientSession,
-    verifier_cfg: DictConfig,
-    llm_call: LLMCall,
+async def generate_math_rollout(
+    cfg: DictConfig,
     llm: TrainableLLM,
-    answer: str,  # Gold answer to verify against
-    rewards: RewardTable,
-    discount_factor: float,
-) -> tuple[TrainingText, dict[str, float]]:
+    problem: dict,
+    session: aiohttp.ClientSession,
+) -> RolloutResult:
+    prompt = make_prompt(problem=problem, cfg=cfg)
+    time_start = time.time()
+    llm_call = await llm_async_generate(llm, prompt, session)
+    latency = time.time() - time_start
+
     assert llm_call.output.content is not None
+    rewards = RewardTable(**dict(cfg.rewards))
+    discount_factor = cfg.actor.discount_factor
+
+    # math_verify is a fast environment, no support for environment replicas for now
+    env_job, = [job for job in cfg.jobs if cfg.kind == "environment"]
     answer_status = await verify_answer_rpc(
-        session=session, verifier_cfg=verifier_cfg, prediction=llm_call.output.content, gold=answer, strict=True
+        session=session,
+        host=env_job.host,
+        port=env_job.port,
+        prediction=llm_call.output.content,
+        gold=problem["answer"],
+        strict=True,
     )
 
     trace = llm.make_training_text(llm_call.prompt, llm_call.output)
@@ -94,7 +106,7 @@ async def process_llm_call(
     trace.reward = reward
     trace.logprobs = [lp.logprob for lp in llm_call.logprobs if lp.generated]
 
-    stats = {
+    metrics = {
         "reward": reward,
         "success": answer_status == "correct",
         "no_error": answer_status != "unparsable",
@@ -104,26 +116,4 @@ async def process_llm_call(
         "overflow": 0 if finished else 1,
     }
 
-    return trace, stats
-
-
-async def generate_math_rollout(
-    cfg: DictConfig,
-    llm: TrainableLLM,
-    problem: dict,
-    session: aiohttp.ClientSession,
-) -> RolloutResult:
-    prompt = make_prompt(problem=problem, cfg=cfg)
-    time_start = time.time()
-    llm_call = await llm_async_generate(llm, prompt, session)
-    latency = time.time() - time_start
-    sample, metrics = await process_llm_call(
-        session=session,
-        verifier_cfg=cfg.verifier,
-        llm_call=llm_call,
-        llm=llm,
-        answer=problem["answer"],
-        rewards=RewardTable(**dict(cfg.rewards)),
-        discount_factor=cfg.actor.discount_factor,
-    )
-    return RolloutResult(training_texts=[sample], metrics=metrics, latency=latency, dataset_name=problem.get("dataset"))
+    return RolloutResult(training_texts=[trace], metrics=metrics, latency=latency, dataset_name=problem.get("dataset"))

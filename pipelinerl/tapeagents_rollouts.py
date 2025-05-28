@@ -11,7 +11,7 @@ from tapeagents.llms.trainable import TrainableLLM
 from tapeagents.orchestrator import get_agent_and_env_from_config, main_loop
 
 from pipelinerl.async_llm import llm_async_generate
-from pipelinerl.math_rollouts import RolloutResult
+from pipelinerl.math.rollouts import RolloutResult
 
 
 def run_tapeagent(
