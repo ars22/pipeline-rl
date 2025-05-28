@@ -18,6 +18,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from transformers import PreTrainedTokenizer
 from collections import defaultdict
 
+from pipelinerl.world import Job
 from tapeagents.llms import LLMOutput
 from tapeagents.core import Prompt
 
@@ -243,16 +244,17 @@ def wait_for_environments(cfg: DictConfig):
     """
     Wait for the verifier to be ready.
     """
-    env_jobs = [job for job in cfg.jobs if job.kind == "environment"]
+    env_jobs = [Job(**job) for job in cfg.jobs if job.kind == "environment"]
     for job in env_jobs:
         while True:
+            url = f"http://{job.hostname}:{job.port}/health"
             # use requests
             try:
-                response = requests.get(f"http://{job.host}:{job.port}/health")
+                response = requests.get(url)
                 if response.status_code == 200:
                     break
             except:
-                logger.info("Verifier not ready yet, waiting...")
+                logger.info(f"Waiting for environment at {url} to be ready...")
                 time.sleep(5.0)
 
 

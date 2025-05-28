@@ -78,12 +78,13 @@ vllm_config:
     generation-config: vllm
 
 world:
-  actors: 1
-  preprocessors: 1
+  replicas: 1
   
   actor_fraction: 4
   preprocessor_fraction: 0
   finetune_fraction: 4
+
+  env_replicas: 2
 
   actor_group_port: 9000
   environment_start_port: 7777

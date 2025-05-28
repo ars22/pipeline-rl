@@ -160,7 +160,7 @@ def verify_countdown(prediction: str, gold: str) -> str:
 async def verify_answer_rpc(
     session: aiohttp.ClientSession,
     host: str,
-    port: str,
+    port: int,
     prediction: str,
     gold: str,
     strict: bool = True,
@@ -186,7 +186,6 @@ async def verify_answer_rpc(
             logger.error(f"Error verifying answer: {response.status}")
             logger.error(f"Response: {await response.text()}")
             raise ValueError("Error verifying answer")
-
 
 
 class MathEnvironment:

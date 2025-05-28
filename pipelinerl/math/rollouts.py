@@ -1,8 +1,10 @@
 import time
+import random
 
 import aiohttp
 from omegaconf import DictConfig
 from pydantic import BaseModel
+from pipelinerl.world import Job
 from tapeagents.core import Prompt, TrainingText
 from tapeagents.llms.trainable import TrainableLLM
 
@@ -56,10 +58,13 @@ async def generate_math_rollout(
     discount_factor = cfg.actor.discount_factor
 
     # math_verify is a fast environment, no support for environment replicas for now
-    env_job, = [job for job in cfg.jobs if cfg.kind == "environment"]
+    env_jobs = [Job(**job) for job in cfg.jobs if job["kind"] == "environment"]
+    # choose the job randomly
+    env_job = random.choice(env_jobs)
+    assert env_job.port is not None
     answer_status = await verify_answer_rpc(
         session=session,
-        host=env_job.host,
+        host=env_job.hostname,
         port=env_job.port,
         prediction=llm_call.output.content,
         gold=problem["answer"],
