@@ -730,10 +730,20 @@ def rl_finetuning_worker(
                 # Final boundary before optimizer step
                 model.set_gradient_accumulation_boundary(True)
                 model.step()
+                grad_norm = model.get("_global_grad_norm", None)
+                print("Loss scale: ", model.loss_scale)
+                if grad_norm is not None:
+                    # The grad norm 
+                    training_metrics.grad_norm = min(grad_norm.item(), args.gradient_clipping_threshold)
+                else:
+                    # If not, use the default behavior
+                    training_metrics.grad_norm = -1.0
             else:
+                max_grad_norm = args.get("gradient_clipping_threshold", None)
+                training_metrics.grad_norm = get_accelerator().clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()
                 optimizer.zero_grad()
-
+        
         @contextlib.contextmanager
         def toggle_sync(sync: bool):
             """Wrap accelerate.no_sync() if sync is False."""
@@ -779,12 +789,6 @@ def rl_finetuning_worker(
         training_metrics.samples = start_samples + total_samples
         this_worker_tokens = sum(tokens_processed)
         training_metrics.tokens += this_worker_tokens * get_accelerator().state.num_processes
-        if args.gradient_clipping_threshold:
-            grad_norm = get_accelerator().clip_grad_norm_(model.parameters(), args.gradient_clipping_threshold)
-            # grad_norm is None when using DeepSpeed
-            training_metrics.grad_norm = grad_norm.item() if grad_norm else -1.0
-
-            # Synchronize workers before optimizer step
         try:
             logger.info("Waiting for all workers to synchronize...")
             torch.cuda.synchronize()  # Ensure CUDA operations are complete
