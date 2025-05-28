@@ -185,7 +185,7 @@ def run_environment(cfg: DictConfig, job: Job):
         "--config-name",
         "exp_config",
         f"output_dir={cfg.output_dir}",
-        f"hydra.run.dir={cfg.output_dir}/environment",
+        f"hydra.run.dir={cfg.output_dir}/environment_{job.replica_idx}",
         f"me.job_idx={job.idx}",
     ]
     logger.info(f"Running environment with command: {' '.join(cmd)}")
