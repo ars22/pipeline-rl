@@ -8,7 +8,8 @@ from pipelinerl.utils import better_crashing
 def hydra_entrypoint(cfg: DictConfig):
     with better_crashing("environment"):
         environment = hydra.utils.instantiate(cfg.environment)
-        port = cfg.jobs[cfg.me.job_idx]["port"]
+        this_job, = [job for job in cfg.jobs if job["idx"] == cfg.me.job_idx]
+        port = this_job["port"]
         environment.launch(port=port)
 
 

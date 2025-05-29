@@ -66,6 +66,7 @@ class WorldMap:
         self.available_gpus = {i: set(range(self.node_size)) for i in reversed(range(self.world_size))}
         self.cpu_heavy_jobs = {i: 0 for i in range(self.world_size)} 
         self.job_map = {i: [] for i in range(self.world_size)}
+        self.total_jobs = 0
 
         if place_inference_jobs:
             self._place_inference_jobs(cfg)
@@ -91,7 +92,7 @@ class WorldMap:
             gpus = []
         job = Job(
             kind=kind,             
-            idx=len(self.job_map[node_rank]),
+            idx=self.total_jobs,
             replica_idx=replica_idx,
             local_idx=local_idx, 
             node_rank=node_rank, 
@@ -101,6 +102,7 @@ class WorldMap:
             url=url
         )       
         self.job_map[node_rank].append(job)
+        self.total_jobs += 1
         if cpu_heavy:
             self.cpu_heavy_jobs[node_rank] += 1
         return job
@@ -160,10 +162,10 @@ class WorldMap:
     def _place_pipeline_stages(self, cfg):
         for worker_idx in range(cfg.world.replicas):
             node = self.get_least_busy_node()
-            self.add_job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[])
+            self.add_job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
         for worker_idx in range(cfg.world.replicas):
             node = self.get_least_busy_node()
-            self.add_job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[])
+            self.add_job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
 
     def _place_environments(self, cfg):
         for worker_idx in range(cfg.world.env_replicas):
@@ -175,6 +177,7 @@ class WorldMap:
                 node_rank=node,
                 port=cfg.world.environment_start_port + envs_at_node,
                 gpus=[],
+                cpu_heavy=True,
             )
 
     def _place_inference_jobs(self, cfg):
