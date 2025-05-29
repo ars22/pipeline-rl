@@ -1,8 +1,8 @@
-import multiprocessing as mp
-from multiprocessing.managers import SharedMemoryManager
 import pickle
 import struct
-from typing import Any, Dict, List, Optional, Tuple, Union
+from multiprocessing.managers import SharedMemoryManager
+from typing import Any
+
 
 
 class SharedMemoryArray:
@@ -99,7 +99,7 @@ class SharedMemoryArray:
         """Return the number of entries in the array."""
         return self.num_entries
 
-    def clear(self, index: int = None) -> None:
+    def clear(self, index: int | None = None) -> None:
         """
         Clear an entry or the entire array.
 
