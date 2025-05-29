@@ -552,8 +552,7 @@ class ActorLoop:
         stats |= loop_stats
         if loop_stats.get("finished_groups", 0) >= 2 * self.window_size:
             stats |= sliding_stats
-        logger.info("Publishing stats to wandb")
-        wandb.log({f"actor/{split_name}/{k}": v for k, v in stats.items()})
+        wandb.log({f"actor/{k}": v for k, v in stats.items()})
         stats_writer.write(stats)
         self.init_stats()
 
