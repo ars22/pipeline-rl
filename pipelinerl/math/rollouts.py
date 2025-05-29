@@ -4,8 +4,9 @@ import random
 import aiohttp
 from omegaconf import DictConfig
 from pydantic import BaseModel
+from pipelinerl.rollouts import RolloutResult
 from pipelinerl.world import Job
-from tapeagents.core import Prompt, TrainingText
+from tapeagents.core import Prompt
 from tapeagents.llms.trainable import TrainableLLM
 
 from pipelinerl.async_llm import llm_async_generate
@@ -22,16 +23,6 @@ class RewardTable(BaseModel):
     unparsable_finished: float
     correct_answer_not_finished: float
     correct_answer_finished: float
-
-
-class RolloutResult(BaseModel):
-    training_texts: list[TrainingText]
-    metrics: dict[str, float]
-    latency: float
-    # optional so fields that it can be filled later after RolloutResult is created
-    model_version: int | None = None
-    dataset_name: str | None = None
-    group_id: str | None = None
 
 
 def make_prompt(problem: dict, cfg: DictConfig) -> Prompt:

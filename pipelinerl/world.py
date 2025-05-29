@@ -71,7 +71,8 @@ class WorldMap:
         if place_inference_jobs:
             self._place_inference_jobs(cfg)
         self._place_pipeline_stages(cfg)
-        self._place_environments(cfg)
+        if cfg.environment:
+            self._place_environments(cfg)
 
         # Place the finetune workers on the remaining gpus, take all remaining GPUs
         for node, remaining_gpus in self.available_gpus.items():

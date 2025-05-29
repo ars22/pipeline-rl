@@ -575,8 +575,9 @@ def run_actor_loop(cfg: DictConfig):
     data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor")
     test_data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor_test")
 
-    train_dataset = load_datasets(cfg.train_dataset_names)
-    test_dataset = load_datasets(cfg.test_dataset_names)
+    dataset_loader = hydra.utils.get_method(cfg.dataset_loader)
+    train_dataset = dataset_loader(cfg.train_dataset_names)
+    test_dataset = dataset_loader(cfg.test_dataset_names)
     if cfg.train_subset:
         train_dataset = train_dataset[cfg.train_subset.begin : cfg.train_subset.end]
     logger.info(f"Loaded {len(train_dataset)} training problems")
