@@ -683,9 +683,6 @@ def rl_finetuning_worker(
         ):
             training_metrics.samples_too_old_to_train += args.train_batch_size
         batch = versioned_batch.tensors
-        logger.info(
-            f"Got batch with version {versioned_batch.model_version} and size {len(batch['input_ids'])}X{len(batch['input_ids'][0])}"
-        )
         lag_stats["min_version"] = min(
             lag_stats.get("min_version", versioned_batch.model_version), versioned_batch.model_version
         )
@@ -714,9 +711,6 @@ def rl_finetuning_worker(
         dist.all_gather(all_samples, local_samples)
         total_samples = sum(int(tensor.item()) for tensor in all_samples)
         do_optimizer_step = total_samples == target_samples
-        logger.info(
-            f"{total_samples} out of {target_samples} samples before optimizer step. Do step: {do_optimizer_step}"
-        )
         using_deepspeed = isinstance(model, deepspeed.DeepSpeedEngine)
 
         def backward(loss, is_final_micro_batch=False):
