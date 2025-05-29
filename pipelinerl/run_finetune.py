@@ -734,7 +734,7 @@ def rl_finetuning_worker(
                 max_grad_norm = model.gradient_clipping() if hasattr(model, "gradient_clipping") else None
                 if isinstance(training_metrics.grad_norm, torch.Tensor):
                     grad_norm = grad_norm.item()
-                if grad_norm:
+                if grad_norm is not None:
                     if max_grad_norm is not None:
                         training_metrics.grad_norm = min(grad_norm, max_grad_norm)
                     else:
@@ -742,6 +742,8 @@ def rl_finetuning_worker(
                 else:
                     # max_grad_norm and grad_norm are not available 
                     training_metrics.grad_norm = -1.0
+                # check the type of training_metrics.grad_norm
+                print(f"Grad norm type: {type(training_metrics.grad_norm)}")
                 
             else:
                 max_grad_norm = args.get("gradient_clipping_threshold", None)
