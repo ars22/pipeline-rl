@@ -163,8 +163,6 @@ class WorldMap:
         for worker_idx in range(cfg.world.replicas):
             node = self.get_least_busy_node()
             self.add_job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
-        for worker_idx in range(cfg.world.replicas):
-            node = self.get_least_busy_node()
             self.add_job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
 
     def _place_environments(self, cfg):
