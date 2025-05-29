@@ -1,15 +1,15 @@
+from abc import ABC, abstractmethod
+import orjson
 import json
 import logging
 import os
-import time
-from abc import ABC, abstractmethod
 from pathlib import Path
+import time
 from typing import Any, Iterator, Literal, Self, TextIO
-
-import orjson
 import redis
 from pydantic import BaseModel
 import redis.exceptions
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +78,6 @@ class StreamWriter(ABC):
     def __exit__(self, exc_type, exc_value, traceback):
         pass
 
-    def __len__(self) -> int:
-        return 0
-
     @abstractmethod
     def write(self, data: Any):
         pass
@@ -94,9 +91,6 @@ class StreamReader(ABC):
     @abstractmethod
     def __exit__(self, exc_type, exc_value, traceback):
         pass
-
-    def __len__(self) -> int:
-        return 0
 
     @abstractmethod
     def read(self) -> Iterator[Any]:
@@ -113,7 +107,7 @@ def connect_to_redis(config: RedisConfig):
             logger.info(f"Trying to connect to Redis server at {config.host}:{config.port}")
             client = redis.Redis(host=config.host, port=config.port)
             client.ping()
-            logger.info("Connected to Redis server")
+            logger.info(f"Connected to Redis server")
             return client
         except (redis.exceptions.TimeoutError, redis.ConnectionError) as e:
             logger.info(f"Waiting for Redis server ({type(e)}). Retrying in 5 seconds.")
@@ -152,9 +146,6 @@ class RedisStreamWriter(StreamWriter):
     def __exit__(self, exc_type, exc_value, traceback):
         self._redis.close()
 
-    def __len__(self):
-        return self._redis.xlen(self._stream_name)
-
     def write(self, data):
         if isinstance(data, BaseModel):
             data = data.model_dump()
@@ -177,9 +168,6 @@ class RedisStreamReader(StreamReader):
 
     def __exit__(self, exc_type, exc_value, traceback):
         self._redis.close()
-
-    def __len__(self):
-        self._redis.xlen(self._stream_name)
 
     def read(self):
         block = int(_REREAD_DELAY * 1000)
@@ -263,23 +251,12 @@ class FileStreamWriter(StreamWriter):
     def __exit__(self, exc_type, exc_value, traceback):
         self._file.close()
 
-    def __len__(self):
-        return get_json_lines_number(self._file)  # type: ignore
-
     def write(self, data):
         if isinstance(data, BaseModel):
             data = data.model_dump()
         self._file.write(orjson.dumps(data).decode("utf-8"))
         self._file.write("\n")
         self._file.flush()
-
-
-def get_json_lines_number(f: TextIO) -> int:
-    # use wc -l to count the number of lines in the file
-    cmd = f"wc -l {f.name}"
-    result = os.popen(cmd).read()
-    lines = result.split()[0]
-    return int(lines)
 
 
 def read_jsonl_stream(f: TextIO, retry_delay: float = _REREAD_DELAY) -> Iterator[Any]:
@@ -321,9 +298,6 @@ class FileStreamReader(StreamReader):
 
     def __exit__(self, exc_type, exc_value, traceback):
         self._file.close()
-
-    def __len__(self):
-        return get_json_lines_number(self._file)  # type: ignore
 
     def read(self):
         retry_time = 0.01
