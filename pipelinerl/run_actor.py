@@ -19,8 +19,7 @@ from tapeagents.llms import TrainableLLM
 
 import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
-from pipelinerl.load_datasets import load_datasets
-from pipelinerl.math.rollouts import RolloutResult
+from pipelinerl.rollouts import RolloutResult
 from pipelinerl.shared_memory_array import SharedMemoryArray
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import (
