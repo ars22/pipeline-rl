@@ -732,6 +732,10 @@ def rl_finetuning_worker(
                 model.step()
                 grad_norm = model.get_global_grad_norm() if hasattr(model, "get_global_grad_norm") else None
                 max_grad_norm = model.gradient_clipping() if hasattr(model, "gradient_clipping") else None
+                if isinstance(training_metrics.grad_norm, torch.Tensor):
+                    grad_norm = grad_norm.item()
+                if isinstance(max_grad_norm, torch.Tensor):
+                    max_grad_norm = max_grad_norm.item()
                 if grad_norm:
                     if max_grad_norm is not None:
                         training_metrics.grad_norm = min(grad_norm, max_grad_norm)
@@ -740,6 +744,7 @@ def rl_finetuning_worker(
                 else:
                     # max_grad_norm and grad_norm are not available 
                     training_metrics.grad_norm = -1.0
+                
             else:
                 max_grad_norm = args.get("gradient_clipping_threshold", None)
                 training_metrics.grad_norm = get_accelerator().clip_grad_norm_(model.parameters(), max_grad_norm)
@@ -814,6 +819,7 @@ def rl_finetuning_worker(
         training_metrics.time_waiting_for_data += time_waiting_for_data
         if time_to_log or time_to_save:
             dt = log_time(dt, time_stats, "finetune/interim_eval")
+            print(training_metrics.grad_norm)
             metrics_dict.update(
                 {
                     "stats/lr": training_metrics.lr,
