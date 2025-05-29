@@ -176,6 +176,7 @@ def run_actor(world_map: WorldMap, actor_idx: int, exp_dir: Path):
 
 def run_environment(cfg: DictConfig, job: Job):
     # run in a subprocess like in the rest of the code
+    run_dir = Path(cfg.output_dir) / f"environment_{job.replica_idx}"
     cmd = [
         "python",
         "-m",
@@ -185,15 +186,14 @@ def run_environment(cfg: DictConfig, job: Job):
         "--config-name",
         "exp_config",
         f"output_dir={cfg.output_dir}",
-        f"hydra.run.dir={cfg.output_dir}/environment_{job.replica_idx}",
+        f"hydra.run.dir={str(run_dir)}",
         f"me.job_idx={job.idx}",
     ]
     logger.info(f"Running environment with command: {' '.join(cmd)}")
-    save_command(Path(cfg.output_dir) / "environment", cmd)
-    log_dir = os.path.join(cfg.output_dir, "environment")
-    os.makedirs(log_dir, exist_ok=True)
-    log_file_path = os.path.join(log_dir, "stdout.log")
-    err_file_path = os.path.join(log_dir, "stderr.log")
+    os.makedirs(run_dir, exist_ok=True)    
+    save_command(run_dir, cmd)
+    log_file_path = str(run_dir / "stdout.log")
+    err_file_path = str(run_dir / "stderr.log")
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
         yield _popen(
             cmd,
@@ -483,7 +483,7 @@ def main(cfg: DictConfig):
     log_file = exp_dir / "launcher" / f"launcher_{os.environ.get('RANK', 0)}.log"
     setup_logging(log_file)
     world_map = WorldMap(cfg, verbose=True)
-    cfg.jobs = [job.model_dump() for job in world_map.my_jobs()]
+    cfg.jobs = [job.model_dump() for job in world_map.get_all_jobs()]
 
     group = str(exp_dir)
     root = cfg.finetune.wandb_workspace_root
