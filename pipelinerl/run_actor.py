@@ -372,6 +372,7 @@ class ActorLoop:
         assert self.trainer_state.propagated_weight_version is not None
 
         last_trainer_version = self.trainer_state.propagated_weight_version
+        starting_trainer_version = last_trainer_version
         max_lag = self.cfg.finetune.max_lag if self.is_training else None
         if max_lag is not None:
             total_batch_size = self.cfg.finetune.train_batch_size * self.cfg.finetune.gradient_accumulation_passes
@@ -465,22 +466,27 @@ class ActorLoop:
 
                 prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
                 output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
-                max_latency = 0
                 max_model_version = 0
+                max_latency = 0
                 for result in rollout_results:
                     assert result.model_version is not None
                     max_model_version = max(max_model_version, result.model_version)
-                    result.model_version = max_model_version
+                    # in the case of testing, we log the stats for the starting trainer version
+                    result.model_version = max_model_version if self.training else starting_trainer_version
                     max_latency = max(max_latency, result.latency)
                     self.update_stats(result)
 
                 self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
 
                 finished_groups += 1
+                time_to_publish_train_stats = (
+                    self.is_training
+                    and model_version_to_publish is not None
+                )
+                time_to_publish_test_stats = (published_samples == expected_number_of_samples)
 
                 # Publish stats at every new model version or if all tapes are finished
-                # FIXME: we might lose stats if both conditions are true
-                if model_version_to_publish is not None or published_samples == expected_number_of_samples:
+                if time_to_publish_train_stats or time_to_publish_test_stats:
                     if self.is_training:
                         loop_stats = {
                             "published_samples": published_samples,
@@ -490,15 +496,15 @@ class ActorLoop:
                             "latency": max_latency,
                             "time_since_start": time.time() - loop_start_time,
                         }
+                        model_version_to_publish = None
                     else:
-                        loop_stats = {"published_model_version": max_model_version}
+                        loop_stats = {"published_model_version": starting_trainer_version}
 
                     self.publish_stats(
                         stats_writer=stats_writer,
                         loop_stats=loop_stats,
                         split_name=split_name,
                     )
-                    model_version_to_publish = None
 
 
                 if published_samples == expected_number_of_samples:
