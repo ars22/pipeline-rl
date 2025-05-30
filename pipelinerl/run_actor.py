@@ -470,10 +470,11 @@ class ActorLoop:
                 for result in rollout_results:
                     assert result.model_version is not None
                     max_model_version = max(max_model_version, result.model_version)
-                    # in the case of testing, we log the stats for the starting trainer version
                     max_latency = max(max_latency, result.latency)
-                    logged_model_version = max_model_version if self.training else starting_trainer_version
-                    self.update_stats(result, logged_model_version)
+                    # Training mode: associate stats with max_model_version
+                    # Testing mode: associate stats with starting trainer version instead of latest
+                    stats_model_version = max_model_version if self.training else starting_trainer_version
+                    self.update_stats(result, stats_model_version)
 
                 self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
 
