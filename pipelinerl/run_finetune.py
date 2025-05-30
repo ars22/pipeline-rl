@@ -735,10 +735,7 @@ def rl_finetuning_worker(
                 if isinstance(training_metrics.grad_norm, torch.Tensor):
                     grad_norm = grad_norm.item()
                 if grad_norm is not None:
-                    if max_grad_norm is not None:
-                        training_metrics.grad_norm = min(grad_norm, max_grad_norm)
-                    else:
-                        training_metrics.grad_norm = grad_norm
+                    training_metrics.grad_norm = grad_norm
                 else:
                     # max_grad_norm and grad_norm are not available 
                     training_metrics.grad_norm = -1.0
