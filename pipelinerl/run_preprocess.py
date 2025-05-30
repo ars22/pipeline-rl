@@ -269,6 +269,45 @@ def process_chunk(
         dataset_queue.put(e)
 
 
+def filter_zero_advantage_groups(dataset: list[dict], epsilon: float = 1e-6) -> tuple[list[dict], int]:
+    """
+    Filter out groups where all advantages are zero.
+    
+    Args:
+        dataset: List of dataset entries with group_id and advantages
+        epsilon: Threshold for considering advantage non-zero
+        
+    Returns:
+        Tuple of (filtered_entries, num_filtered_out)
+    """
+    filtered_entries = []
+    groups = {}
+    
+    # Group entries by group_id
+    for entry in dataset:
+        group_id = entry["group_id"]
+        if group_id not in groups:
+            groups[group_id] = []
+        groups[group_id].append(entry)
+    
+    num_filtered_out = 0
+    
+    # Filter groups based on advantage values
+    for group_id, entries in groups.items():
+        has_non_zero_advantage = False
+        for entry in entries:
+            # advantages is a list, check if any absolute value is > epsilon
+            if any(abs(adv) > epsilon for adv in entry["advantages"]):
+                has_non_zero_advantage = True
+                break
+        
+        if has_non_zero_advantage:
+            filtered_entries.extend(entries)
+        else:
+            num_filtered_out += len(entries)
+    
+    return filtered_entries, num_filtered_out
+
 
 def run_preprocessing_loop(
     cfg: DictConfig,
@@ -376,27 +415,7 @@ def run_preprocessing_loop(
                         start_writing = time.time()
 
                         # Filter out groups where all advantages are zero
-                        filtered_entries = []
-                        groups = {}
-                        for entry in dataset:
-                            group_id = entry["group_id"]
-                            if group_id not in groups:
-                                groups[group_id] = []
-                            groups[group_id].append(entry)
-                        
-                        num_filtered_out = 0
-                        epsilon = 1e-6 # Threshold for considering advantage non-zero
-                        for group_id, entries in groups.items():
-                            has_non_zero_advantage = False
-                            for entry in entries:
-                                # advantages is a list, check if any absolute value is > epsilon
-                                if any(abs(adv) > epsilon for adv in entry["advantages"]):
-                                    has_non_zero_advantage = True
-                                    break
-                            if has_non_zero_advantage:
-                                filtered_entries.extend(entries)
-                            else:
-                                num_filtered_out += len(entries)
+                        filtered_entries, num_filtered_out = filter_zero_advantage_groups(dataset)
 
                         if num_filtered_out > 0:
                             logger.info(f"Filtered out {num_filtered_out} samples from groups with zero advantage.")
