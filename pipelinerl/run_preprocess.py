@@ -402,7 +402,7 @@ def run_preprocessing_loop(
                         stats = {
                             "preprocessor/published_samples": published_samples,
                             "preprocessor/published_model_version": max_model_version,
-                            "processossor/queue/raw_samples": raw_chunk_queue.qsize() * cfg.preprocess.chunk_size,
+                            "preprocessor/queue/raw_samples": raw_chunk_queue.qsize() * cfg.preprocess.chunk_size,
                             "preprocessor/queue/raw": raw_chunk_queue.qsize(),
                             "preprocessor/queue/dataset_samples": samples_in_queue,
                             "preprocessor/queue/dataset": dataset_queue.qsize(),
