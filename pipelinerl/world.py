@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Literal
 from pydantic import BaseModel
 from omegaconf import DictConfig
 import torch
@@ -9,14 +10,18 @@ logger = logging.getLogger(__name__)
 
 class Job(BaseModel):
     """Represent the decision to launch a replica of a particular worker (e.g. actor) at a particular rank"""
-
+    # The job kind 
     kind: str
-    # The global index of this job among jobs of the same kind
+    # The global index of this job among all jobs
+    idx: int 
+    # The index of this job among jobs of the same kind
     replica_idx: int
     # The index of this job among similar jobs on the same node
     local_idx: int = 0
     # Where this job should run
     node_rank: int
+    hostname: str 
+    port: int | None = None
     # Which GPUs the job will use
     gpus: list[int] = []
     # The URL of the job
@@ -58,17 +63,22 @@ class WorldMap:
             self.weight_update_group_size = 1
 
         # Place jobs on nodes in a reverse order to make sure that last node has a finetuning job going on
-        self.available_gpus: dict[int, set] = {i: set(range(self.node_size)) for i in reversed(range(self.world_size))}
+        self.available_gpus = {i: set(range(self.node_size)) for i in reversed(range(self.world_size))}
+        self.cpu_heavy_jobs = {i: 0 for i in range(self.world_size)} 
         self.job_map = {i: [] for i in range(self.world_size)}
+        self.total_jobs = 0
 
         if place_inference_jobs:
             self._place_inference_jobs(cfg)
+        self._place_pipeline_stages(cfg)
+        if cfg.environment:
+            self._place_environments(cfg)
 
         # Place the finetune workers on the remaining gpus, take all remaining GPUs
         for node, remaining_gpus in self.available_gpus.items():
             gpus = list(remaining_gpus)
             if gpus:
-                self.job_map[node].append(Job(kind="finetune", replica_idx=node, node_rank=node, gpus=gpus))
+                self.add_job(node_rank=node, kind="finetune", replica_idx=node, gpus=gpus)
 
         # Pretty-log the world map
         self._log_info("--- WORLD MAP ---")
@@ -76,6 +86,28 @@ class WorldMap:
             self._log_info(f"Node {node} has {len(jobs)} jobs:")
             for job in jobs:
                 self._log_info(f"  {job.kind} {job.replica_idx} on gpus {job.gpus}, local idx {job.local_idx}")
+
+    def add_job(self, node_rank: int, kind: str, replica_idx: int, local_idx: int = 0, port: int | None = None, gpus: list[int] | None = None, cpu_heavy: bool = False, url: str = "") -> Job:
+        """Add a job to the world map."""
+        if gpus is None:
+            gpus = []
+        job = Job(
+            kind=kind,             
+            idx=self.total_jobs,
+            replica_idx=replica_idx,
+            local_idx=local_idx, 
+            node_rank=node_rank, 
+            hostname=self.address_map[node_rank],
+            port=port,
+            gpus=gpus,
+            url=url
+        )       
+        self.job_map[node_rank].append(job)
+        self.total_jobs += 1
+        if cpu_heavy:
+            self.cpu_heavy_jobs[node_rank] += 1
+        return job
+
 
     def _split_gpus_by_purpose(self, cfg):
         fraction_sum = cfg.world.actor_fraction + cfg.world.preprocessor_fraction + cfg.world.finetune_fraction
@@ -94,27 +126,27 @@ class WorldMap:
             f"{desired_preprocessor_gpu_share} for preprocessors, {desired_finetune_gpu_share} for finetune"
         )
 
-        gpus_per_actor = int(desired_actor_gpu_share / cfg.world.actors) if cfg.world.actors > 0 else 0
+        gpus_per_actor = int(desired_actor_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 else 0
         gpus_per_actor = gpus_per_actor - (gpus_per_actor % self.gpus_per_llm)
         gpus_per_preprocessor = (
-            int(desired_preprocessor_gpu_share / cfg.world.preprocessors) if cfg.world.preprocessors > 0 else 0
+            int(desired_preprocessor_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 else 0
         )
         gpus_per_preprocessor = gpus_per_preprocessor - (gpus_per_preprocessor % self.gpus_per_llm)
         self.llms_per_actor = max(int(gpus_per_actor / self.gpus_per_llm), 1) if gpus_per_actor > 0 else 0
-        self.total_actor_llms = self.llms_per_actor * cfg.world.actors
+        self.total_actor_llms = self.llms_per_actor * cfg.world.replicas
         self.llms_per_preprocessor = (
             max(int(gpus_per_preprocessor / self.gpus_per_llm), 1) if gpus_per_preprocessor > 0 else 0
         )
         self.gpus_per_actor = gpus_per_actor
         self.gpus_per_preprocessor = gpus_per_preprocessor
 
-        total_actor_gpus = cfg.world.actors * gpus_per_actor
-        total_preprocessor_gpus = cfg.world.preprocessors * gpus_per_preprocessor
+        total_actor_gpus = cfg.world.replicas * gpus_per_actor
+        total_preprocessor_gpus = cfg.world.replicas * gpus_per_preprocessor
         self.total_finetune_gpus = total_gpus - total_actor_gpus - total_preprocessor_gpus
         self._log_info(
             f"The configuration required:\n"
             f"{desired_actor_gpu_share} for actors, {desired_preprocessor_gpu_share} for preprocessors, {self.total_finetune_gpus} for finetune,\n"
-            f"with {cfg.world.actors} actors and {cfg.world.preprocessors} preprocessors,\n"
+            f"with {cfg.world.replicas} actors and {cfg.world.replicas} preprocessors,\n"
             f"and with {self.gpus_per_llm} per each LLM.\n"
         )
         self._log_info("I have adjusted the GPU shares to accomodate these constraints.")
@@ -128,62 +160,72 @@ class WorldMap:
 
         self.weight_update_group_size = self.total_actor_llms * self.gpus_per_llm + 1
 
+    def _place_pipeline_stages(self, cfg):
+        for worker_idx in range(cfg.world.replicas):
+            node = self.get_least_busy_node()
+            self.add_job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
+            self.add_job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
+
+    def _place_environments(self, cfg):
+        for worker_idx in range(cfg.world.env_replicas):
+            node = self.get_least_busy_node()
+            envs_at_node = len([job for job in self.job_map[node] if job.kind == "environment"])
+            self.add_job(
+                kind="environment",
+                replica_idx=worker_idx,
+                node_rank=node,
+                port=cfg.world.environment_start_port + envs_at_node,
+                gpus=[],
+                cpu_heavy=True,
+            )
+
     def _place_inference_jobs(self, cfg):
-        actor_placed = False
-        for worker_idx in range(cfg.world.actors):
+        for _ in range(cfg.world.replicas):
             for actor_llm_idx in range(self.llms_per_actor):
                 node = next(
                     (node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_llm), None
                 )
                 if node is None:
                     raise ValueError("Not enough gpus to place all actors")
-                if not actor_placed:
-                    self.job_map[node].append(Job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[]))
-                    self.job_map[node].append(Job(kind="verifier", replica_idx=worker_idx, node_rank=node, gpus=[]))
-                    actor_placed = True
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_llm)]
                 local_idx = min(gpus)
                 llm_url = f"http://{self.address_map[node]}:{8080 + local_idx}"
-                self.job_map[node].append(
-                    Job(
-                        kind="actor_llm",
-                        replica_idx=actor_llm_idx,
-                        local_idx=local_idx,
-                        node_rank=node,
-                        gpus=gpus,
-                        url=llm_url,
-                    )
+                self.add_job(
+                    kind="actor_llm",
+                    replica_idx=actor_llm_idx,
+                    local_idx=local_idx,
+                    node_rank=node,
+                    gpus=gpus,
+                    port=8080 + local_idx,
+                    url=llm_url,
                 )
 
-        preprocessor_placed = False
-        for worker_idx in range(cfg.world.preprocessors):
+        for _ in range(cfg.world.replicas):
             for preprocessor_llm_idx in range(self.llms_per_preprocessor):
                 node = next(
                     (node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_llm), None
                 )
                 if node is None:
                     raise ValueError("Not enough gpus to place all preprocessors")
-                if not preprocessor_placed:
-                    self.job_map[node].append(Job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[]))
-                    preprocessor_placed = True
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_llm)]
                 local_idx = min(gpus)
                 ref_url = f"http://{self.address_map[node]}:{8180 + local_idx}"
-                self.job_map[node].append(
-                    Job(
-                        kind="preprocessor_llm",
-                        replica_idx=preprocessor_llm_idx,
-                        local_idx=local_idx,
-                        node_rank=node,
-                        gpus=gpus,
-                        url=ref_url,
-                    )
+                self.add_job(
+                    kind="preprocessor_llm",
+                    replica_idx=preprocessor_llm_idx,
+                    local_idx=local_idx,
+                    node_rank=node,
+                    gpus=gpus,
+                    url=ref_url,
                 )
-        if not preprocessor_placed:
-            assert cfg.world.preprocessor_fraction == 0
-            self.job_map[self.world_size - 1].append(
-                Job(kind="preprocessor", replica_idx=0, node_rank=self.world_size - 1, gpus=[])
-            )
+
+    def get_least_busy_node(self):
+        """Get the node with the least number of CPU-heavy jobs."""
+        result = 0 
+        for node, cpu_heavy_jobs in self.cpu_heavy_jobs.items():
+            if cpu_heavy_jobs < self.cpu_heavy_jobs[result]:
+                result = node
+        return result
 
     def my_jobs(self) -> list[Job]:
         return self.job_map[self.my_rank]

@@ -1,30 +1,30 @@
-from concurrent.futures import ThreadPoolExecutor
-import logging
-
-import deepspeed
-from accelerate.utils import FullyShardedDataParallelPlugin
-
 import contextlib
 import json
+import logging
 import os
 import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, List, Literal, Dict
+from typing import Any, Dict, List, Literal
 
+import deepspeed
 import requests
 import torch
 import torch.distributed as dist
+from accelerate.utils import FullyShardedDataParallelPlugin
+from omegaconf import DictConfig
+from pydantic import BaseModel
 from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import MixedPrecision
+from transformers import PreTrainedTokenizerFast, get_scheduler, set_seed
 
-from omegaconf import DictConfig
-from pydantic import BaseModel
+import pipelinerl.torch_utils
 from pipelinerl.finetune.checkpoints import (
     load_model,
     load_tokenizer,
@@ -37,23 +37,20 @@ from pipelinerl.finetune.context import get_accelerator
 from pipelinerl.finetune.data import collate, collate_packed
 from pipelinerl.finetune.logging_ import log_metrics, log_time, setup_logging
 from pipelinerl.finetune.optim import get_optimizer
-from pipelinerl.finetune.utils import create_sentinel_batch, VersionedTensors
 from pipelinerl.finetune.rl import (
     RLConfig,
     rl_step,
 )
 from pipelinerl.finetune.rl.utils import get_avg_rl_stats
 from pipelinerl.finetune.types import TrainingMetrics
-from transformers import get_scheduler, set_seed, PreTrainedTokenizerFast
-
-from pipelinerl.utils import wait_for_inference_servers
-import pipelinerl.torch_utils
+from pipelinerl.finetune.utils import VersionedTensors, create_sentinel_batch
 from pipelinerl.streams import (
     SingleStreamSpec,
     read_stream,
     set_streams_backend,
     write_to_streams,
 )
+from pipelinerl.utils import wait_for_inference_servers
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +174,7 @@ def run_dynamic_batch_size_data_loader(
     current_length = 0
     samples_in_step = 0
     sample_generator = sample_generator_fn(sample_queue)
+    skip_count = 0
     while True:
         try:
             while True:
@@ -185,9 +183,11 @@ def run_dynamic_batch_size_data_loader(
                 sample_length = len(entry["input_ids"]) if entry else 0
 
                 if sample_length > max_seq_length:
-                    raise ValueError(
-                        f"Sample is of length {sample_length}, exceeding the max length of {max_seq_length}"
+                    skip_count += 1
+                    logger.warning(
+                        f"Sample length {sample_length} > max allowed length {max_seq_length}, skipping. Total {skip_count} samples skipped so far."
                     )
+                    continue
 
                 # check if adding current sample would exceed max_seq_length or if we've reached sample limit
                 boundary = samples_in_step == samples_per_worker_per_step
@@ -735,10 +735,7 @@ def rl_finetuning_worker(
                 if isinstance(training_metrics.grad_norm, torch.Tensor):
                     grad_norm = grad_norm.item()
                 if grad_norm is not None:
-                    if max_grad_norm is not None:
-                        training_metrics.grad_norm = min(grad_norm, max_grad_norm)
-                    else:
-                        training_metrics.grad_norm = grad_norm
+                    training_metrics.grad_norm = grad_norm
                 else:
                     # max_grad_norm and grad_norm are not available 
                     training_metrics.grad_norm = -1.0
@@ -829,7 +826,7 @@ def rl_finetuning_worker(
                     "stats/epoch": training_metrics.epoch,
                     "stats/min_actor_version": lag_stats["min_version"],
                     "stats/max_actor_version": lag_stats["max_version"],
-                    "stats/queue_size": sample_queue.qsize(),
+                    "stats/queue/samples": sample_queue.qsize(),
                     "stats/time_waiting_for_data": training_metrics.time_waiting_for_data,
                     "stats/lag": training_metrics.last_broadcasted_version - lag_stats["min_version"],
                     "throughput/tokens_perGPU_per_sec": this_worker_tokens / sum(passes_took) if passes_took else 0,
