@@ -42,15 +42,15 @@ def init_wandb(
         raise NotImplementedError()
     else:
         raise ValueError(f"Unknown value for wandb_resume: {cfg.finetune.wandb_resume}")
-    
+
     wandb_name = str(run_dir)
     root = cfg.finetune.wandb_workspace_root
     if root:
         if not wandb_name.startswith(root + "/"):
             raise ValueError(f"run_dir {run_dir} does not start with root {root}")
-        wandb_name = wandb_name[len(root) + 1:]
-    
-    wandb_id = cfg.finetune.wandb_id    
+        wandb_name = wandb_name[len(root) + 1 :]
+
+    wandb_id = cfg.finetune.wandb_id
     if not wandb_id:
         wandb_id = wandb_name.replace("/", "_")
 

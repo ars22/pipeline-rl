@@ -9,7 +9,7 @@ finetune:
   attn_implementation: flash_attention_2
   config_name: ${..model_path}
   output_dir: ${..output_dir}/finetune
-  seq_length: 10000
+  seq_length: 12000
   seq_packing: true
   rl:
     algo: grpo
@@ -38,21 +38,25 @@ finetune:
   weight_update_interval: 1
   pop_old_data: ${..pop_old_data}
 actor:
-  sampling:
-    method: random
-  chunk_size: 8
-  threads_per_llm: 32
-  submit_delay: 0.
+  log_each_n_secs: 0
+  llm_max_rollouts: 128
+  rollout_workers: 1
+  rollout_policy: pipelinerl.math.rollouts.generate_math_rollout
+  discount_factor: 1
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+environment:
+  _target_: pipelinerl.math.verifier_api.MathEnvironment
 preprocess:
   input: actor
   output: training_data
-  threads_per_llm: 4
+  n_workers: 8
   queue_size: 32
   chunk_size: 16
   submit_delay: 0.
   pop_old_data: ${..pop_old_data} 
-agent: 
-  max_prompt_length: 1024
+  buffer_size: 0
 llm:
   parameters:
     # changed
@@ -69,7 +73,6 @@ test_llm:
 vllm_config:
   vllm_kwargs:
     dtype: bfloat16
-    download-dir: /mnt/llmd/base_models/ 
     gpu-memory-utilization: 0.9
     num-scheduler-steps: 1
     disable-log-requests: ""
@@ -80,21 +83,21 @@ vllm_config:
     return-tokens-as-token-ids: ""
     tensor-parallel-size: 1
     pipeline-parallel-size: 1
+    generation-config: vllm
 
 world:
-  actors: 1
-  preprocessors: 1
+  replicas: 1
   
   actor_fraction: 4
   preprocessor_fraction: 0
   finetune_fraction: 4
 
-  actor_group_port: 9000
+  env_replicas: 2
 
-# changed
-system_prompt: Please reason step by step, and put your final answer within \boxed{}.
-task_template: |-
-  {task}
+  actor_group_port: 9000
+  environment_start_port: 7777
+# this will be autocreated based on the config
+jobs: []
 
 eval_every_n_versions: 78000
 
@@ -116,7 +119,8 @@ force_restart: false
 pop_old_data: true
 max_lag: null
 attempts: 8
-discount_factor: 1
+
+dataset_loader: pipelinerl.math.load_datasets.load_datasets
 train_dataset_names:
 - open_reasoner_zero_57k
 - open_reasoner_zero_extended_72k 
@@ -130,3 +134,11 @@ debug:
   mode: ""
   streams_from: null
   place_inference_workers: true
+
+me:
+  # Which job is this one? This will be autopopulated
+  job_idx: null
+
+hydra:
+  run:
+    dir: ${output_dir}

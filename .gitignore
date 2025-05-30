@@ -181,6 +181,8 @@ outputs/
 models/
 package-lock.json
 package.json
+results
 results/
 data/
 cache/
+dump.rdb

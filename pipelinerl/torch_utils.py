@@ -10,6 +10,7 @@ from torch.distributed.distributed_c10d import (
     rendezvous,
 )
 
+
 # Copy from pytorch to allow creating multiple main groups.
 # https://github.com/pytorch/pytorch/blob/main/torch/distributed/distributed_c10d.py
 def init_extra_process_group(
@@ -55,7 +56,7 @@ def init_extra_process_group(
         backend,
         store,
         group_name=group_name,
-        pg_options=pg_options,
+        backend_options=pg_options,
         timeout=timeout,
     )
 

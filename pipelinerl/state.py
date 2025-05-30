@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 from pathlib import Path
@@ -11,6 +12,8 @@ from pipelinerl.run_finetune import (
     WeightUpdateSuccess,
 )
 from pipelinerl.streams import SingleStreamSpec, read_stream
+
+logger = logging.getLogger(__name__)
 
 
 class TrainerState:
@@ -33,3 +36,9 @@ class TrainerState:
 
         self._thread = threading.Thread(target=listen)
         self._thread.start()
+
+    def wait_for_model_version(self):
+        while self.propagated_weight_version is None:
+            logger.info("Waiting for the trainer to declare the initial weight version")
+            time.sleep(1)
+        return self.propagated_weight_version
