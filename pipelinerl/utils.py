@@ -10,6 +10,7 @@ import traceback
 from typing import Dict, Mapping, Optional, TextIO, Union, List
 import threading
 import numpy as np
+from omegaconf import DictConfig
 import psutil
 import requests
 import torch
@@ -17,6 +18,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from transformers import PreTrainedTokenizer
 from collections import defaultdict
 
+from pipelinerl.world import Job
 from tapeagents.llms import LLMOutput
 from tapeagents.core import Prompt
 
@@ -236,6 +238,24 @@ def wait_for_inference_servers(urls: list[str]):
         logger.info(f"Still waiting for {still_not_up} ...")
         time.sleep(3.0)
     logger.info("All inference servers are up")
+
+
+def wait_for_environments(cfg: DictConfig):
+    """
+    Wait for the verifier to be ready.
+    """
+    env_jobs = [Job(**job) for job in cfg.jobs if job.kind == "environment"]
+    for job in env_jobs:
+        while True:
+            url = f"http://{job.hostname}:{job.port}/health"
+            # use requests
+            try:
+                response = requests.get(url)
+                if response.status_code == 200:
+                    break
+            except:
+                logger.info(f"Waiting for environment at {url} to be ready...")
+                time.sleep(5.0)
 
 
 @contextlib.contextmanager

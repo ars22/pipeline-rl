@@ -2,42 +2,39 @@ import os
 
 os.environ["HF_DATASETS_DISABLE_PROGRESS_BARS"] = "1"
 
-import multiprocessing as mp
-from multiprocessing.managers import SharedMemoryManager
-from concurrent.futures import ProcessPoolExecutor
 import logging
+import multiprocessing as mp
 import queue
-import time
-
-from litellm import BaseModel, Field
-
-from pipelinerl.utils import wait_for_inference_servers
-from pipelinerl.world import WorldMap
-from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
-from pipelinerl.shared_memory_array import SharedMemoryArray
-
-logger = logging.getLogger(__name__)
 import threading
+import time
+from concurrent.futures import ProcessPoolExecutor
 from functools import partial
+from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 from queue import Empty, Queue
 from typing import List
 import random
 
-import transformers
 import datasets
+import transformers
+from litellm import BaseModel, Field
+
+from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
+from pipelinerl.shared_memory_array import SharedMemoryArray
+from pipelinerl.utils import wait_for_inference_servers
+from pipelinerl.world import WorldMap
 
 datasets.disable_caching()
 from datasets.arrow_dataset import Dataset
 from datasets.fingerprint import Hasher
 from omegaconf import DictConfig
+from tapeagents.llms import TrainableLLM
+
 from pipelinerl.finetune.checkpoints import (
     load_tokenizer,
 )
 from pipelinerl.finetune.data import preprocess_fn
 from pipelinerl.finetune.rl import RL_DATA_COLUMNS, RLConfig, populate_rl_data
-from tapeagents.llms import TrainableLLM
-
 from pipelinerl.streams import (
     SingleStreamSpec,
     StreamRangeSpec,
@@ -113,7 +110,7 @@ def replace_oov_tokens_with_the(data: list[dict], tokenizer: transformers.PreTra
                 completion_start = len(entry["input_ids"]) - completion_length
                 for i, token_id in enumerate(invalid_token_ids):
                     if i + completion_start < len(entry["input_ids"]):
-                        logger.warning(f"Invalid token in completion part, logprobs may be inconsistent")
+                        logger.warning("Invalid token in completion part, logprobs may be inconsistent")
         entry["input_ids"] = new_input_ids
         new_data.append(entry)
 
@@ -174,7 +171,7 @@ def run_dataset_loader(
                     if len(buffer) == chunk_size:
                         break
                 if not _check_group_sizes(buffer, check_group_size):
-                    raise ValueError(f"Invalid group sizes in data")
+                    raise ValueError("Invalid group sizes in data")
                 try:
                     raw_chunk_queue.put_nowait(buffer)
                 except queue.Full:
@@ -294,7 +291,7 @@ def run_preprocessing_loop(
         partition_range=(0, max(world_map.total_finetune_gpus, 1)),
     )
     stats_streams = SingleStreamSpec(exp_path=exp_root_dir, topic="preprocessor_stats")
-    logger.info(f"Streams initialized")
+    logger.info("Streams initialized")
 
     raw_chunk_queue = Queue(cfg.preprocess.queue_size)
     rl_config = RLConfig(**cfg.finetune.rl)
@@ -405,8 +402,10 @@ def run_preprocessing_loop(
                         stats = {
                             "preprocessor/published_samples": published_samples,
                             "preprocessor/published_model_version": max_model_version,
-                            "preprocessor/samples_in_input_queue": raw_chunk_queue.qsize() * cfg.preprocess.chunk_size,
-                            "preprocessor/samples_in_output_queue": samples_in_queue,
+                            "preprocessor/queue/raw_samples": raw_chunk_queue.qsize() * cfg.preprocess.chunk_size,
+                            "preprocessor/queue/raw": raw_chunk_queue.qsize(),
+                            "preprocessor/queue/dataset_samples": samples_in_queue,
+                            "preprocessor/queue/dataset": dataset_queue.qsize(),
                         }
                         if stats_aggregator.has_enough_data():
                             stats.update({"preprocessor/" + k: v for k, v in stats_aggregator.get_stats().items()})

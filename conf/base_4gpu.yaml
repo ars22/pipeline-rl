@@ -5,3 +5,6 @@ defaults:
 finetune:
   seq_length: 4000
   
+llm:
+  parameters:
+    max_tokens: 1500

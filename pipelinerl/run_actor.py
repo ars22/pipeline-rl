@@ -1,31 +1,27 @@
+import asyncio
 import logging
 import math
-from multiprocessing.managers import SharedMemoryManager
+import multiprocessing as mp
 import os
 import queue
 import random
 import time
-import multiprocessing as mp
 from collections import defaultdict
+from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 
-import uvloop
 import aiohttp
-
+import hydra
+import uvloop
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
-
-from pipelinerl.shared_memory_array import SharedMemoryArray
-from pipelinerl.verifier_api import wait_for_verifier
 from tapeagents.llms import TrainableLLM
-from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
 
 import wandb
-from pipelinerl.load_datasets import load_datasets
-from pipelinerl.math_rollouts import RolloutResult, generate_math_rollout
+from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
+from pipelinerl.rollouts import RolloutResult
+from pipelinerl.shared_memory_array import SharedMemoryArray
 from pipelinerl.state import TrainerState
-import asyncio
-from collections import defaultdict
 from pipelinerl.streams import (
     SingleStreamSpec,
     StreamSpec,
@@ -36,9 +32,10 @@ from pipelinerl.streams import (
 
 from .utils import (
     always_or_never_success_stats,
-    calculate_stats,
     calculate_per_group_stats,
+    calculate_stats,
     setup_logging,
+    wait_for_environments,
     wait_for_inference_servers,
 )
 
@@ -130,6 +127,8 @@ async def schedule_rollouts(
     max_group_size_bytes = 0
     # Track rollouts per problem group
     group_rollouts = {}
+    rollout_policy = hydra.utils.get_method(cfg.actor.rollout_policy)
+    logger.info(f"Use rollout policy: {rollout_policy}")
 
     async def rollout_and_maybe_produce_result(
         problem: dict,
@@ -143,7 +142,7 @@ async def schedule_rollouts(
             llm = llms[llm_index]
             model_version = trainer_state.propagated_weight_version
             assert model_version is not None
-            rollout_result = await generate_math_rollout(cfg, llm, problem, session)
+            rollout_result = await rollout_policy(cfg, llm, problem, session)
             rollout_result.model_version = model_version
             # Make a group id that will be different from groups made by another rollout maker
             full_group_id = f"{scheduler_name}_{group_id}"
@@ -164,7 +163,7 @@ async def schedule_rollouts(
             finished_rollouts += 1
         except Exception as e:
             # Cancel all tasks except the current one
-            logger.error("Exception in rollout", exc_info=e)
+            logger.error("Exception in rollout, stop all other rollout tasks", exc_info=e)
             current_task = asyncio.current_task(loop=loop)
             for task in asyncio.all_tasks(loop=loop):
                 if task != current_task:
@@ -356,6 +355,7 @@ class ActorLoop:
         published_samples = 0
         submitted_groups = 0
         finished_groups = 0
+        last_log_time = 0
         expected_number_of_samples = -1 if self.is_training else len(dataset)
         if expected_number_of_samples > 0:
             logger.info(f"Will stop after {expected_number_of_samples} samples")
@@ -477,22 +477,22 @@ class ActorLoop:
                 # if we are training publish stats at every step else if all tapes are finished, publish stats
                 if self.is_training or published_samples == expected_number_of_samples:
                     if self.is_training:
-                        loop_stats = {
-                            "published_samples": published_samples,
-                            "samples_in_queue": samples_in_queue,
-                            "finished_groups": finished_groups,
-                            "published_model_version": max_model_version,
-                            "latency": max_latency,
-                            "time_since_start": time.time() - loop_start_time,
-                        }
+                        log_time = time.monotonic()
+                        if log_time - last_log_time > self.cfg.actor.log_each_n_secs:
+                            loop_stats = {
+                                "published_samples": published_samples,
+                                "queue/problems": self.problem_queue.qsize(),
+                                "queue/samples": samples_in_queue,
+                                "finished_groups": finished_groups,
+                                "published_model_version": max_model_version,
+                                "latency": max_latency,
+                                "time_since_start": time.time() - loop_start_time,
+                            }
+                            self.publish_stats(stats_writer=stats_writer, loop_stats=loop_stats, split_name=split_name)
+                            last_log_time = log_time
                     else:
                         loop_stats = {"published_model_version": max_model_version}
-
-                    self.publish_stats(
-                        stats_writer=stats_writer,
-                        loop_stats=loop_stats,
-                        split_name=split_name,
-                    )
+                        self.publish_stats(stats_writer=stats_writer, loop_stats=loop_stats, split_name=split_name)
 
                 if published_samples == expected_number_of_samples:
                     logger.info(f"Finished {expected_number_of_samples} samples, stopping actor loop")
@@ -545,13 +545,13 @@ class ActorLoop:
                 | {"output_tokens_" + k: v for k, v in calculate_stats(self.output_tokens[dataset_name]).items()}
                 | {"overflows_" + k: v for k, v in calculate_stats(self.overflows[dataset_name]).items()}
             )
-            sub_stats = {dataset_name + "_" + k: v for k, v in sub_stats.items()}
+            sub_stats = {dataset_name + "/" + k: v for k, v in sub_stats.items()}
             stats |= sub_stats
 
         stats |= loop_stats
         if loop_stats.get("finished_groups", 0) >= 2 * self.window_size:
             stats |= sliding_stats
-        wandb.log({"actor/" + k: v for k, v in stats.items()})
+        wandb.log({f"actor/{k}": v for k, v in stats.items()})
         stats_writer.write(stats)
         self.init_stats()
 
@@ -573,8 +573,9 @@ def run_actor_loop(cfg: DictConfig):
     data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor")
     test_data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor_test")
 
-    train_dataset = load_datasets(cfg.train_dataset_names)
-    test_dataset = load_datasets(cfg.test_dataset_names)
+    dataset_loader = hydra.utils.get_method(cfg.dataset_loader)
+    train_dataset = dataset_loader(cfg.train_dataset_names)
+    test_dataset = dataset_loader(cfg.test_dataset_names)
     if cfg.train_subset:
         train_dataset = train_dataset[cfg.train_subset.begin : cfg.train_subset.end]
     logger.info(f"Loaded {len(train_dataset)} training problems")
@@ -611,7 +612,7 @@ def run_actor_loop(cfg: DictConfig):
     ]
 
     wait_for_inference_servers(llm_urls)
-    wait_for_verifier(cfg.verifier)
+    wait_for_environments(cfg)
     trainer_state = TrainerState(exp_path)
     if cfg.debug.mode in ["actor", "open_loop"]:
         trainer_state.propagated_weight_version = 0

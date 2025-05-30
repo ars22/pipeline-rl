@@ -1,0 +1,19 @@
+defaults:
+    - base
+finetune:
+    seq_length: 4000
+    gradient_accumulation_passes: 1024
+llm:
+    parameters:
+        max_tokens: 1000
+test_llm:
+    parameters:
+        max_tokens: 1000
+actor:
+    rollout_policy: pipelinerl.counting.counting.generate_counting_rollout
+environment: null
+dataset_loader: pipelinerl.counting.counting.load_problems
+train_dataset_names:
+    - train_counting_problems
+test_dataset_names:
+    - test_counting_problems
