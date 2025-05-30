@@ -473,7 +473,7 @@ class ActorLoop:
                     max_latency = max(max_latency, result.latency)
                     # Training mode: associate stats with max_model_version
                     # Testing mode: associate stats with starting trainer version instead of latest
-                    stats_model_version = max_model_version if self.training else starting_trainer_version
+                    stats_model_version = max_model_version if self.is_training else starting_trainer_version
                     self.update_stats(result, stats_model_version)
 
                 self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
@@ -514,7 +514,12 @@ class ActorLoop:
     def publish_stats(self, stats_writer: StreamWriter, loop_stats, split_name: str = ""):
         sliding_stats = self.stats_aggregator.get_stats()
         model_version = loop_stats["published_model_version"]
-        logging.info(f"Publishing stats for model version {model_version}" + f"with split name '{split_name}'" if split_name else "")
+        if model_version not in self.reward_stats:
+            logging.warning(
+                f"Model version {model_version} has no stats"
+            )
+            return
+        logging.info(f"Publishing stats for model version {model_version}" + (f" with split name '{split_name}'" if split_name else ""))
         stats = (
             {
                 (split_name + "_" if split_name else "") + "reward_" + k: v
@@ -566,6 +571,7 @@ class ActorLoop:
         stats |= loop_stats
         if loop_stats.get("finished_groups", 0) >= 2 * self.window_size:
             stats |= sliding_stats
+        stats = {k: v for k, v in stats.items() if not (isinstance(v, float) and (math.isnan(v) or math.isinf(v)))}
         wandb.log({"actor/" + k: v for k, v in stats.items()})
         stats_writer.write(stats)
 
