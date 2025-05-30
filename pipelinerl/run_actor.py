@@ -356,7 +356,7 @@ class ActorLoop:
         published_samples = 0
         submitted_groups = 0
         finished_groups = 0
-        max_model_version = 0
+        model_version_to_publish = None
         expected_number_of_samples = -1 if self.is_training else len(dataset)
         if expected_number_of_samples > 0:
             logger.info(f"Will stop after {expected_number_of_samples} samples")
@@ -411,6 +411,8 @@ class ActorLoop:
                     if max_lag is not None:
                         assert groups_per_update is not None
                         can_submit_before_update += groups_per_update
+                    # the weights have been updated, publish the stats of the previous model version
+                    model_version_to_publish = last_trainer_version
                     last_trainer_version = self.trainer_state.propagated_weight_version
 
                 # First, submit all problems you can
@@ -464,11 +466,11 @@ class ActorLoop:
                 prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
                 output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
                 max_latency = 0
+                max_model_version = 0
                 for result in rollout_results:
                     assert result.model_version is not None
-                    # the weights have been updated, publish the stats of the previous model version
-                    publish_model_version_stats = max_model_version if (max_model_version < result.model_version) else None
                     max_model_version = max(max_model_version, result.model_version)
+                    result.model_version = max_model_version
                     max_latency = max(max_latency, result.latency)
                     self.update_stats(result)
 
@@ -477,13 +479,14 @@ class ActorLoop:
                 finished_groups += 1
 
                 # Publish stats at every new model version or if all tapes are finished
-                if publish_model_version_stats is not None or published_samples == expected_number_of_samples:
+                # FIXME: we might lose stats if both conditions are true
+                if model_version_to_publish is not None or published_samples == expected_number_of_samples:
                     if self.is_training:
                         loop_stats = {
                             "published_samples": published_samples,
                             "samples_in_queue": samples_in_queue,
                             "finished_groups": finished_groups,
-                            "published_model_version": publish_model_version_stats, # do we want publish_model_version_stats or max_model_version?
+                            "published_model_version": model_version_to_publish, 
                             "latency": max_latency,
                             "time_since_start": time.time() - loop_start_time,
                         }
@@ -493,17 +496,19 @@ class ActorLoop:
                     self.publish_stats(
                         stats_writer=stats_writer,
                         loop_stats=loop_stats,
-                        model_version=publish_model_version_stats,
                         split_name=split_name,
                     )
+                    model_version_to_publish = None
 
 
                 if published_samples == expected_number_of_samples:
                     logger.info(f"Finished {expected_number_of_samples} samples, stopping actor loop")
                     break
 
-    def publish_stats(self, stats_writer: StreamWriter, loop_stats, model_version, split_name: str = ""):
+    def publish_stats(self, stats_writer: StreamWriter, loop_stats, split_name: str = ""):
         sliding_stats = self.stats_aggregator.get_stats()
+        model_version = loop_stats["published_model_version"]
+        logging.info(f"Publishing stats for model version {model_version}" + f"with split name '{split_name}'" if split_name else "")
         stats = (
             {
                 (split_name + "_" if split_name else "") + "reward_" + k: v
@@ -557,7 +562,6 @@ class ActorLoop:
             stats |= sliding_stats
         wandb.log({"actor/" + k: v for k, v in stats.items()})
         stats_writer.write(stats)
-        #self.init_stats()
 
 
 def run_actor_loop(cfg: DictConfig):
