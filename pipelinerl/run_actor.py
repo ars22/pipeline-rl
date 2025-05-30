@@ -539,7 +539,7 @@ class ActorLoop:
             }
         )
 
-        for dataset_name in self.reward_stats.keys():
+        for dataset_name in self.reward_stats[model_version].keys():
             sub_stats = (
                 {"reward_" + k: v for k, v in calculate_stats(self.reward_stats[model_version][dataset_name]).items()}
                 | {"success_" + k: v for k, v in calculate_stats(self.success_stats[model_version][dataset_name]).items()}
