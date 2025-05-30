@@ -742,9 +742,6 @@ def rl_finetuning_worker(
                 else:
                     # max_grad_norm and grad_norm are not available 
                     training_metrics.grad_norm = -1.0
-                # check the type of training_metrics.grad_norm
-                print(f"Grad norm type: {type(training_metrics.grad_norm)}")
-                
             else:
                 max_grad_norm = args.get("gradient_clipping_threshold", None)
                 training_metrics.grad_norm = get_accelerator().clip_grad_norm_(model.parameters(), max_grad_norm)
@@ -819,7 +816,6 @@ def rl_finetuning_worker(
         training_metrics.time_waiting_for_data += time_waiting_for_data
         if time_to_log or time_to_save:
             dt = log_time(dt, time_stats, "finetune/interim_eval")
-            print(training_metrics.grad_norm)
             metrics_dict.update(
                 {
                     "stats/lr": training_metrics.lr,
