@@ -432,14 +432,18 @@ def run_preprocessing_loop(
                             logger.info(f"Buffer is full with {len(buffer)} samples, start writing")
                             random.shuffle(buffer)
 
-                        # Filter out groups where all advantages are zero
-                        filtered_buffer, num_filtered_out = filter_zero_advantage_groups(buffer)
-                        total_filtered_out += num_filtered_out
-                        
-                        if num_filtered_out > 0:
-                            logger.info(f"Filtered out {num_filtered_out} samples from groups with zero advantage.")
+                        # Conditionally filter out groups where all advantages are zero
+                        if rl_config.filter_zero_advantage_groups:
+                            filtered_buffer, num_filtered_out = filter_zero_advantage_groups(buffer)
+                            total_filtered_out += num_filtered_out
+                            
+                            if num_filtered_out > 0:
+                                logger.info(f"Filtered out {num_filtered_out} samples from groups with zero advantage.")
+                        else:
+                            filtered_buffer = buffer
+                            num_filtered_out = 0
 
-                        # Write only the filtered entries
+                        # Write the entries (filtered or unfiltered based on config)
                         for entry in filtered_buffer:
                             writer.write(entry)
                         writing_took = time.time() - start_writing
