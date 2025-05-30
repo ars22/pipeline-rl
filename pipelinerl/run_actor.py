@@ -335,11 +335,10 @@ class ActorLoop:
         self.output_tokens = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         self.overflows = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
-    def update_stats(self, result: RolloutResult):
+    def update_stats(self, result: RolloutResult, model_version: int):
         dataset_name = result.dataset_name
         group_id = result.group_id
         stats = result.metrics
-        model_version = result.model_version
         self.reward_stats[model_version][dataset_name][group_id].append(stats["reward"])
         self.success_stats[model_version][dataset_name][group_id].append(stats["success"])
         self.no_errors_stats[model_version][dataset_name][group_id].append(stats["no_error"])
@@ -472,9 +471,9 @@ class ActorLoop:
                     assert result.model_version is not None
                     max_model_version = max(max_model_version, result.model_version)
                     # in the case of testing, we log the stats for the starting trainer version
-                    result.model_version = max_model_version if self.training else starting_trainer_version
                     max_latency = max(max_latency, result.latency)
-                    self.update_stats(result)
+                    logged_model_version = max_model_version if self.training else starting_trainer_version
+                    self.update_stats(result, logged_model_version)
 
                 self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
 
