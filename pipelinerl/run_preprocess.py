@@ -129,6 +129,9 @@ def preprocess_dataset(
 ) -> Dataset:
     preprocess = partial(preprocess_fn, seq_length=seq_length, tokenizer=tokenizer, is_rl=True)
     columns = ["input_ids", "labels", "attention_mask"] + RL_DATA_COLUMNS
+    if rl_config.filter_zero_advantage_groups and "group_id" not in columns:
+        columns.append("group_id")
+    
     logger.debug(f"Instantiated preprocess function hash {Hasher.hash(preprocess)}")
 
     data = replace_oov_tokens_with_the(data, tokenizer)
