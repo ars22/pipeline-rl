@@ -492,7 +492,7 @@ class ActorLoop:
                             "samples_in_queue": samples_in_queue,
                             "finished_groups": finished_groups,
                             "model_version": max_model_version,
-                            "trainer_version_to_publish": trainer_version_to_publish, 
+                            "trainer_model_version": trainer_version_to_publish, 
                             "latency": max_latency,
                             "time_since_start": time.time() - loop_start_time,
                         }
@@ -500,7 +500,7 @@ class ActorLoop:
                     else:
                         loop_stats = {
                             "published_model_version": max_model_version,
-                            "trainer_version_to_publish": last_trainer_version
+                            "trainer_model_version": last_trainer_version
                             }
 
                     self.publish_stats(
@@ -516,57 +516,57 @@ class ActorLoop:
 
     def publish_stats(self, stats_writer: StreamWriter, loop_stats, split_name: str = ""):
         sliding_stats = self.stats_aggregator.get_stats()
-        trainer_version_to_publish = loop_stats["trainer_version_to_publish"]
-        if trainer_version_to_publish not in self.reward_stats:
+        trainer_model_version = loop_stats["trainer_model_version"]
+        if trainer_model_version not in self.reward_stats:
             logging.warning(
-                f"Trainer version {trainer_version_to_publish} has no actor stats"
+                f"Trainer version {trainer_model_version} has no actor stats"
             )
             return
-        logging.info(f"Publishing stats for model version {trainer_version_to_publish}" + (f" with split name '{split_name}'" if split_name else ""))
+        logging.info(f"Publishing stats for model version {trainer_model_version}" + (f" with split name '{split_name}'" if split_name else ""))
         stats = (
             {
                 (split_name + "_" if split_name else "") + "reward_" + k: v
-                for k, v in calculate_per_group_stats(self.reward_stats[trainer_version_to_publish]).items()
+                for k, v in calculate_per_group_stats(self.reward_stats[trainer_model_version]).items()
             }
             | {
                 (split_name + "_" if split_name else "") + "success_" + k: v
-                for k, v in calculate_per_group_stats(self.success_stats[trainer_version_to_publish]).items()
+                for k, v in calculate_per_group_stats(self.success_stats[trainer_model_version]).items()
             }
             | {
                 (split_name + "_" if split_name else "") + "no_error_" + k: v
-                for k, v in calculate_per_group_stats(self.no_errors_stats[trainer_version_to_publish]).items()
+                for k, v in calculate_per_group_stats(self.no_errors_stats[trainer_model_version]).items()
             }
             | {
                 (split_name + "_" if split_name else "") + "no_answer_" + k: v
-                for k, v in calculate_per_group_stats(self.no_answer_stats[trainer_version_to_publish]).items()
+                for k, v in calculate_per_group_stats(self.no_answer_stats[trainer_model_version]).items()
             }
             | {
                 (split_name + "_" if split_name else "") + "prompt_tokens_" + k: v
-                for k, v in calculate_per_group_stats(self.prompt_tokens[trainer_version_to_publish]).items()
+                for k, v in calculate_per_group_stats(self.prompt_tokens[trainer_model_version]).items()
             }
             | {
                 (split_name + "_" if split_name else "") + "output_tokens_" + k: v
-                for k, v in calculate_per_group_stats(self.output_tokens[trainer_version_to_publish]).items()
+                for k, v in calculate_per_group_stats(self.output_tokens[trainer_model_version]).items()
             }
             | {
                 (split_name + "_" if split_name else "") + "overflows_" + k: v
-                for k, v in calculate_per_group_stats(self.overflows[trainer_version_to_publish]).items()
+                for k, v in calculate_per_group_stats(self.overflows[trainer_model_version]).items()
             }
             | {
                 (split_name + "_" if split_name else "") + k: v
-                for k, v in always_or_never_success_stats(self.success_stats[trainer_version_to_publish]).items()
+                for k, v in always_or_never_success_stats(self.success_stats[trainer_model_version]).items()
             }
         )
 
-        for dataset_name in self.reward_stats[trainer_version_to_publish].keys():
+        for dataset_name in self.reward_stats[trainer_model_version].keys():
             sub_stats = (
-                {"reward_" + k: v for k, v in calculate_stats(self.reward_stats[trainer_version_to_publish][dataset_name]).items()}
-                | {"success_" + k: v for k, v in calculate_stats(self.success_stats[trainer_version_to_publish][dataset_name]).items()}
-                | {"no_error_" + k: v for k, v in calculate_stats(self.no_errors_stats[trainer_version_to_publish][dataset_name]).items()}
-                | {"no_answer_" + k: v for k, v in calculate_stats(self.no_answer_stats[trainer_version_to_publish][dataset_name]).items()}
-                | {"prompt_tokens_" + k: v for k, v in calculate_stats(self.prompt_tokens[trainer_version_to_publish][dataset_name]).items()}
-                | {"output_tokens_" + k: v for k, v in calculate_stats(self.output_tokens[trainer_version_to_publish][dataset_name]).items()}
-                | {"overflows_" + k: v for k, v in calculate_stats(self.overflows[trainer_version_to_publish][dataset_name]).items()}
+                {"reward_" + k: v for k, v in calculate_stats(self.reward_stats[trainer_model_version][dataset_name]).items()}
+                | {"success_" + k: v for k, v in calculate_stats(self.success_stats[trainer_model_version][dataset_name]).items()}
+                | {"no_error_" + k: v for k, v in calculate_stats(self.no_errors_stats[trainer_model_version][dataset_name]).items()}
+                | {"no_answer_" + k: v for k, v in calculate_stats(self.no_answer_stats[trainer_model_version][dataset_name]).items()}
+                | {"prompt_tokens_" + k: v for k, v in calculate_stats(self.prompt_tokens[trainer_model_version][dataset_name]).items()}
+                | {"output_tokens_" + k: v for k, v in calculate_stats(self.output_tokens[trainer_model_version][dataset_name]).items()}
+                | {"overflows_" + k: v for k, v in calculate_stats(self.overflows[trainer_model_version][dataset_name]).items()}
             )
             sub_stats = {dataset_name + "/" + k: v for k, v in sub_stats.items()}
             stats |= sub_stats
