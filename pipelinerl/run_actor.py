@@ -471,7 +471,7 @@ class ActorLoop:
 
                     if self.is_training:
                         # Training mode: associate stats with last_trainer_version
-                        starting_trainer_version = last_trainer_version
+                        stats_trainer_version = last_trainer_version
                     else:
                         # Testing mode: associate stats with starting trainer version instead of last
                         stats_trainer_version = starting_trainer_version
