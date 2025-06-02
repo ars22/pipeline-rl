@@ -333,6 +333,8 @@ class ActorLoop:
         self.prompt_tokens = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         self.output_tokens = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         self.overflows = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        self.latency = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        self.model_version = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
     def update_stats(self, result: RolloutResult, trainer_version: int):
         dataset_name = result.dataset_name
@@ -345,6 +347,8 @@ class ActorLoop:
         self.prompt_tokens[trainer_version][dataset_name][group_id].append(stats["prompt_tokens"])
         self.output_tokens[trainer_version][dataset_name][group_id].append(stats["output_tokens"])
         self.overflows[trainer_version][dataset_name][group_id].append(stats["overflow"])
+        self.latency[trainer_version][dataset_name][group_id].append(result.latency)
+        self.model_version[trainer_version][dataset_name][group_id].append(result.model_version)
 
     def run(self, dataset: list[tuple[str, dict]]):
         loop_start_time = time.time()
@@ -462,20 +466,16 @@ class ActorLoop:
                     f" {in_progress} groups in progress"
                 )
 
-                prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
-                output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
-                max_model_version = 0
-                max_latency = 0
+                #prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
+                #output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
                 for result in rollout_results:
                     assert result.model_version is not None
-                    max_model_version = max(max_model_version, result.model_version)
-                    max_latency = max(max_latency, result.latency)
                     # Training mode: associate stats with last_trainer_version
                     # Testing mode: associate stats with starting trainer version instead of last
                     stats_trainer_version = last_trainer_version if self.is_training else starting_trainer_version
                     self.update_stats(result, stats_trainer_version)
 
-                self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
+                #self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
 
                 finished_groups += 1
                 time_to_publish_train_stats = (
@@ -491,15 +491,12 @@ class ActorLoop:
                             "published_samples": published_samples,
                             "samples_in_queue": samples_in_queue,
                             "finished_groups": finished_groups,
-                            "model_version": max_model_version,
                             "trainer_model_version": trainer_version_to_publish, 
-                            "latency": max_latency,
                             "time_since_start": time.time() - loop_start_time,
                         }
                         trainer_version_to_publish = None
                     else:
                         loop_stats = {
-                            "published_model_version": max_model_version,
                             "trainer_model_version": last_trainer_version
                             }
 
@@ -523,38 +520,47 @@ class ActorLoop:
             )
             return
         logging.info(f"Publishing stats for model version {trainer_model_version}" + (f" with split name '{split_name}'" if split_name else ""))
+        split_name = split_name + "_" if split_name else ""
         stats = (
             {
-                (split_name + "_" if split_name else "") + "reward_" + k: v
+                split_name + "reward_" + k: v
                 for k, v in calculate_per_group_stats(self.reward_stats[trainer_model_version]).items()
             }
             | {
-                (split_name + "_" if split_name else "") + "success_" + k: v
+                split_name + "success_" + k: v
                 for k, v in calculate_per_group_stats(self.success_stats[trainer_model_version]).items()
             }
             | {
-                (split_name + "_" if split_name else "") + "no_error_" + k: v
+                split_name + "no_error_" + k: v
                 for k, v in calculate_per_group_stats(self.no_errors_stats[trainer_model_version]).items()
             }
             | {
-                (split_name + "_" if split_name else "") + "no_answer_" + k: v
+                split_name + "no_answer_" + k: v
                 for k, v in calculate_per_group_stats(self.no_answer_stats[trainer_model_version]).items()
             }
             | {
-                (split_name + "_" if split_name else "") + "prompt_tokens_" + k: v
+                split_name + "prompt_tokens_" + k: v
                 for k, v in calculate_per_group_stats(self.prompt_tokens[trainer_model_version]).items()
             }
             | {
-                (split_name + "_" if split_name else "") + "output_tokens_" + k: v
+                split_name + "output_tokens_" + k: v
                 for k, v in calculate_per_group_stats(self.output_tokens[trainer_model_version]).items()
             }
             | {
-                (split_name + "_" if split_name else "") + "overflows_" + k: v
+                split_name + "overflows_" + k: v
                 for k, v in calculate_per_group_stats(self.overflows[trainer_model_version]).items()
             }
             | {
-                (split_name + "_" if split_name else "") + k: v
+                split_name + k: v
                 for k, v in always_or_never_success_stats(self.success_stats[trainer_model_version]).items()
+            }
+            | {
+                split_name + "latency_" + k: v
+                for k, v in calculate_per_group_stats(self.latency[trainer_model_version]).items()
+            }
+            | {
+                split_name + "model_version_" + k: v
+                for k, v in calculate_per_group_stats(self.model_version[trainer_model_version]).items()
             }
         )
 
