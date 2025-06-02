@@ -554,14 +554,6 @@ class ActorLoop:
                 split_name + k: v
                 for k, v in always_or_never_success_stats(self.success_stats[trainer_model_version]).items()
             }
-            | {
-                split_name + "latency_" + k: v
-                for k, v in calculate_per_group_stats(self.latency[trainer_model_version]).items()
-            }
-            | {
-                split_name + "model_version_" + k: v
-                for k, v in calculate_per_group_stats(self.model_version[trainer_model_version]).items()
-            }
         )
 
         for dataset_name in self.reward_stats[trainer_model_version].keys():
@@ -573,6 +565,8 @@ class ActorLoop:
                 | {"prompt_tokens_" + k: v for k, v in calculate_stats(self.prompt_tokens[trainer_model_version][dataset_name]).items()}
                 | {"output_tokens_" + k: v for k, v in calculate_stats(self.output_tokens[trainer_model_version][dataset_name]).items()}
                 | {"overflows_" + k: v for k, v in calculate_stats(self.overflows[trainer_model_version][dataset_name]).items()}
+                | {"latency_" + k: v for k, v in calculate_stats(self.latency[trainer_model_version][dataset_name]).items()}
+                | {"model_version_" + k: v for k, v in calculate_stats(self.model_version[trainer_model_version][dataset_name]).items()}
             )
             sub_stats = {dataset_name + "/" + k: v for k, v in sub_stats.items()}
             stats |= sub_stats
