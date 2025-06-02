@@ -410,7 +410,7 @@ class ActorLoop:
                     if max_lag is not None:
                         assert groups_per_update is not None
                         can_submit_before_update += groups_per_update
-                    # the weights have been updated, publish the stats of the previous model version
+                    # the weights have been updated, publish the stats of the previous trainer version
                     trainer_version_to_publish = last_trainer_version
                     last_trainer_version = self.trainer_state.propagated_weight_version
 
@@ -498,7 +498,10 @@ class ActorLoop:
                         }
                         trainer_version_to_publish = None
                     else:
-                        loop_stats = {"published_model_version": starting_trainer_version}
+                        loop_stats = {
+                            "published_model_version": max_model_version,
+                            "trainer_version_to_publish": last_trainer_version
+                            }
 
                     self.publish_stats(
                         stats_writer=stats_writer,
