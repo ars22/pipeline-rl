@@ -466,16 +466,22 @@ class ActorLoop:
                     f" {in_progress} groups in progress"
                 )
 
-                #prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
-                #output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
                 for result in rollout_results:
                     assert result.model_version is not None
-                    # Training mode: associate stats with last_trainer_version
-                    # Testing mode: associate stats with starting trainer version instead of last
-                    stats_trainer_version = last_trainer_version if self.is_training else starting_trainer_version
+
+                    if self.is_training:
+                        # Training mode: associate stats with last_trainer_version
+                        starting_trainer_version = last_trainer_version
+                    else:
+                        # Testing mode: associate stats with starting trainer version instead of last
+                        stats_trainer_version = starting_trainer_version
+
                     self.update_stats(result, stats_trainer_version)
 
-                #self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
+                # Throughput stats
+                prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
+                output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
+                self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
 
                 finished_groups += 1
                 time_to_publish_train_stats = (
