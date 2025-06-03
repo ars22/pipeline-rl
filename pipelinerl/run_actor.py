@@ -342,7 +342,7 @@ class ActorLoop:
         self.latency_list = []
         self.model_versions_list = []
 
-    def update_stats(self, result: RolloutResult, trainer_version: int):
+    def update_stats(self, result: RolloutResult):
         dataset_name = result.dataset_name
         group_id = result.group_id
         stats = result.metrics
