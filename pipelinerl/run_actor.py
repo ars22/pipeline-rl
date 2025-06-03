@@ -98,6 +98,9 @@ class SlidingWindowAggregator:
         }
 
 
+def make_stats_dict() -> dict:
+    return lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
 async def schedule_rollouts(
     cfg: DictConfig,
     attempts: int,
@@ -325,16 +328,16 @@ class ActorLoop:
             self.rollout_processes.append(process)
 
     def init_stats(self):
-        self.reward_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        self.step_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        self.no_errors_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        self.no_answer_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        self.success_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        self.prompt_tokens = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        self.output_tokens = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        self.overflows = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        self.latency = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        self.model_version = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        self.reward_stats = make_stats_dict()
+        self.step_stats = make_stats_dict()
+        self.no_errors_stats = make_stats_dict()
+        self.no_answer_stats = make_stats_dict()
+        self.success_stats = make_stats_dict()
+        self.prompt_tokens = make_stats_dict()
+        self.output_tokens = make_stats_dict()
+        self.overflows = make_stats_dict()
+        self.latency = make_stats_dict()
+        self.model_version = make_stats_dict()
 
     def update_stats(self, result: RolloutResult, trainer_version: int):
         dataset_name = result.dataset_name
