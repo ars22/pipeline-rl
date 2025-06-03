@@ -466,7 +466,7 @@ class ActorLoop:
                         data_stream_writer.write(text)
                 in_progress = submitted_groups - finished_groups
                 logger.info(
-                    f"Published {group_samples}{' Train' if self.is_training else ' Test'} samples"
+                    f"Published {group_samples}{' train' if self.is_training else ' test'} samples"
                     f" to {self.data_stream}, total {published_samples} samples so far, {samples_in_queue} samples in the queue,"
                     f" {in_progress} groups in progress"
                 )
