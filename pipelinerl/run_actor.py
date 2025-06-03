@@ -514,7 +514,6 @@ class ActorLoop:
                     self.publish_stats(
                         stats_writer=stats_writer,
                         loop_stats=loop_stats,
-                        is_training=self.is_training,
                     )
 
 
@@ -522,9 +521,9 @@ class ActorLoop:
                     logger.info(f"Finished {expected_number_of_samples} samples, stopping actor loop")
                     break
 
-    def publish_stats(self, stats_writer: StreamWriter, loop_stats: Dict, is_training: bool =True):
+    def publish_stats(self, stats_writer: StreamWriter, loop_stats: Dict):
         sliding_stats = self.stats_aggregator.get_stats()
-        split_name = "test_" if not is_training else ""
+        split_name = "test_" if not self.is_training else ""
         stats = (
             {
                 f"{split_name}reward_" + k: v
