@@ -98,8 +98,9 @@ class SlidingWindowAggregator:
         }
 
 
+
 def make_stats_dict() -> dict:
-    return lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    return defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
 async def schedule_rollouts(
     cfg: DictConfig,
