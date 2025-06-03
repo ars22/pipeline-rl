@@ -24,6 +24,7 @@ finetune:
     aggregate_loss: sum
   train_batch_size: 1
   gradient_accumulation_passes: 4096
+  gradient_accumulation_passes_per_gpu: -1 # will be calculated automatically
   gradient_checkpointing: true
   # see https://medium.com/pytorch/how-activation-checkpointing-enables-scaling-up-training-deep-learning-models-7a93ae01ff2d
   # for the motivation to this false by default
