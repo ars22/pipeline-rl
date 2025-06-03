@@ -16,7 +16,7 @@ import uvloop
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
 from tapeagents.llms import TrainableLLM
-from typing import Dict
+from typing import Dict, List
 
 import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
@@ -341,20 +341,32 @@ class ActorLoop:
         self.overflows = make_stats_dict()
         self.latency_list = []
         self.model_versions_list = []
+        self.sliding_stats = defaultdict(list)
 
-    def update_stats(self, result: RolloutResult):
-        dataset_name = result.dataset_name
-        group_id = result.group_id
-        stats = result.metrics
-        self.reward_stats[dataset_name][group_id].append(stats["reward"])
-        self.success_stats[dataset_name][group_id].append(stats["success"])
-        self.no_errors_stats[dataset_name][group_id].append(stats["no_error"])
-        self.no_answer_stats[dataset_name][group_id].append(stats["no_answer"])
-        self.prompt_tokens[dataset_name][group_id].append(stats["prompt_tokens"])
-        self.output_tokens[dataset_name][group_id].append(stats["output_tokens"])
-        self.overflows[dataset_name][group_id].append(stats["overflow"])
-        self.latency_list.append(result.latency)
-        self.model_versions_list.append(result.model_version)
+    def update_stats(self, rollout_results: List[RolloutResult]):
+        for result in rollout_results:
+            assert result.model_version is not None
+            dataset_name = result.dataset_name
+            group_id = result.group_id
+            stats = result.metrics
+            self.reward_stats[dataset_name][group_id].append(stats["reward"])
+            self.success_stats[dataset_name][group_id].append(stats["success"])
+            self.no_errors_stats[dataset_name][group_id].append(stats["no_error"])
+            self.no_answer_stats[dataset_name][group_id].append(stats["no_answer"])
+            self.prompt_tokens[dataset_name][group_id].append(stats["prompt_tokens"])
+            self.output_tokens[dataset_name][group_id].append(stats["output_tokens"])
+            self.overflows[dataset_name][group_id].append(stats["overflow"])
+            self.latency_list.append(result.latency)
+            self.model_versions_list.append(result.model_version)
+        
+        prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
+        output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
+        self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
+        sliding_window_stats = self.stats_aggregator.get_stats()
+        for k, v in sliding_window_stats.items():
+            self.sliding_stats[k].append(v)
+        
+
 
     def run(self, dataset: list[tuple[str, dict]], debug_mode: bool = False):
         loop_start_time = time.time()
@@ -379,7 +391,6 @@ class ActorLoop:
         assert self.trainer_state.propagated_weight_version is not None
 
         last_trainer_version = self.trainer_state.propagated_weight_version
-        starting_trainer_version = last_trainer_version
         max_lag = self.cfg.finetune.max_lag if self.is_training else None
         if max_lag is not None:
             total_batch_size = self.cfg.finetune.train_batch_size * self.cfg.finetune.gradient_accumulation_passes
@@ -471,14 +482,11 @@ class ActorLoop:
                     f" {in_progress} groups in progress"
                 )
 
-                for result in rollout_results:
-                    assert result.model_version is not None
-                    self.update_stats(result)
+                    
+                self.update_stats(rollout_results=rollout_results)
 
                 # Throughput stats
-                prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
-                output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
-                self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
+
 
                 finished_groups += 1
                 time_to_publish_train_stats = (
@@ -514,7 +522,6 @@ class ActorLoop:
                     break
 
     def publish_stats(self, stats_writer: StreamWriter, loop_stats: Dict):
-        sliding_stats = self.stats_aggregator.get_stats()
         split_name = "test_" if not self.is_training else ""
         stats = (
             {
@@ -571,10 +578,12 @@ class ActorLoop:
             )
             sub_stats = {dataset_name + "/" + k: v for k, v in sub_stats.items()}
             stats |= sub_stats
+        
 
         stats |= loop_stats
         if loop_stats.get("finished_groups", 0) >= 2 * self.window_size:
-            stats |= sliding_stats
+            for k, v in self.sliding_stats.items():
+                stats[k] = sum(v) / len(v) if v else 0
         wandb.log({f"actor/{k}": v for k, v in stats.items()})
         stats_writer.write(stats)
         self.init_stats()  # Reset stats for the next iteration
