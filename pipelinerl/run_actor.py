@@ -490,7 +490,7 @@ class ActorLoop:
                 time_to_publish_train_stats = (
                     self.is_training
                     and trainer_version_to_publish is not None
-                ) or self.debug.mode 
+                ) or self.debug_mode 
                 time_to_publish_test_stats = (published_samples == expected_number_of_samples)
 
                 # Publish stats at every new model version or if all tapes are finished
