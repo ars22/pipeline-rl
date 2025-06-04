@@ -17,7 +17,7 @@ finetune:
     kl_coef: 0.0
     entropy_bonus: 0.0
     reward_minus_kl_coef: 0.0
-    epsilon: 99
+    epsilon: 4
     use_advantages: true
     relu_log_p_weights: false
     clamp_log_ratio_ref_new_value: 5
@@ -26,6 +26,7 @@ finetune:
   train_batch_size: 1
   gradient_accumulation_passes: 1024
   gradient_checkpointing: true
+  gradient_clipping_threshold: 0.1
   # see https://medium.com/pytorch/how-activation-checkpointing-enables-scaling-up-training-deep-learning-models-7a93ae01ff2d
   # for the motivation to this false by default
   reentrant_checkpointing: false
