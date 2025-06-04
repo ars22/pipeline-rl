@@ -289,6 +289,7 @@ class ActorLoop:
         self.cfg = cfg
         self.is_training = is_training
         self.is_scheduling_paused = False
+        self.debug_mode = cfg.debug.mode in ["actor", "open_loop"]
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
@@ -489,7 +490,7 @@ class ActorLoop:
                 time_to_publish_train_stats = (
                     self.is_training
                     and trainer_version_to_publish is not None
-                ) or self.cfg.debug.mode 
+                ) or self.debug.mode 
                 time_to_publish_test_stats = (published_samples == expected_number_of_samples)
 
                 # Publish stats at every new model version or if all tapes are finished
