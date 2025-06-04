@@ -368,7 +368,7 @@ class ActorLoop:
         
 
 
-    def run(self, dataset: list[tuple[str, dict]], debug_mode: bool = False):
+    def run(self, dataset: list[tuple[str, dict]]):
         loop_start_time = time.time()
         self.init_stats()
 
