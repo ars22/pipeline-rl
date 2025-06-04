@@ -477,16 +477,13 @@ class ActorLoop:
                         data_stream_writer.write(text)
                 in_progress = submitted_groups - finished_groups
                 logger.info(
-                    f"Published {group_samples}{' train' if self.is_training else ' test'} samples"
+                    f"Published {group_samples} {'train' if self.is_training else 'test'} samples"
                     f" to {self.data_stream}, total {published_samples} samples so far, {samples_in_queue} samples in the queue,"
                     f" {in_progress} groups in progress"
                 )
 
                     
                 self.update_stats(rollout_results=rollout_results)
-
-                # Throughput stats
-
 
                 finished_groups += 1
                 time_to_publish_train_stats = (
@@ -553,7 +550,7 @@ class ActorLoop:
                 for k, v in calculate_per_group_stats(self.overflows).items()
             }
             | {
-                split_name + k: v
+                f"{split_name}{k}": v
                 for k, v in always_or_never_success_stats(self.success_stats).items()
             }
             | {
