@@ -188,9 +188,9 @@ def calculate_stats(stats):
         stats = {"key": stats}
 
     aggregated_stats = {
-        "max": float(np.mean([max(stat) for stat in stats.values() if stat])),
-        "min": float(np.mean([min(stat) for stat in stats.values() if stat])),
-        "var": float(np.mean([np.var(stat) for stat in stats.values() if stat])),
+        "max": float(max([val for stat in stats.values() if stat for val in stat])),
+        "min": float(min([val for stat in stats.values() if stat for val in stat])),
+        "var": float(np.var([val for stat in stats.values() if stat for val in stat])),
         "mean": float(np.mean([val for stat in stats.values() if stat for val in stat])),
     }
 
