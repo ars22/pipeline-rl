@@ -151,6 +151,7 @@ def preprocess_dataset(
         raise ValueError(f"Tokenizer {tokenizer} does not have an eos_token_id")
     dataset = dataset.add_column("model_version", [entry["metadata"]["model_version"] for entry in data])  # type: ignore
     dataset = dataset.add_column("rollout_index", [entry["metadata"]["rollout_index"] for entry in data])  # type: ignore    
+    dataset = dataset.add_column("step_index", [entry["metadata"]["step_index"] for entry in data])  # type: ignore
     dataset = populate_rl_data(dataset=dataset, eos_token_id=tokenizer.eos_token_id, config=rl_config)
     return dataset
 
