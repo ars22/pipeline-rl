@@ -22,7 +22,19 @@ class RewardTable(BaseModel):
     unparsable_finished: float
     correct_answer_not_finished: float
     correct_answer_finished: float
+    buffer_tokens: int = 0 # 0 means no overlong reward shaping
 
+def compute_overlong_penalty(max_length: int, sequence_length: int, buffer_tokens: int):
+    """
+    Compute the overlong penalty
+    """
+    if buffer_tokens == 0:
+        return 0
+    if sequence_length > (max_length - buffer_tokens) and sequence_length <= max_length:
+        return ((max_length - buffer_tokens) - sequence_length) / buffer_tokens
+    if sequence_length > max_length:
+        return -1
+    return 0
 
 async def generate_math_rollout(
     cfg: DictConfig,
@@ -85,6 +97,8 @@ async def generate_math_rollout(
 
     # Apply discount factor based on output length
     reward *= discount_factor**llm_call.output_length_tokens
+    overlong_penalty = compute_overlong_penalty(cfg.llm.parameters.max_tokens, llm_call.output_length_tokens, rewards.buffer_tokens)
+    reward -= overlong_penalty
     trace.reward = reward
 
     metrics = {
