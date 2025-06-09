@@ -33,7 +33,7 @@ async def generate_guessing_rollout(
     guess_history = []
     reward = 0
     error = 0
-    for i in range(3):
+    for i in range(10):
         messages = initial_messages.copy()
         if i > 0:
             last_message = f"Your {i} previous guesses:"
