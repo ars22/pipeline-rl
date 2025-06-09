@@ -360,9 +360,9 @@ class ActorLoop:
         submitted_groups = 0
         finished_groups = 0
         last_log_time = 0
-        expected_number_of_samples = -1 if self.is_training else len(dataset)
-        if expected_number_of_samples > 0:
-            logger.info(f"Will stop after {expected_number_of_samples} samples")
+        expected_rollouts = -1 if self.is_training else len(dataset)
+        if expected_rollouts > 0:
+            logger.info(f"Will stop after {expected_rollouts} rollouts")
 
         # If training, we expect to sample infinitely
         # for train sample, sample random batches infinitely
@@ -477,8 +477,8 @@ class ActorLoop:
 
                 finished_groups += 1
 
-                # if we are training publish stats at every step else if all tapes are finished, publish stats
-                if self.is_training or published_samples == expected_number_of_samples:
+                # if we are training publish stats at every step else only if all rollouts are finished
+                if self.is_training or finished_groups == expected_rollouts:
                     if self.is_training:
                         log_time = time.monotonic()
                         if log_time - last_log_time > self.cfg.actor.log_each_n_secs:
@@ -497,8 +497,8 @@ class ActorLoop:
                         loop_stats = {"published_model_version": max_model_version}
                         self.publish_stats(stats_writer=stats_writer, loop_stats=loop_stats, split_name=split_name)
 
-                if published_samples == expected_number_of_samples:
-                    logger.info(f"Finished {expected_number_of_samples} samples, stopping actor loop")
+                if finished_groups == expected_rollouts:
+                    logger.info(f"Finished {expected_rollouts} rollouts, stopping actor loop")
                     break
 
     def publish_stats(self, stats_writer: StreamWriter, loop_stats, split_name: str = ""):
