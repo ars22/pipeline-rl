@@ -643,6 +643,7 @@ def rl_finetuning_worker(
 
     time_waiting_for_data = 0.0
 
+    gradient_accumulation_passes_per_gpu = args.gradient_accumulation_passes // get_accelerator().state.num_processes
     samples_per_worker_per_step = gradient_accumulation_passes_per_gpu * args.train_batch_size
     samples_per_step = samples_per_worker_per_step * get_accelerator().state.num_processes
     start_samples = training_metrics.samples
