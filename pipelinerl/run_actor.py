@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import logging
 import math
 import multiprocessing as mp
@@ -70,6 +71,9 @@ class SlidingWindowAggregator:
             self.data.timestamps.pop(0)
 
     def get_stats(self):
+        if len(self.data.prompt_tokens_window) < self.window_size:
+            return None
+
         # 1. How many samples do we produce per second?
         # 2. How many output tokens do we produce per second?
         # 3. How many prompt tokens do we produce per second?
@@ -286,8 +290,7 @@ class ActorLoop:
         self.data_stream = data_stream
         self.trainer_state = trainer_state
         self.stats_stream = stats_stream
-        self.window_size = 500 // cfg.attempts
-        self.stats_aggregator = SlidingWindowAggregator(window_size=self.window_size)
+        self.sliding_aggregator = SlidingWindowAggregator(window_size=cfg.actor.throughput_window_size)
         self.llms = llms
         self.loop_start_time = -1
         self.cfg = cfg
@@ -343,6 +346,7 @@ class ActorLoop:
         self.success_stats = make_stats_dict()
         self.prompt_tokens = make_stats_dict()
         self.output_tokens = make_stats_dict()
+        self.num_turns = make_stats_dict()
         self.overflows = make_stats_dict()
         self.latency_list = []
         self.model_versions_list = []
@@ -358,18 +362,21 @@ class ActorLoop:
             self.success_stats[dataset_name][group_id].append(stats["success"])
             self.no_errors_stats[dataset_name][group_id].append(stats["no_error"])
             self.no_answer_stats[dataset_name][group_id].append(stats["no_answer"])
-            self.prompt_tokens[dataset_name][group_id].append(stats["prompt_tokens"])
-            self.output_tokens[dataset_name][group_id].append(stats["output_tokens"])
+            self.prompt_tokens[dataset_name][group_id].append(sum(result.prompt_tokens))
+            self.output_tokens[dataset_name][group_id].append(sum(result.output_tokens))
             self.overflows[dataset_name][group_id].append(stats["overflow"])
+            self.num_turns[dataset_name][group_id].append(len(result.training_texts))
             self.latency_list.append(result.latency)
             self.model_versions_list.append(result.model_version)
+        dataset_name = rollout_results[0].dataset_name
         
-        prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
-        output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
-        self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
-        sliding_window_stats = self.stats_aggregator.get_stats()
-        for k, v in sliding_window_stats.items():
-            self.sliding_stats[k].append(v)
+        prompt_length_tokens = list(itertools.chain(*(result.prompt_tokens for result in rollout_results)))
+        output_length_tokens = list(itertools.chain(*(result.output_tokens for result in rollout_results)))
+        self.sliding_aggregator.update(prompt_length_tokens, output_length_tokens)
+        sliding_window_stats = self.sliding_aggregator.get_stats()
+        if sliding_window_stats is not None:
+            for k, v in sliding_window_stats.items():
+                self.sliding_stats[k].append(v)
         
 
 
@@ -550,6 +557,10 @@ class ActorLoop:
                 for k, v in calculate_per_group_stats(self.output_tokens).items()
             }
             | {
+                f"{split_name}num_turns_" + k: v
+                for k, v in calculate_per_group_stats(self.num_turns).items()
+            }
+            | {
                 f"{split_name}overflows_" + k: v
                 for k, v in calculate_per_group_stats(self.overflows).items()
             }
@@ -579,12 +590,10 @@ class ActorLoop:
             )
             sub_stats = {dataset_name + "/" + k: v for k, v in sub_stats.items()}
             stats |= sub_stats
-        
-
+    
         stats |= loop_stats
-        if loop_stats.get("finished_groups", 0) >= 2 * self.window_size:
-            for k, v in self.sliding_stats.items():
-                stats[k] = sum(v) / len(v) if v else 0
+        for k, v in self.sliding_stats.items():
+            stats[k] = sum(v) / len(v) if v else 0
         wandb.log({f"actor/{k}": v for k, v in stats.items()})
         stats_writer.write(stats)
         self.init_stats()  # Reset stats for the next iteration

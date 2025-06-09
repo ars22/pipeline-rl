@@ -24,7 +24,7 @@ async def generate_guessing_rollout(
         },
         {
             "role": "user",
-            "content": f"You must guess a number. Output the answer as <answer>number</answer>."
+            "content": f"You must guess a number between 1 and 1024. Output the answer as <answer>number</answer>."
                         " After each guess I will tell you if your answer is higher or lower than the target number."
         }
     ]
@@ -32,8 +32,9 @@ async def generate_guessing_rollout(
     llm_calls = []
     guess_history = []
     reward = 0
+    success = 0
     error = 0
-    for i in range(10):
+    for i in range(13):
         messages = initial_messages.copy()
         if i > 0:
             last_message = f"Your {i} previous guesses:"
@@ -49,29 +50,26 @@ async def generate_guessing_rollout(
         llm_call = await llm_async_generate(llm, Prompt(messages=messages), session)
         llm_calls.append(llm_call)
 
-        output_text = llm_call.output.content 
-        if output_text:
-            answer = re.search("<answer>(\d+)</answer>", output_text)
-            if answer:
-                answer = int(answer.group(1))
-                if answer == problem["answer"]:
-                    reward = 1 - i / 10
-                    break
-                else:
-                    guess_history.append(answer)                            
-            else:
-                reward = -1
-                error = 1
+        output_text = llm_call.output.content or ""
+        answer = re.search("<answer>(\d+)</answer>", output_text)
+        if answer:
+            answer = int(answer.group(1))
+            if answer == problem["answer"]:
+                reward = 2 - i / 10
+                success = 1
                 break
+            else:
+                guess_history.append(answer)                            
         else:
+            # bonus for using the correct output format in the first turns
+            reward = -2 + i / 10
             error = 1
-            reward = -1
             break
     latency = time.time() - time_start        
 
     all_finished = 0
-    prompt_tokens = sum(llm_call.prompt_length_tokens for llm_call in llm_calls)
-    output_tokens = sum(llm_call.output_length_tokens for llm_call in llm_calls)
+    prompt_tokens = [llm_call.prompt_length_tokens for llm_call in llm_calls]
+    output_tokens = [llm_call.output_length_tokens for llm_call in llm_calls]
     training_texts = [make_training_text(llm, llm_call) for llm_call in llm_calls]
     for text in training_texts:
         text.reward = reward
@@ -79,11 +77,9 @@ async def generate_guessing_rollout(
 
     metrics = {
         "reward": reward,
-        "success": reward,
+        "success": success,
         "no_error": not error,
         "no_answer": error,
-        "prompt_tokens": prompt_tokens,
-        "output_tokens": output_tokens,
         "overflow": 0 if all_finished else 1,
     }
 
@@ -91,19 +87,23 @@ async def generate_guessing_rollout(
         training_texts=training_texts,
         metrics=metrics,
         latency=latency,
-        dataset_name=problem["dataset"]
+        dataset_name=problem["dataset"],
+        prompt_tokens=prompt_tokens,
+        output_tokens=output_tokens,
     )
     
 
 def load_problems(dataset_names: list[str]):
+    n = 1024
+    c = 191
     problems = []
     for name in dataset_names:
         if name == "train":
             problems.extend([
-                {"answer": i, "dataset": "train"} for i in range(0, 128, 2)
+                {"answer": (2 * i * c) % n + 1, "dataset": "train"} for i in range(512)
             ])
         elif name == "test":
             problems.extend([
-                {"answer": i, "dataset": "test"} for i in range(1, 128, 2)
+                {"answer": ((2 * i + 1) * c) % n + 1, "dataset": "test"} for i in range(512)
             ])
     return problems

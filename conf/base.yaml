@@ -48,6 +48,7 @@ actor:
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
     {task}
+  throughput_window_size: 50
 environment:
   _target_: pipelinerl.math.verifier_api.MathEnvironment
 preprocess:

@@ -8,6 +8,8 @@ from tapeagents.llms.trainable import TrainableLLM
 
 class RolloutResult(BaseModel):
     training_texts: list[TrainingText]
+    prompt_tokens: list[int]
+    output_tokens: list[int]
     metrics: dict[str, float]
     latency: float
     # optional so fields that it can be filled later after RolloutResult is created
