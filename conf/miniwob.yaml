@@ -11,13 +11,27 @@ test_llm:
         max_tokens: 500
 actor:
     rollout_policy: pipelinerl.miniwob.rollouts.generate_miniwob_rollout
+
+agent_max_loops: 10  # max number of agent - environment interactions for each task
+
+# ENVIRONMENT CONFIGURATION
 environment:
   _target_: pipelinerl.miniwob.environment_server.WebEnvironment
+  n_envs: 8
+  host: "0.0.0.0"
+  web_env_target: tapeagents.examples.rl_webagent.environment.WebEnvironment
+  exp_path: ${output_dir}/env_server
+  headless: true
+  observation_format: html
+client_environment:
+  _target_: tapeagents.remote_environment.AsyncRemoteEnvironment
+  server_url: http://localhost:8000
+
+# DATASET CONFIGURATION
 dataset_loader: pipelinerl.miniwob.load_tasks.load_tasks
 dataset_loader_params:
   train_split: 0.6  # 0.6 of tasks for training, 0.4 for testing
   seeds: [0, 42, 1337, 900, 103]
-  max_loops: 10  # max number of agent - environment interactions for each task
 train_dataset_names:
     - train
 test_dataset_names:
