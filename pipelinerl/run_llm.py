@@ -1,12 +1,7 @@
-import asyncio
-import json
 import logging
-import os
 import signal
-from pydantic import TypeAdapter
 import torch
 import uvloop
-from vllm import AsyncLLMEngine
 from vllm.utils import FlexibleArgumentParser, set_ulimit
 from vllm.entrypoints.openai.cli_args import (
     make_arg_parser,
@@ -22,10 +17,6 @@ from vllm.entrypoints.openai.api_server import (
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.entrypoints.openai.tool_parsers import ToolParserManager
 from vllm._version import version
-from vllm.executor.multiproc_worker_utils import ProcessWorkerWrapper
-from vllm.executor.mp_distributed_executor import MultiprocessingDistributedExecutor
-from vllm.model_executor.layers.sampler import SamplerOutput
-from vllm.sequence import ExecuteModelRequest
 from vllm.usage.usage_lib import UsageContext
 from vllm.config import ModelConfig
 from vllm.v1.engine.async_llm import AsyncLLM
@@ -33,9 +24,7 @@ from vllm.v1.engine.core_client import AsyncMPClient
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 
-
-import torch.distributed as dist
-from pipelinerl.run_finetune import TrainerMessage, WeightUpdateRequest
+from pipelinerl.run_finetune import WeightUpdateRequest
 from typing import Any, Protocol, runtime_checkable
 import pipelinerl.torch_utils
 
@@ -62,9 +51,6 @@ class LikeWorker(Protocol):
 
 
 class WorkerExtension:
-    # Optionally, for type checkers, you can annotate 'self' as 'HasRankAttrs'
-    def iam_worker(self: LikeWorker):
-        print(f"I am worker with rank {self.rank} and local rank {self.local_rank}")
 
     def init_actor_update_group(
         self: LikeWorker,
@@ -102,7 +88,7 @@ class WorkerExtension:
             )
             buffer = torch.empty(tuple(info.shape), dtype=model_dtype, device=self.device)
             torch.distributed.broadcast(buffer, src=0, group=self.process_group)
-            loaded_params = self.model_runner.model.load_weights(weights=[(info.name, buffer)])
+            loaded_params = self.model_runner.model.load_weights(weights=[(info.name, buffer)]) # type: ignore
             if len(loaded_params) != 1:
                 raise ValueError(f"model {info.name} not found in model state dict")
         logger.info("Weight update received")
@@ -171,7 +157,6 @@ async def run_server(args, **uvicorn_kwargs) -> None:
         disable_log_requests=engine_args.disable_log_requests,
     )
     assert isinstance(engine.engine_core, AsyncMPClient)
-    await engine.engine_core.collective_rpc_async("iam_worker")
 
     weight_update_manager = WeightUpdateManager(args, engine.engine_core)
     if not args.disable_weight_updates:
