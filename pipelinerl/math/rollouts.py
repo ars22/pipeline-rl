@@ -92,9 +92,14 @@ async def generate_math_rollout(
         "success": answer_status == "correct",
         "no_error": answer_status != "unparsable",
         "no_answer": answer_status == "no_answer",
-        "prompt_tokens": llm_call.prompt_length_tokens,
-        "output_tokens": llm_call.output_length_tokens,
         "overflow": 0 if finished else 1,
     }
 
-    return RolloutResult(training_texts=[trace], metrics=metrics, latency=latency, dataset_name=problem.get("dataset"))
+    return RolloutResult(
+        training_texts=[trace],
+        metrics=metrics,
+        latency=latency, 
+        dataset_name=problem.get("dataset"),
+        prompt_tokens=[llm_call.prompt_length_tokens],
+        output_tokens=[llm_call.output_length_tokens],
+    )
