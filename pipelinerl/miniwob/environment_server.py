@@ -2,7 +2,7 @@ from tapeagents.remote_environment import EnvironmentServer
 from omegaconf import OmegaConf
 
 
-class WebEnvironment:
+class WebEnvironmentServer:
     n_envs: int = 8
     host: str = "0.0.0.0"
     web_env_target: str = "tapeagents.examples.rl_webagent.environment.WebEnvironment"
