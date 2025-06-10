@@ -67,7 +67,7 @@ async def generate_guessing_rollout(
             break
     latency = time.time() - time_start        
 
-    all_finished = 0
+    all_finished = 1
     prompt_tokens = [llm_call.prompt_length_tokens for llm_call in llm_calls]
     output_tokens = [llm_call.output_length_tokens for llm_call in llm_calls]
     training_texts = [make_training_text(llm, llm_call) for llm_call in llm_calls]
