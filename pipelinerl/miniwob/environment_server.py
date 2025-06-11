@@ -3,12 +3,21 @@ from omegaconf import OmegaConf
 
 
 class WebEnvironmentServer:
-    n_envs: int = 8
-    host: str = "0.0.0.0"
-    web_env_target: str = "tapeagents.examples.rl_webagent.environment.WebEnvironment"
-    exp_path: str
-    headless: bool = True
-    observation_format: str = "html"
+
+    def __init__(self,
+        n_envs: int,
+        host: str,
+        web_env_target: str,
+        exp_path: str,
+        headless: bool = True,
+        observation_format: str = "html"
+    ):
+        self.n_envs = n_envs
+        self.host = host
+        self.web_env_target = web_env_target
+        self.exp_path = exp_path
+        self.headless = headless
+        self.observation_format = observation_format
 
     def launch(self, port: int):
         """
