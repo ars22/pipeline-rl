@@ -107,6 +107,8 @@ async def generate_math_rollout(
         no_error=answer_status != "unparsable",
         no_answer=answer_status == "no_answer",
         overflow=0 if finished else 1,
+        prompt_tokens=[llm_call.prompt_length_tokens],
+        output_tokens=[llm_call.output_length_tokens],
         penalty=overlong_penalty,
     )
 

@@ -81,6 +81,8 @@ async def generate_guessing_rollout(
         no_error=not error,
         no_answer=error,
         overflow=0 if all_finished else 1,
+        prompt_tokens=prompt_tokens,
+        output_tokens=output_tokens,
     )
 
     return RolloutResult(
@@ -88,8 +90,6 @@ async def generate_guessing_rollout(
         metrics=metrics,
         latency=latency,
         dataset_name=problem["dataset"],
-        prompt_tokens=prompt_tokens,
-        output_tokens=output_tokens,
     )
     
 

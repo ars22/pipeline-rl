@@ -59,6 +59,8 @@ async def generate_counting_rollout(
         no_error=not error,
         no_answer=error,
         overflow=0 if finished else 1,
+        prompt_tokens= [llm_call.prompt_length_tokens],
+        output_tokens=[llm_call.output_length_tokens],
     )
 
     return RolloutResult(
@@ -66,8 +68,6 @@ async def generate_counting_rollout(
         metrics=metrics,
         latency=latency,
         dataset_name=problem["dataset"],
-        prompt_tokens= [llm_call.prompt_length_tokens],
-        output_tokens=[llm_call.output_length_tokens],
     )
     
 

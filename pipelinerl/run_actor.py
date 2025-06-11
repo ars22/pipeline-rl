@@ -352,10 +352,15 @@ class ActorLoop:
             self.latency_list.append(result.latency)
             self.model_versions_list.append(result.model_version)
             for k, v in result.metrics.model_dump().items():
-                self.stats[k][dataset_name][group_id].append(v)
+                if isinstance(v, list):
+                    self.stats[k][dataset_name][group_id] += v
+                elif isinstance(v, float) or isinstance(v, bool):
+                    self.stats[k][dataset_name][group_id].append(v)
+                else:
+                    raise ValueError(f"Unsupported metric type: {type(v)} for key {k}")
         
-        prompt_length_tokens = list(itertools.chain(*(result.prompt_tokens for result in rollout_results)))
-        output_length_tokens = list(itertools.chain(*(result.output_tokens for result in rollout_results)))
+        prompt_length_tokens = list(itertools.chain(*(result.metrics.prompt_tokens for result in rollout_results)))
+        output_length_tokens = list(itertools.chain(*(result.metrics.output_tokens for result in rollout_results)))
         self.sliding_aggregator.update(prompt_length_tokens, output_length_tokens)
         sliding_window_stats = self.sliding_aggregator.get_stats()
         if sliding_window_stats is not None:
