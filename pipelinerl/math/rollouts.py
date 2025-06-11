@@ -98,7 +98,7 @@ async def generate_math_rollout(
     # Apply discount factor based on output length
     reward *= discount_factor**llm_call.output_length_tokens
     # FIXME: llm_call.output_length_tokens = output_tokens + 2
-    overlong_penalty = compute_overlong_penalty(cfg.llm.parameters.max_tokens, len(trace.logprobs), rewards.buffer_tokens)
+    overlong_penalty = compute_overlong_penalty(cfg.llm.parameters.max_tokens, llm_call.output_length_tokens, rewards.buffer_tokens)
     if not finished:
         assert overlong_penalty == -1, "Overlong penalty should be 0 for unfinished generations"
     reward += overlong_penalty
