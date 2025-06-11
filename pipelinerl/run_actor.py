@@ -332,14 +332,7 @@ class ActorLoop:
             self.rollout_processes.append(process)
 
     def init_stats(self):
-        self.reward_stats = make_stats_dict()
-        self.step_stats = make_stats_dict()
-        self.no_errors_stats = make_stats_dict()
-        self.no_answer_stats = make_stats_dict()
-        self.success_stats = make_stats_dict()
-        self.prompt_tokens = make_stats_dict()
-        self.output_tokens = make_stats_dict()
-        self.overflows = make_stats_dict()
+        self.stats = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         self.latency_list = []
         self.model_versions_list = []
         self.sliding_stats = defaultdict(list)
@@ -349,19 +342,13 @@ class ActorLoop:
             assert result.model_version is not None
             dataset_name = result.dataset_name
             group_id = result.group_id
-            stats = result.metrics
-            self.reward_stats[dataset_name][group_id].append(stats["reward"])
-            self.success_stats[dataset_name][group_id].append(stats["success"])
-            self.no_errors_stats[dataset_name][group_id].append(stats["no_error"])
-            self.no_answer_stats[dataset_name][group_id].append(stats["no_answer"])
-            self.prompt_tokens[dataset_name][group_id].append(stats["prompt_tokens"])
-            self.output_tokens[dataset_name][group_id].append(stats["output_tokens"])
-            self.overflows[dataset_name][group_id].append(stats["overflow"])
             self.latency_list.append(result.latency)
             self.model_versions_list.append(result.model_version)
+            for k, v in result.metrics.model_dump().items():
+                self.stats[k][dataset_name][group_id].append(v)
         
-        prompt_length_tokens = [result.metrics["prompt_tokens"] for result in rollout_results]
-        output_length_tokens = [result.metrics["output_tokens"] for result in rollout_results]
+        prompt_length_tokens = [result.metrics.prompt_tokens for result in rollout_results]
+        output_length_tokens = [result.metrics.output_tokens for result in rollout_results]
         self.stats_aggregator.update(prompt_length_tokens, output_length_tokens)
         sliding_window_stats = self.stats_aggregator.get_stats()
         for k, v in sliding_window_stats.items():
@@ -521,38 +508,20 @@ class ActorLoop:
 
     def publish_stats(self, stats_writer: StreamWriter, loop_stats: Dict):
         split_name = "test_" if not self.is_training else ""
-        stats = (
+
+        stats = defaultdict(float)
+        for metric_name, dict_of_stats_per_metric in self.stats.items():
+            for agg, group_stats in calculate_per_group_stats(dict_of_stats_per_metric).items():
+                stats[f"{split_name}{metric_name}_{agg}"] = group_stats
+
+            for dataset_name, list_of_stats_per_metric_and_dataset in self.stats[metric_name].items():
+                for agg, sub_stats in calculate_stats(list_of_stats_per_metric_and_dataset).items():
+                    stats[f"{dataset_name}/{split_name}{metric_name}_{agg}"] = sub_stats
+
+        stats |= (
             {
-                f"{split_name}reward_" + k: v
-                for k, v in calculate_per_group_stats(self.reward_stats).items()
-            }
-            | {
-                f"{split_name}success_" + k: v
-                for k, v in calculate_per_group_stats(self.success_stats).items()
-            }
-            | {
-                f"{split_name}no_error_" + k: v
-                for k, v in calculate_per_group_stats(self.no_errors_stats).items()
-            }
-            | {
-                f"{split_name}no_answer_" + k: v
-                for k, v in calculate_per_group_stats(self.no_answer_stats).items()
-            }
-            | {
-                f"{split_name}prompt_tokens_" + k: v
-                for k, v in calculate_per_group_stats(self.prompt_tokens).items()
-            }
-            | {
-                f"{split_name}output_tokens_" + k: v
-                for k, v in calculate_per_group_stats(self.output_tokens).items()
-            }
-            | {
-                f"{split_name}overflows_" + k: v
-                for k, v in calculate_per_group_stats(self.overflows).items()
-            }
-            | {
                 f"{split_name}{k}": v
-                for k, v in always_or_never_success_stats(self.success_stats).items()
+                for k, v in always_or_never_success_stats(self.stats["success"]).items()
             }
             | {
                 f"{split_name}latency_" + k: v
@@ -564,18 +533,6 @@ class ActorLoop:
             }
         )
 
-        for dataset_name in self.reward_stats.keys():
-            sub_stats = (
-                {"reward_" + k: v for k, v in calculate_stats(self.reward_stats[dataset_name]).items()}
-                | {"success_" + k: v for k, v in calculate_stats(self.success_stats[dataset_name]).items()}
-                | {"no_error_" + k: v for k, v in calculate_stats(self.no_errors_stats[dataset_name]).items()}
-                | {"no_answer_" + k: v for k, v in calculate_stats(self.no_answer_stats[dataset_name]).items()}
-                | {"prompt_tokens_" + k: v for k, v in calculate_stats(self.prompt_tokens[dataset_name]).items()}
-                | {"output_tokens_" + k: v for k, v in calculate_stats(self.output_tokens[dataset_name]).items()}
-                | {"overflows_" + k: v for k, v in calculate_stats(self.overflows[dataset_name]).items()}
-            )
-            sub_stats = {dataset_name + "/" + k: v for k, v in sub_stats.items()}
-            stats |= sub_stats
         
 
         stats |= loop_stats

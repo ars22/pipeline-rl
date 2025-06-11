@@ -5,10 +5,18 @@ from pipelinerl.finetune.data import MASKED_TOKEN_ID
 from tapeagents.core import LLMCall, TrainingText
 from tapeagents.llms.trainable import TrainableLLM
 
+class BaseMetrics(BaseModel):
+    reward: float
+    success: bool
+    no_error: bool
+    no_answer: bool
+    prompt_tokens: int
+    output_tokens: int
+    overflow: int  # 0 if finished, 1 if not finished
 
 class RolloutResult(BaseModel):
     training_texts: list[TrainingText]
-    metrics: dict[str, float]
+    metrics: BaseMetrics
     latency: float
     # optional so fields that it can be filled later after RolloutResult is created
     model_version: int | None = None

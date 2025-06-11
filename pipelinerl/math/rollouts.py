@@ -4,7 +4,7 @@ import random
 import aiohttp
 from omegaconf import DictConfig
 from pydantic import BaseModel
-from pipelinerl.rollouts import RolloutResult
+from pipelinerl.rollouts import RolloutResult, BaseMetrics
 from pipelinerl.world import Job
 from tapeagents.core import Prompt
 from tapeagents.llms.trainable import TrainableLLM
@@ -12,6 +12,8 @@ from tapeagents.llms.trainable import TrainableLLM
 from pipelinerl.async_llm import llm_async_generate, make_training_text
 from pipelinerl.math.verifier_api import verify_answer_rpc
 
+class Metrics(BaseMetrics):
+    penalty: float
 
 class RewardTable(BaseModel):
     wrong_answer_not_finished: float
@@ -95,18 +97,22 @@ async def generate_math_rollout(
 
     # Apply discount factor based on output length
     reward *= discount_factor**llm_call.output_length_tokens
-    overlong_penalty = compute_overlong_penalty(cfg.llm.parameters.max_tokens, llm_call.output_length_tokens, rewards.buffer_tokens)
+    # FIXME: llm_call.output_length_tokens = output_tokens + 2
+    overlong_penalty = compute_overlong_penalty(cfg.llm.parameters.max_tokens, len(trace.logprobs), rewards.buffer_tokens)
+    if not finished:
+        assert overlong_penalty == -1, "Overlong penalty should be 0 for unfinished generations"
     reward += overlong_penalty
     trace.reward = reward
 
-    metrics = {
-        "reward": reward,
-        "success": answer_status == "correct",
-        "no_error": answer_status != "unparsable",
-        "no_answer": answer_status == "no_answer",
-        "prompt_tokens": llm_call.prompt_length_tokens,
-        "output_tokens": llm_call.output_length_tokens,
-        "overflow": 0 if finished else 1,
-    }
+    metrics = Metrics(
+        reward=reward,
+        success=answer_status == "correct",
+        no_error=answer_status != "unparsable",
+        no_answer=answer_status == "no_answer",
+        prompt_tokens=llm_call.prompt_length_tokens,
+        output_tokens=llm_call.output_length_tokens,
+        overflow=0 if finished else 1,
+        penalty=overlong_penalty,
+    )
 
     return RolloutResult(training_texts=[trace], metrics=metrics, latency=latency, dataset_name=problem.get("dataset"))
