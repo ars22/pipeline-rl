@@ -202,7 +202,7 @@ def rl_step(
     overflow = batch["overflow"][:, 1:]
 
     if config.group_normalization:
-        tokens_weights = torch.ones_like(group_tokens) / group_tokens
+        tokens_weights = torch.ones_like(group_tokens) / torch.clamp(group_tokens, 1, 1e5)
     else:
         tokens_weights = torch.ones_like(group_tokens) / config.batch_size
 

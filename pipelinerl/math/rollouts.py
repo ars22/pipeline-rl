@@ -30,8 +30,6 @@ def compute_overlong_penalty(max_length: int, sequence_length: int, buffer_token
     """
     Compute the overlong penalty
     """
-    if buffer_tokens == 0:
-        return 0
     if sequence_length > (max_length - buffer_tokens) and sequence_length <= max_length:
         return ((max_length - buffer_tokens) - sequence_length) / buffer_tokens
     return 0
@@ -97,7 +95,9 @@ async def generate_math_rollout(
 
     # Apply discount factor based on output length
     reward *= discount_factor**llm_call.output_length_tokens
-    overlong_penalty = compute_overlong_penalty(llm.parameters['max_tokens'], llm_call.output_length_tokens, rewards.buffer_tokens)
+    overlong_penalty = 0
+    if rewards.buffer_tokens > 0:
+        overlong_penalty = compute_overlong_penalty(llm.parameters['max_tokens'], llm_call.output_length_tokens, rewards.buffer_tokens)
     reward += overlong_penalty
     trace.reward = reward
 
