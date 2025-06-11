@@ -117,6 +117,4 @@ async def generate_math_rollout(
         metrics=metrics,
         latency=latency, 
         dataset_name=problem.get("dataset"),
-        prompt_tokens=[llm_call.prompt_length_tokens],
-        output_tokens=[llm_call.output_length_tokens],
     )
