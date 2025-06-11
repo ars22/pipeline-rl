@@ -1,9 +1,10 @@
 defaults:
   - base
 
-
 debug:
   mode: actor
+
+output_dir: results/miniwob_debug/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 finetune:
   seq_length: 2000
