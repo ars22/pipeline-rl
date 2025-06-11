@@ -301,9 +301,14 @@ def rl_step(
         ).item(),
         "num_nans": torch.isnan(loss).sum().item(),
         "token_weight": mean_sum(tokens_weights, masks_shifted, segments).item(),
+        "max_token_weight": tokens_weights[masks_shifted].max().item(),
+        "min_token_weight": tokens_weights[masks_shifted].min().item(),
         "kl_coef": num_sequences * kl_coef,
         "entropy_bonus_coef": num_sequences * entropy_bonus_coef,
         "num_output_tokens_sum": masks_shifted.sum().item(),
+        "max_group_tokens": group_tokens[masks_shifted].max().item(),
+        "min_group_tokens": group_tokens[masks_shifted].min().item(),
+        "group_tokens": mean_sum(group_tokens, masks_shifted, segments).item(),
     }
 
     return final_loss, stats
