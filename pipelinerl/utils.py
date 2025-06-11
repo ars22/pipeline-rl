@@ -163,19 +163,13 @@ def always_or_never_success_stats(success_stats: Mapping[str, Mapping[str, list[
     }
 
 
-def calculate_per_group_stats(stats):
-    merged_stats = defaultdict(list)
-
+def calculate_overall_stats(stats):
+    merged_stats = list()
     # Iterate through each dataset
     for dataset_name, dataset_stats in stats.items():
-        # Iterate through each data point
-        dataset_stats_list = []
-        for v_list in dataset_stats.values():
-            # v_list is length number of attempts
-            dataset_stats_list += v_list
-        # append the list of values to the merged_stats dictionary
-        merged_stats[dataset_name] += dataset_stats_list
-    # merged stats is a dictionary with dataset names as keys and a list with one element as values
+        # Iterate through each group
+        for group_name, group_stats in dataset_stats.items():
+            merged_stats += group_stats
     return calculate_stats(merged_stats)
 
 
