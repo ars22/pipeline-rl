@@ -173,8 +173,8 @@ def calculate_per_group_stats(stats):
         for v_list in dataset_stats.values():
             # v_list is length number of attempts
             dataset_stats_list += v_list
-        # average over all data points in the dataset
-        merged_stats[dataset_name].append(np.mean(dataset_stats_list))
+        # append the list of values to the merged_stats dictionary
+        merged_stats[dataset_name] += dataset_stats_list
     # merged stats is a dictionary with dataset names as keys and a list with one element as values
     return calculate_stats(merged_stats)
 
