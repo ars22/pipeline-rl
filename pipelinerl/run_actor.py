@@ -527,41 +527,6 @@ class ActorLoop:
 
         stats |= (
             {
-<<<<<<< HEAD
-=======
-                f"{split_name}reward_" + k: v
-                for k, v in calculate_per_group_stats(self.reward_stats).items()
-            }
-            | {
-                f"{split_name}success_" + k: v
-                for k, v in calculate_per_group_stats(self.success_stats).items()
-            }
-            | {
-                f"{split_name}no_error_" + k: v
-                for k, v in calculate_per_group_stats(self.no_errors_stats).items()
-            }
-            | {
-                f"{split_name}no_answer_" + k: v
-                for k, v in calculate_per_group_stats(self.no_answer_stats).items()
-            }
-            | {
-                f"{split_name}prompt_tokens_" + k: v
-                for k, v in calculate_per_group_stats(self.prompt_tokens).items()
-            }
-            | {
-                f"{split_name}output_tokens_" + k: v
-                for k, v in calculate_per_group_stats(self.output_tokens).items()
-            }
-            | {
-                f"{split_name}num_turns_" + k: v
-                for k, v in calculate_per_group_stats(self.num_turns).items()
-            }
-            | {
-                f"{split_name}overflows_" + k: v
-                for k, v in calculate_per_group_stats(self.overflows).items()
-            }
-            | {
->>>>>>> origin/main
                 f"{split_name}{k}": v
                 for k, v in always_or_never_success_stats(self.stats["success"]).items()
             }
@@ -575,24 +540,6 @@ class ActorLoop:
             }
         )
 
-<<<<<<< HEAD
-        
-
-=======
-        for dataset_name in self.reward_stats.keys():
-            sub_stats = (
-                {"reward_" + k: v for k, v in calculate_stats(self.reward_stats[dataset_name]).items()}
-                | {"success_" + k: v for k, v in calculate_stats(self.success_stats[dataset_name]).items()}
-                | {"no_error_" + k: v for k, v in calculate_stats(self.no_errors_stats[dataset_name]).items()}
-                | {"no_answer_" + k: v for k, v in calculate_stats(self.no_answer_stats[dataset_name]).items()}
-                | {"prompt_tokens_" + k: v for k, v in calculate_stats(self.prompt_tokens[dataset_name]).items()}
-                | {"output_tokens_" + k: v for k, v in calculate_stats(self.output_tokens[dataset_name]).items()}
-                | {"overflows_" + k: v for k, v in calculate_stats(self.overflows[dataset_name]).items()}
-            )
-            sub_stats = {dataset_name + "/" + k: v for k, v in sub_stats.items()}
-            stats |= sub_stats
-    
->>>>>>> origin/main
         stats |= loop_stats
         for k, v in self.sliding_stats.items():
             stats[k] = sum(v) / len(v) if v else 0
