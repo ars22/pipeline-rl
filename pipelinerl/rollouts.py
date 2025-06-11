@@ -10,7 +10,7 @@ class BaseMetrics(BaseModel):
     success: bool
     no_error: bool
     no_answer: bool
-    overflow: int  # 0 if finished, 1 if not finished
+    overflow: bool
 
 class RolloutResult(BaseModel):
     training_texts: list[TrainingText]
