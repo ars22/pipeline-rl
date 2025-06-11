@@ -48,6 +48,7 @@ actor:
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
     {task}
+  throughput_window_size: 50
 environment:
   _target_: pipelinerl.math.verifier_api.MathEnvironment
 preprocess:
@@ -55,7 +56,7 @@ preprocess:
   output: training_data
   n_workers: 8
   queue_size: 8
-  chunk_size: 16
+  chunk_n_groups: 2
   submit_delay: 0.
   pop_old_data: ${..pop_old_data} 
   buffer_size: 0

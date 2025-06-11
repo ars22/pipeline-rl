@@ -10,13 +10,13 @@ class BaseMetrics(BaseModel):
     success: bool
     no_error: bool
     no_answer: bool
-    prompt_tokens: int
-    output_tokens: int
     overflow: int  # 0 if finished, 1 if not finished
 
 class RolloutResult(BaseModel):
     training_texts: list[TrainingText]
     metrics: BaseMetrics
+    prompt_tokens: list[int]
+    output_tokens: list[int]
     latency: float
     # optional so fields that it can be filled later after RolloutResult is created
     model_version: int | None = None
