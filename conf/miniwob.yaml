@@ -41,7 +41,7 @@ agent:
       Important! Respond with the plain text, do not include any JSON or code.
       Do not output anything besides what I asked in this message.
   nodes:
-    - _target_: pipelinerl.miniwob.agent.WebNode
+    - _target_: examples.rl_webagent.agent.WebNode
       name: set_goal
       system_prompt: ${agent.templates.system_prompt}
       guidance: |
@@ -53,7 +53,7 @@ agent:
       steps_prompt: ${agent.templates.allowed_tools}
       trim_obs_except_last_n: 3  # keep the last 3 observations from the tape in prompt messages
       max_chars_page_observation: 3000  # keep up to 3000 chars in PageObservation steps
-    - _target_: pipelinerl.miniwob.agent.WebNode
+    - _target_: examples.rl_webagent.agent.WebNode
       name: reflect
       system_prompt: ${agent.templates.system_prompt}
       guidance: |
@@ -64,7 +64,7 @@ agent:
       steps_prompt: ${agent.templates.allowed_tools}
       trim_obs_except_last_n: 3  # keep the last 3 observations from the tape in prompt messages
       max_chars_page_observation: 3000  # keep up to 3000 chars in PageObservation steps
-    - _target_: pipelinerl.miniwob.agent.WebNode
+    - _target_: examples.rl_webagent.agent.WebNode
       name: act
       system_prompt: ${agent.templates.system_prompt}
       guidance: |
@@ -79,7 +79,7 @@ agent:
       use_known_actions: true
       use_function_calls: true
       steps:
-        - pipelinerl.miniwob.agent.FinalAnswerAction
+        - examples.rl_webagent.steps.FinalAnswerAction
       trim_obs_except_last_n: 3  # keep the last 3 observations from the tape in prompt messages
       max_chars_page_observation: 3000  # keep up to 3000 chars in PageObservation steps
       next_node: reflect
@@ -88,9 +88,10 @@ agent:
 # ENVIRONMENT CONFIGURATION
 environment:
   _target_: pipelinerl.miniwob.environment_server.WebEnvironmentServer
+  miniwob_url: file:///home/toolkit/miniwob-plusplus/miniwob/html/miniwob/
   n_envs: 64
   host: "0.0.0.0"
-  web_env_target: tapeagents.examples.rl_webagent.environment.WebEnvironment
+  web_env_target: examples.rl_webagent.environment.WebEnvironment
   exp_path: ${output_dir}/env_server
   headless: true
   observation_format: html

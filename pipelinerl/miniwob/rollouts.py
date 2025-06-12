@@ -17,7 +17,7 @@ from tapeagents.remote_environment import AsyncRemoteEnvironment
 from tapeagents.tools.simple_browser import PageObservation
 from tapeagents.orchestrator import async_execute_agent
 from tapeagents.io import save_json_tape
-from pipelinerl.miniwob.agent import WebTape
+from examples.rl_webagent.steps import WebTape
 
 
 logger = logging.getLogger(__name__)
