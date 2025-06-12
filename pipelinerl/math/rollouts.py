@@ -26,7 +26,7 @@ class RewardTable(BaseModel):
     correct_answer_finished: float
     buffer_tokens: int = 0 # 0 means no overlong reward shaping
 
-def compute_overlong_penalty(max_length: int, sequence_length: int, buffer_tokens: int):
+def length_penalty(max_length: int, sequence_length: int, buffer_tokens: int):
     """
     Compute the overlong penalty
     """
@@ -97,7 +97,7 @@ async def generate_math_rollout(
     reward *= discount_factor**llm_call.output_length_tokens
     overlong_penalty = 0
     if rewards.buffer_tokens > 0:
-        overlong_penalty = compute_overlong_penalty(llm.parameters['max_tokens'], llm_call.output_length_tokens, rewards.buffer_tokens)
+        overlong_penalty = length_penalty(llm.parameters['max_tokens'], llm_call.output_length_tokens, rewards.buffer_tokens)
     reward += overlong_penalty
     trace.reward = reward
 
