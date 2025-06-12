@@ -43,14 +43,14 @@ actor:
   log_each_n_secs: 0
   llm_max_rollouts: 64
   rollout_workers: 1
-  rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
   discount_factor: 1
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
     {task}
   throughput_window_size: 50
 environment:
-  _target_: pipelinerl.domains.math.verifier_api.MathEnvironment
+  _target_: pipelinerl.domains.math.MathEnvironment
 preprocess:
   input: actor
   output: training_data
