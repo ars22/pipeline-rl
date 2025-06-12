@@ -149,7 +149,7 @@ hydra:
     dir: ${output_dir}
 
 wandb:
-  use_wandb: false
+  use_wandb: true
   wandb_id: null
   wandb_name: null
   # W&B entity name
