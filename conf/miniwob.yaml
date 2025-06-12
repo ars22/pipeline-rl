@@ -15,6 +15,12 @@ llm:
 test_llm:
   parameters:
     max_tokens: 500
+
+vllm_config:
+  vllm_kwargs:
+    enable-auto-tool-choice: ""
+    tool-call-parser: hermes
+
 actor:
   rollout_policy: pipelinerl.miniwob.rollouts.generate_miniwob_rollout
 
