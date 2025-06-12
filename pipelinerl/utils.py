@@ -163,7 +163,7 @@ def always_or_never_success_stats(success_stats: Mapping[str, Mapping[str, list[
     }
 
 
-def dict_to_list(d: Union[Dict[Any, Any], Any]) -> List[Any]:
+def dict_to_list(d: Dict[Any, Any] | List[Any]) -> List[Any]:
     if isinstance(d, dict):
         return [item for v in d.values() for item in dict_to_list(v)]
     return d
