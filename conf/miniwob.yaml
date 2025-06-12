@@ -23,6 +23,7 @@ vllm_config:
 
 actor:
   rollout_policy: pipelinerl.miniwob.rollouts.generate_miniwob_rollout
+  shared_memory_entry_size: 100000000
 
 # AGENT CONFIGURATION
 agent_max_loops: 10  # max number of agent - environment interactions for each task
