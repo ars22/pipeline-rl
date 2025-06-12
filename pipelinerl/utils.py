@@ -6,7 +6,7 @@ import shutil
 import time
 from pathlib import Path
 import traceback
-from typing import Dict, Mapping, List
+from typing import Dict, Mapping, List, Any, Union
 import numpy as np
 from omegaconf import DictConfig
 import psutil
@@ -163,25 +163,22 @@ def always_or_never_success_stats(success_stats: Mapping[str, Mapping[str, list[
     }
 
 
-def calculate_overall_stats(stats):
-    merged_stats = list()
-    # Iterate through each dataset
-    for dataset_name, dataset_stats in stats.items():
-        # Iterate through each group
-        for group_name, group_stats in dataset_stats.items():
-            merged_stats += group_stats
-    return calculate_stats(merged_stats)
+def dict_to_list(d: Union[Dict[Any, Any], Any]) -> List[Any]:
+    if isinstance(d, dict):
+        return [item for v in d.values() for item in dict_to_list(v)]
+    return [d]
 
 
-def calculate_stats(stats):
-    if isinstance(stats, list):
-        stats = {"key": stats}
+def calculate_stats(stats: List | Dict[Any, Any]) -> Dict[str, float]:
+    if isinstance(stats, dict):
+        # stats is a dict of list
+        stats = dict_to_list(stats)
 
     aggregated_stats = {
-        "max": float(max([val for stat in stats.values() if stat for val in stat])),
-        "min": float(min([val for stat in stats.values() if stat for val in stat])),
-        "var": float(np.var([val for stat in stats.values() if stat for val in stat])),
-        "mean": float(np.mean([val for stat in stats.values() if stat for val in stat])),
+        "max": float(max(stats)),
+        "min": float(min(stats)),
+        "var": float(np.var(stats)),
+        "mean": float(np.mean(stats)),
     }
 
     if aggregated_stats["var"] == 0:
