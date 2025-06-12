@@ -10,7 +10,7 @@ from omegaconf import DictConfig
 from pipelinerl.async_llm import llm_async_generate, make_training_text
 from pipelinerl.rollouts import RolloutResult
 from pipelinerl.world import Job
-from tapeagents.agent import Agent
+from tapeagents.agent import Agent, DEFAULT
 from tapeagents.core import LLMOutputParsingFailureAction, Observation, LLMCall
 from tapeagents.llms.trainable import TrainableLLM
 from tapeagents.remote_environment import AsyncRemoteEnvironment
@@ -69,8 +69,9 @@ async def generate_miniwob_rollout(
         try:
             actions = await env.a_actions()
             tools_description = await env.a_tools_description()
-            logger.info(f"Available tools: {tools_description}")
+            logger.debug(f"Available tools: {tools_description}")
             agent: Agent = instantiate(cfg.agent, known_actions=actions, tools_description=tools_description)
+            agent.llms = {DEFAULT: llm}
             tape = await async_execute_agent(agent, tape, env, session, max_loops=cfg.agent_max_loops)
         except Exception as e:
             logger.error(f"Error occurred while running agent: {e}")
