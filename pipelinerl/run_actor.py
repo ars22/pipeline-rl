@@ -594,7 +594,8 @@ class ActorLoop:
         stats |= loop_stats
         for k, v in self.sliding_stats.items():
             stats[k] = sum(v) / len(v) if v else 0
-        wandb.log({f"actor/{k}": v for k, v in stats.items()})
+        if self.cfg.wandb.use_wandb:
+            wandb.log({f"actor/{k}": v for k, v in stats.items()})
         stats_writer.write(stats)
         self.init_stats()  # Reset stats for the next iteration
 
@@ -606,10 +607,11 @@ def run_actor_loop(cfg: DictConfig):
     exp_path = Path(cfg.output_dir)
     setup_logging(str(exp_path / "actor"))
     logger.info(f"Current dir: {os.getcwd()}, experiment root dir: {cfg.output_dir}")
-    run = init_wandb(cfg, exp_path / "actor", flatten_dict_config(cfg))  # type: ignore
+    if cfg.wandb.use_wandb:
+        run = init_wandb(cfg, exp_path / "actor", flatten_dict_config(cfg))  # type: ignore
+        if run is None:
+            raise ValueError("Failed to initialize wandb run")
     llm_urls = str(cfg.me.llm_urls).split("+")
-    if run is None:
-        raise ValueError("Failed to initialize wandb run")
 
     stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats")
     test_stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats_test")
