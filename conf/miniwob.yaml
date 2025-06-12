@@ -5,6 +5,7 @@ debug:
   mode: actor
 
 output_dir: results/miniwob_debug/${now:%Y-%m-%d}/${now:%H-%M-%S}
+model_path: Qwen/Qwen2.5-7B-Instruct
 
 finetune:
   seq_length: 2000
@@ -20,6 +21,7 @@ vllm_config:
   vllm_kwargs:
     enable-auto-tool-choice: ""
     tool-call-parser: hermes
+    enforce-eager: ""  # speed the actor llm startup a bit
 
 actor:
   rollout_policy: pipelinerl.miniwob.rollouts.generate_miniwob_rollout
