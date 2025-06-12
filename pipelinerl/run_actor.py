@@ -34,7 +34,6 @@ from pipelinerl.streams import (
 
 from .utils import (
     always_or_never_success_stats,
-    calculate_per_group_stats,
     calculate_stats,
     setup_logging,
     wait_for_environments,
@@ -523,7 +522,7 @@ class ActorLoop:
 
         stats = defaultdict(float)
         for metric_name, dict_of_stats_per_metric in self.stats.items():
-            for agg, group_stats in calculate_per_group_stats(dict_of_stats_per_metric).items():
+            for agg, group_stats in calculate_stats(dict_of_stats_per_metric).items():
                 stats[f"{split_name}{metric_name}_{agg}"] = group_stats
 
             for dataset_name, list_of_stats_per_metric_and_dataset in self.stats[metric_name].items():
