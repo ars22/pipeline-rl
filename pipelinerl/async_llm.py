@@ -71,7 +71,9 @@ async def llm_async_generate(llm: TrainableLLM, prompt: Prompt, session: aiohttp
         raise e
 
     output = LLMOutput(content=content)
-    llm_call = llm.log_output(prompt, output)
+    llm_call = llm.log_output(prompt, output, count_tokens=False)
+    llm_call.prompt_length_tokens = data['usage']['prompt_tokens']
+    llm_call.output_length_tokens = data['usage']['completion_tokens']
     assert llm_call is not None, "llm_call is None"
     llm_call.logprobs = parsed_logprobs
     return llm_call
