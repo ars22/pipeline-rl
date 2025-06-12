@@ -1,3 +1,4 @@
+import os
 from tapeagents.remote_environment import EnvironmentServer
 from omegaconf import OmegaConf
 
@@ -5,6 +6,7 @@ from omegaconf import OmegaConf
 class WebEnvironmentServer:
 
     def __init__(self,
+        miniwob_url: str,
         n_envs: int,
         host: str,
         web_env_target: str,
@@ -12,12 +14,14 @@ class WebEnvironmentServer:
         headless: bool = True,
         observation_format: str = "html"
     ):
+        os.environ["MINIWOB_URL"] = miniwob_url
         self.n_envs = n_envs
         self.host = host
         self.web_env_target = web_env_target
         self.exp_path = exp_path
         self.headless = headless
         self.observation_format = observation_format
+
 
     def launch(self, port: int):
         """
