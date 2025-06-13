@@ -83,10 +83,22 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     training_text = llm.make_training_text(llm_call.prompt, llm_call.output)
     if not llm_call.logprobs:
         raise ValueError("Logprobs are required to make training data for RL")
-    # We add the exact token ids and logprobs to "training_text" to ensure inference/training consistency
-    prompt_token_ids = llm.tokenizer.apply_chat_template(
-        llm_call.prompt.messages, add_special_tokens=True, add_generation_prompt=True
-    )    
+    
+    # Check if we have a multimodal processor (for vision-language models)
+    processor = getattr(llm, 'processor', None)
+    if processor is not None and hasattr(processor, 'apply_chat_template'):
+        # Use processor for multimodal tokenization to ensure consistency
+        prompt_token_ids = processor.apply_chat_template(
+            llm_call.prompt.messages, 
+            add_special_tokens=True, 
+            add_generation_prompt=True
+        )
+    else:
+        # Use tokenizer for text-only models
+        prompt_token_ids = llm.tokenizer.apply_chat_template(
+            llm_call.prompt.messages, add_special_tokens=True, add_generation_prompt=True
+        )    
+    
     labels = [lp.token_id for lp in llm_call.logprobs]
     input_ids = prompt_token_ids + labels
     # Apply masking to input tokens that aren't generated

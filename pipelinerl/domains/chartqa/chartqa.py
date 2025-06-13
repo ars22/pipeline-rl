@@ -1,6 +1,7 @@
 import base64
 import io
 import logging
+import time
 from typing import Dict, Any
 
 import aiohttp
@@ -78,7 +79,9 @@ async def generate_chartqa_rollout(
     
     prompt = Prompt(messages=messages)
 
+    time_start = time.time()
     llm_call = await llm_async_generate(llm, prompt, session)
+    latency = time.time() - time_start
 
     assert llm_call.output.content is not None
     rewards = ChartQARewardTable(**dict(cfg.rewards))
@@ -143,4 +146,5 @@ async def generate_chartqa_rollout(
         dataset_name=problem.get("dataset"),
         prompt_tokens=[llm_call.prompt_length_tokens],
         output_tokens=[llm_call.output_length_tokens],
+        latency=latency,
     )
