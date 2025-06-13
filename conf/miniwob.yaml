@@ -1,21 +1,36 @@
 defaults:
   - base
 
-debug:
-  mode: actor
+# debug:
+#   mode: actor
+save_tapes: False
 
 output_dir: results/miniwob_debug/${now:%Y-%m-%d}/${now:%H-%M-%S}
-model_path: Qwen/Qwen2.5-7B-Instruct
+model_path: meta-llama/Llama-3.1-8B-Instruct
 
 finetune:
-  seq_length: 2000
+  save_checkpoint_steps: 10
+  seq_length: 4096
+  train_batch_size: 1
   gradient_accumulation_passes: 1024
+  learning_rate: 1e-6
+  optim: adamw_torch
+  rl:
+    kl_coef: 0.01  # GRPO beta coefficient
+    reward_minus_kl_coef: 0.0  # RLOO beta coefficient
+    use_advantages: true
+    algo: grpo
+
 llm:
   parameters:
-    max_tokens: 500
+    max_tokens: 3072
+    temperature: 1.0
 test_llm:
   parameters:
-    max_tokens: 500
+    max_tokens: ${...llm.parameters.max_tokens}
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 50
 
 vllm_config:
   vllm_kwargs:
@@ -112,5 +127,7 @@ dataset_loader_params:
   seeds: [0, 42, 1337, 900, 103]
 train_dataset_names:
   - train
+  # - debug
 test_dataset_names:
   - test
+  # - debug
