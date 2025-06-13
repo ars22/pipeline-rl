@@ -1,4 +1,3 @@
-import time
 import base64
 import io
 import logging
@@ -31,25 +30,10 @@ class ChartQARewardTable(BaseModel):
 
 
 def encode_image_to_base64(image: Image.Image) -> str:
-    """Convert PIL Image to base64 string with optimization."""
-    # Resize large images for efficiency
-    max_size = (1024, 1024)
-    if image.size[0] > max_size[0] or image.size[1] > max_size[1]:
-        image = image.copy()
-        image.thumbnail(max_size, Image.Resampling.LANCZOS)
-    
+    """Convert PIL Image to base64 string."""
     buffered = io.BytesIO()
-    # Always use PNG for compatibility with Qwen2.5-VL
-    if image.mode in ('RGBA', 'LA'):
-        image.save(buffered, format="PNG", optimize=True)
-    else:
-        # Convert to RGB if needed
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        image.save(buffered, format="PNG", optimize=True)
-    
+    image.save(buffered, format="PNG")
     img_str = base64.b64encode(buffered.getvalue()).decode()
-    # Use the format that Qwen2.5-VL expects
     return f"data:image;base64,{img_str}"
 
 
@@ -81,63 +65,28 @@ async def generate_chartqa_rollout(
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
     """Generate a rollout for ChartQA domain."""
-    logger.info(f"Starting ChartQA rollout for problem: {problem.get('id', 'unknown')}")
-    logger.info(f"Problem keys: {list(problem.keys())}")
-    logger.info(f"Question: {str(problem.get('question', 'N/A'))[:100]}...")
-    logger.info(f"Expected answer: {problem.get('answer', 'N/A')}")
-    logger.info(f"Image type: {type(problem.get('image', 'N/A'))}")
-    
     messages = []
     
     # Add system prompt if specified
     if cfg.actor.system_prompt:
         messages.append({"role": "system", "content": cfg.actor.system_prompt})
-        logger.info(f"Added system prompt: {str(cfg.actor.system_prompt)[:50]}...")
     
     # Create the multimodal user message with chart image and question
-    try:
-        question_text = cfg.actor.task_template.format(question=problem["question"])
-        logger.info(f"Formatted question: {str(question_text)[:100]}...")
-        
-        multimodal_message = create_multimodal_message(problem["image"], question_text)
-        messages.append(multimodal_message)
-        logger.info(f"Created multimodal message with {len(multimodal_message['content'])} content parts")
-        
-        # Log the structure for debugging
-        for i, content in enumerate(multimodal_message['content']):
-            if content['type'] == 'image_url':
-                logger.info(f"Content {i}: type={content['type']}, url_prefix={content['image_url']['url'][:50]}...")
-            else:
-                logger.info(f"Content {i}: type={content['type']}, text={content.get('text', '')[:50]}...")
-        
-    except Exception as e:
-        logger.error(f"Error creating multimodal message: {e}")
-        raise
+    question_text = cfg.actor.task_template.format(question=problem["question"])
+    multimodal_message = create_multimodal_message(problem["image"], question_text)
+    messages.append(multimodal_message)
     
     prompt = Prompt(messages=messages)
-    logger.info(f"Created prompt with {len(messages)} messages")
 
-    time_start = time.time()
-    try:
-        llm_call = await llm_async_generate(llm, prompt, session)
-        latency = time.time() - time_start
-        logger.info(f"LLM call completed in {latency:.2f}s")
-        logger.info(f"Generated response: {str(llm_call.output.content)[:200]}...")
-    except Exception as e:
-        logger.error(f"Error during LLM generation: {e}")
-        raise
+    llm_call = await llm_async_generate(llm, prompt, session)
 
     assert llm_call.output.content is not None
     rewards = ChartQARewardTable(**dict(cfg.rewards))
     discount_factor = cfg.actor.discount_factor
-    logger.info(f"Using discount factor: {discount_factor}")
 
     # Evaluate the answer using our custom evaluation logic
     try:
         answer_status = evaluate_answer(llm_call.output.content, problem["answer"])
-        logger.info(f"Answer evaluation: {answer_status}")
-        logger.info(f"Predicted: '{str(llm_call.output.content).strip()}'")
-        logger.info(f"Expected: '{problem['answer']}'")
     except Exception as e:
         logger.error(f"Error evaluating answer: {e}")
         answer_status = "unparsable"
@@ -176,7 +125,6 @@ async def generate_chartqa_rollout(
         # Apply discount factor based on output length
         reward *= discount_factor**llm_call.output_length_tokens
         trace.reward = reward
-        logger.info(f"Final reward: {reward} (status: {answer_status}, finished: {finished})")
     except Exception as e:
         logger.error(f"Error calculating reward: {e}")
         raise
@@ -188,15 +136,11 @@ async def generate_chartqa_rollout(
         "no_answer": answer_status == "no_answer",
         "overflow": 0 if finished else 1,
     }
-    logger.info(f"Rollout metrics: {metrics}")
 
-    result = RolloutResult(
+    return RolloutResult(
         training_texts=[trace],
         metrics=metrics,
-        latency=latency, 
         dataset_name=problem.get("dataset"),
         prompt_tokens=[llm_call.prompt_length_tokens],
         output_tokens=[llm_call.output_length_tokens],
     )
-    logger.info(f"Completed ChartQA rollout successfully")
-    return result
