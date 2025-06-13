@@ -93,11 +93,13 @@ agent:
 
 
 # ENVIRONMENT CONFIGURATION
+start_attempts: 3  # number of attempts to start each task
 environment:
   _target_: pipelinerl.miniwob.environment_server.WebEnvironmentServer
   miniwob_url: file:///home/toolkit/miniwob-plusplus/miniwob/html/miniwob/
   n_envs: 64
   host: "0.0.0.0"
+  max_session_inactivity_secs: 300
   web_env_target: examples.rl_webagent.environment.WebEnvironment
   exp_path: ${output_dir}/env_server
   headless: true

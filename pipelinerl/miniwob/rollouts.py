@@ -1,4 +1,5 @@
 
+import asyncio
 import logging
 import os
 import random
@@ -63,7 +64,19 @@ async def generate_miniwob_rollout(
     # (2) Generate environment, TapeAgent, and run them to get a Tape
     environment = AsyncRemoteEnvironment(server_url=env_job_url)  # type: ignore
     async with environment.acontext(session, wait_for_env=True) as env:
-        tape_dict, _ = await env.start_task(problem)
+        start_attempts = cfg.start_attempts
+        t = time.perf_counter()
+        while True:
+            try:
+                tape_dict, _ = await env.start_task(problem)
+                break
+            except Exception as e:
+                start_attempts -= 1
+                if start_attempts <= 0:
+                    raise e
+                logger.warning(f"Failed to start task, retry after 5 seconds: {e}")
+                await asyncio.sleep(5)
+        logger.info(f"Task {problem['dataset']}/{problem['task']}/{problem['seed']} started in {time.perf_counter() - t:.2f} seconds")
         tape: WebTape = WebTape(**tape_dict)  # convert http response dict to WebTape object
         t = time.perf_counter()
         try:

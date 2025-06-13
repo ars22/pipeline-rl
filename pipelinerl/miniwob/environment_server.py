@@ -12,11 +12,13 @@ class WebEnvironmentServer:
         web_env_target: str,
         exp_path: str,
         headless: bool = True,
-        observation_format: str = "html"
+        observation_format: str = "html",
+        max_session_inactivity_secs: int = 600,
     ):
         os.environ["MINIWOB_URL"] = miniwob_url
         self.n_envs = n_envs
         self.host = host
+        self.max_session_inactivity_secs = max_session_inactivity_secs
         self.web_env_target = web_env_target
         self.exp_path = exp_path
         self.headless = headless
@@ -27,7 +29,7 @@ class WebEnvironmentServer:
         """
         Serve the web environment in TapeAgent.
         """
-        env_server = EnvironmentServer(n_envs=self.n_envs, host=self.host, port=port)
+        env_server = EnvironmentServer(n_envs=self.n_envs, host=self.host, port=port, max_session_inactivity_secs=self.max_session_inactivity_secs)
         env_server.launch(OmegaConf.create({
             "_target_": self.web_env_target,
             "exp_path": self.exp_path,
