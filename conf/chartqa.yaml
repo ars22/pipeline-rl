@@ -22,7 +22,7 @@ actor:
     Question: {question}
     
     Please analyze the chart step by step and put your final answer within \\boxed{{}}.
-  llm_max_rollouts: 1
+  llm_max_rollouts: 16
 
 environment: null
 
