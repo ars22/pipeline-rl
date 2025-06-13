@@ -127,7 +127,5 @@ dataset_loader_params:
   seeds: [0, 42, 1337, 900, 103]
 train_dataset_names:
   - train
-  # - debug
 test_dataset_names:
   - test
-  # - debug
