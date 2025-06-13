@@ -484,11 +484,11 @@ def main(cfg: DictConfig):
     cfg.jobs = [job.model_dump() for job in world_map.get_all_jobs()]
 
     group = str(exp_dir)
-    root = cfg.finetune.wandb_workspace_root
+    root = cfg.wandb.wandb_workspace_root
     if root:
         if not group.startswith(root + "/"):
             raise ValueError(f"run_dir {exp_dir} does not start with root {root}")
-        cfg.finetune.wandb_group = group[len(root) + 1 :]
+        cfg.wandb.wandb_group = group[len(root) + 1 :]
     if world_map.total_finetune_gpus:
         accum_passes = cfg.finetune.gradient_accumulation_passes
         n_gpus = world_map.total_finetune_gpus
