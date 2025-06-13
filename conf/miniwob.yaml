@@ -1,6 +1,11 @@
 defaults:
   - base
 
+world:
+  actor_fraction: 4
+  preprocessor_fraction: 1
+  finetune_fraction: 3
+
 # debug:
 #   mode: actor
 save_tapes: False
