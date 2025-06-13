@@ -24,7 +24,7 @@ from examples.rl_webagent.steps import WebTape
 logger = logging.getLogger(__name__)
 
 
-async def tape_contains_an_error(tape: WebTape) -> bool:
+def tape_contains_an_error(tape: WebTape) -> bool:
     """
     Returns true if the tape ends with an error, ie if one of the following is true:
     - the last step is an LLMOutputParsingFailureAction
@@ -91,7 +91,8 @@ async def generate_miniwob_rollout(
         tape.metadata.result = {"execution_time": time.perf_counter() - t}
 
     # save the tape as we go
-    save_json_tape(tape, os.path.join(cfg.output_dir, "tapes"), tape.metadata.id)
+    if cfg.save_tapes:
+        save_json_tape(tape, os.path.join(cfg.output_dir, "tapes"), tape.metadata.id)
 
     # (3) Compute rewards
     last_obs = [step for step in tape if isinstance(step, Observation)][-1]
