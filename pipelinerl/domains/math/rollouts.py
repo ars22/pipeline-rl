@@ -10,7 +10,7 @@ from tapeagents.core import Prompt
 from tapeagents.llms.trainable import TrainableLLM
 
 from pipelinerl.async_llm import llm_async_generate, make_training_text
-from pipelinerl.math.verifier_api import verify_answer_rpc
+from .verifier_api import verify_answer_rpc
 
 
 class RewardTable(BaseModel):
