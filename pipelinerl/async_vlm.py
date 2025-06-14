@@ -45,8 +45,7 @@ class TrainableVLM(TrainableLLM):
                 self.processor = AutoProcessor.from_pretrained(self.model_name)
                 logger.info(f"Loaded processor for {self.model_name}")
             except Exception as e:
-                logger.warning(f"Failed to load processor for {self.model_name}: {e}")
-                self.processor = None
+                raise ValueError(f"Failed to load processor for {self.model_name}: {e}") from e
 
 
 async def vlm_async_generate(vlm: TrainableVLM, prompt: Prompt, session: aiohttp.ClientSession) -> VLMCall:
@@ -161,7 +160,7 @@ def extract_images_from_messages(messages):
                             image = Image.open(io.BytesIO(image_data))
                             images.append(image)
                         except Exception as e:
-                            logger.warning(f"Failed to decode base64 image: {e}")
+                            raise e
     
     if not images:
         raise ValueError("No images found in messages")
