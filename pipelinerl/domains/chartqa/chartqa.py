@@ -11,9 +11,9 @@ from PIL import Image
 
 from pipelinerl.rollouts import RolloutResult
 from tapeagents.core import Prompt
-from tapeagents.llms.trainable import TrainableLLM
+from pipelinerl.async_vlm import TrainableVLM
 
-from pipelinerl.async_llm import llm_async_generate, make_training_text
+from pipelinerl.async_vlm import vlm_async_generate, make_multimodal_training_text
 from .evaluation import evaluate_answer
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ def create_multimodal_message(image: Image.Image, question: str) -> Dict[str, An
 
 async def generate_chartqa_rollout(
     cfg: DictConfig,
-    llm: TrainableLLM,
+    llm: TrainableVLM,
     problem: dict,
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
@@ -80,25 +80,24 @@ async def generate_chartqa_rollout(
     prompt = Prompt(messages=messages)
 
     time_start = time.time()
-    llm_call = await llm_async_generate(llm, prompt, session)
+    vlm_call = await vlm_async_generate(llm, prompt, session)
     latency = time.time() - time_start
 
-    assert llm_call.output.content is not None
+    assert vlm_call.output.content is not None
     rewards = ChartQARewardTable(**dict(cfg.rewards))
     discount_factor = cfg.actor.discount_factor
 
     # Evaluate the answer using our custom evaluation logic
     try:
-        answer_status = evaluate_answer(llm_call.output.content, problem["answer"])
+        answer_status = evaluate_answer(vlm_call.output.content, problem["answer"])
     except Exception as e:
         logger.error(f"Error evaluating answer: {e}")
         answer_status = "unparsable"
 
     try:
-        trace = make_training_text(llm, llm_call)
+        trace = make_multimodal_training_text(llm, vlm_call)
         # Check if the generation is finished (ended with EOS token)
         finished = 1 if trace.input_ids[-1] == llm.tokenizer.eos_token_id else 0
-        logger.info(f"Generation finished: {bool(finished)}")
     except Exception as e:
         logger.error(f"Error creating training text: {e}")
         raise
@@ -126,7 +125,7 @@ async def generate_chartqa_rollout(
                 raise ValueError(f"Invalid answer_status/finished combination: {answer_status}/{finished}")
 
         # Apply discount factor based on output length
-        reward *= discount_factor**llm_call.output_length_tokens
+        reward *= discount_factor**vlm_call.output_length_tokens
         trace.reward = reward
     except Exception as e:
         logger.error(f"Error calculating reward: {e}")
@@ -144,7 +143,7 @@ async def generate_chartqa_rollout(
         training_texts=[trace],
         metrics=metrics,
         dataset_name=problem.get("dataset"),
-        prompt_tokens=[llm_call.prompt_length_tokens],
-        output_tokens=[llm_call.output_length_tokens],
+        prompt_tokens=[vlm_call.prompt_length_tokens],
+        output_tokens=[vlm_call.output_length_tokens],
         latency=latency,
     )
