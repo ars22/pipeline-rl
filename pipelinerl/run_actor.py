@@ -316,7 +316,7 @@ class ActorLoop:
         self.problem_queue = mp.Queue()
         self.result_queue = mp.Queue(max_ready_groups_waiting)
         self.buffer_size = self.max_groups_in_progress + max_ready_groups_waiting
-        self.io_buffer = SharedMemoryArray(self.smm, self.buffer_size, int(1e9))
+        self.io_buffer = SharedMemoryArray(self.smm, self.buffer_size, int(1e10))
         self.free_slots = set(range(self.buffer_size))
         logger.info(f"Initialized {'train' if self.is_training else 'test'} actor loop")
         logger.info(f"Max groups in progress: {self.max_groups_in_progress}, buffer size: {self.buffer_size}")

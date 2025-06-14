@@ -378,7 +378,7 @@ def run_preprocessing_loop(
             max_pool_tasks = 2 * worker_pool_size
             buffer_size = 2 * max_pool_tasks + max_dataset_queue_size
             dataset_queue = manager.Queue(max_dataset_queue_size)
-            io_buffer = SharedMemoryArray(smm, buffer_size, int(1e9))
+            io_buffer = SharedMemoryArray(smm, buffer_size, int(1e10))
             free_slots = set(range(buffer_size))
             logger.info(f"Shared memory buffer size: {io_buffer.get_memory_size() / 2**30} Gb")
             logger.info(f"Start {worker_pool_size} workers for preprocessing")
