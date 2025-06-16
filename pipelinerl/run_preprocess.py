@@ -155,7 +155,6 @@ def preprocess_dataset(
     if not isinstance(tokenizer.eos_token_id, int):
         raise ValueError(f"Tokenizer {tokenizer} does not have an eos_token_id")
     dataset = populate_rl_data(dataset=dataset, eos_token_id=tokenizer.eos_token_id, config=rl_config)
-    print(dataset[0].keys())
     return dataset
 
 
@@ -456,12 +455,10 @@ def run_preprocessing_loop(
                         filtered_buffer = buffer
                         num_filtered_out = 0
 
-                    logger.info("Really start writing")
                     # Write the entries (filtered or unfiltered based on config)
                     for entry in filtered_buffer:
                         writer.write(entry)
                     writing_took = time.time() - start_writing
-                    logger.info("Wrote")
                     stats_aggregator.update([len(entry["input_ids"]) for entry in filtered_buffer])
                     published_samples += len(filtered_buffer)  # Count only written samples
                     max_model_version = max([entry["model_version"] for entry in filtered_buffer]) if filtered_buffer else 0
