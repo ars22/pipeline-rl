@@ -128,7 +128,7 @@ def run_actor_llm(
             if v not in [None, ""]:
                 cmd.append(str(v))
 
-    if cfg.debug.mode in ["actor", "open_loop"]:
+    if cfg.debug.mode:
         cmd.append("--disable-weight-updates")
 
     gpu_str = ",".join([str(gpu) for gpu in gpus])
@@ -545,6 +545,8 @@ def main(cfg: DictConfig):
         processes.extend(launch_jobs(cfg, world_map, ["actor", "environment", "actor_llm"]))
     elif cfg.debug.mode == "preprocessor":
         processes.extend(launch_jobs(cfg, world_map, ["preprocessor", "preprocessor_llm"]))
+    elif cfg.debug.mode == "actor+preprocessor":
+        processes.extend(launch_jobs(cfg, world_map, ["actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm"]))       
     elif cfg.debug.mode in ["", "open_loop"]:
         processes.extend(launch_jobs(cfg, world_map))
     else:

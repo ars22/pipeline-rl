@@ -134,7 +134,6 @@ async def schedule_rollouts(
     active_rollouts = [0] * len(llms)
     started_rollouts = 0
     finished_rollouts = 0
-    max_group_size_bytes = 0
     # Track rollouts per problem group
     group_rollouts = {}
     rollout_policy = hydra.utils.get_method(cfg.actor.rollout_policy)
@@ -148,7 +147,7 @@ async def schedule_rollouts(
         llm_index: int,
         session: aiohttp.ClientSession,
     ):
-        nonlocal started_rollouts, finished_rollouts, max_group_size_bytes
+        nonlocal started_rollouts, finished_rollouts
         try:
             llm = llms[llm_index]
             model_version = trainer_state.propagated_weight_version
@@ -169,7 +168,6 @@ async def schedule_rollouts(
                 # This is blocking call, but there's just one other thread reading from this queue.
                 random.shuffle(group_rollouts[group_id])
                 group_bytes = group_rollouts[group_id]
-                max_group_size_bytes = max(max_group_size_bytes, len(group_bytes))
                 io_buffer[slot] = group_bytes
                 result_queue.put(slot)
                 del group_rollouts[group_id]
@@ -205,7 +203,7 @@ async def schedule_rollouts(
                     f"groups in progress: {len(group_rollouts)}, "
                     f"rollouts started so far: {started_rollouts}, "
                     f"rollouts finished so far: {finished_rollouts}, "
-                    f"max group size in bytes: {max_group_size_bytes}"
+                    f"max group size in bytes: {io_buffer._max_written_entry_size}, "
                 )
                 last_logged = time.time()
 
@@ -253,7 +251,7 @@ def rollout_maker_entrypoint(
     scheduler_name: str,
 ):
     trainer_state = TrainerState(Path(cfg.output_dir))
-    if cfg.debug.mode in ["actor", "open_loop"]:
+    if cfg.debug.mode:
         trainer_state.propagated_weight_version = 0
     else:
         trainer_state.start_listening()
@@ -296,7 +294,7 @@ class ActorLoop:
         self.cfg = cfg
         self.is_training = is_training
         self.is_scheduling_paused = False
-        self.debug_mode = cfg.debug.mode in ["actor", "open_loop"]
+        self.debug_mode = bool(cfg.debug.mode)
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
@@ -662,7 +660,7 @@ def run_actor_loop(cfg: DictConfig):
     wait_for_inference_servers(llm_urls)
     wait_for_environments(cfg)
     trainer_state = TrainerState(exp_path)
-    if cfg.debug.mode in ["actor", "open_loop"]:
+    if cfg.debug.mode:
         trainer_state.propagated_weight_version = 0
     else:
         trainer_state.start_listening()
