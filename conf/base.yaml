@@ -43,14 +43,14 @@ actor:
   log_each_n_secs: 0
   llm_max_rollouts: 64
   rollout_workers: 1
-  rollout_policy: pipelinerl.math.rollouts.generate_math_rollout
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
   discount_factor: 1
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
     {task}
   throughput_window_size: 50
 environment:
-  _target_: pipelinerl.math.verifier_api.MathEnvironment
+  _target_: pipelinerl.domains.math.MathEnvironment
 preprocess:
   input: actor
   output: training_data
@@ -80,7 +80,7 @@ vllm_config:
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 512
+    max-num-seqs: ${actor.llm_max_rollouts}
     max-num-batched-tokens: 1024
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
@@ -123,7 +123,7 @@ pop_old_data: true
 max_lag: null
 attempts: 8
 
-dataset_loader: pipelinerl.math.load_datasets.load_datasets
+dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
 - open_reasoner_zero_57k
 - open_reasoner_zero_extended_72k 
