@@ -26,13 +26,13 @@ class RewardTable(BaseModel):
     correct_answer_finished: float
     buffer_tokens: int = 0 # 0 means no overlong reward shaping
 
-def length_penalty(max_length: int, sequence_length: int, buffer_tokens: int):
+def length_penalty(max_length: int, sequence_length: int, buffer_tokens: int) -> float:
     """
     Compute the overlong penalty
     """
     if sequence_length > (max_length - buffer_tokens) and sequence_length <= max_length:
         return ((max_length - buffer_tokens) - sequence_length) / buffer_tokens
-    return 0
+    return 0.0
 
 async def generate_math_rollout(
     cfg: DictConfig,
