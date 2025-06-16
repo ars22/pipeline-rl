@@ -203,7 +203,7 @@ async def schedule_rollouts(
                     f"groups in progress: {len(group_rollouts)}, "
                     f"rollouts started so far: {started_rollouts}, "
                     f"rollouts finished so far: {finished_rollouts}, "
-                    f"max group size in bytes: {io_buffer._max_written_entry_size}, "
+                    f"max group size in bytes: {io_buffer.max_actual_entry_size()}, "
                 )
                 last_logged = time.time()
 

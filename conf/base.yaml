@@ -56,7 +56,9 @@ preprocess:
   input: actor
   output: training_data
   n_workers: 8
-  queue_size: 8
+  group_queue_size: 8
+  input_queue_size: 32
+  output_queue_size: 32
   chunk_n_groups: 2
   submit_delay: 0.
   pop_old_data: ${..pop_old_data} 
