@@ -603,7 +603,7 @@ def run_actor_loop(cfg: DictConfig):
 
     random.seed(42)
     exp_path = Path(cfg.output_dir)
-    setup_logging(str(exp_path / "actor"))
+    setup_logging(exp_path / "actor", "actor")
     logger.info(f"Current dir: {os.getcwd()}, experiment root dir: {cfg.output_dir}")
     if cfg.wandb.use_wandb:
         run = init_wandb(cfg, exp_path / "actor", flatten_dict_config(cfg))  # type: ignore
