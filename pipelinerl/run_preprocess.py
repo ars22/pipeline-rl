@@ -22,7 +22,7 @@ from litellm import BaseModel, Field
 
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
 from pipelinerl.shared_memory_array import SharedMemoryArray
-from pipelinerl.utils import wait_for_inference_servers
+from pipelinerl.utils import setup_logging, wait_for_inference_servers
 from pipelinerl.world import WorldMap
 
 datasets.disable_caching()
@@ -129,11 +129,8 @@ def preprocess_dataset(
     tokenizer: transformers.PreTrainedTokenizerBase,
     seq_length: int,
     rl_config: RLConfig,
-) -> Dataset:
+) -> list[dict]:
     preprocess = partial(preprocess_fn, seq_length=seq_length, tokenizer=tokenizer, is_rl=True)
-    columns = ["input_ids", "labels", "attention_mask", "group_id"] + RL_DATA_COLUMNS + ["pixel_values", "image_thw"]
-    
-    logger.debug(f"Instantiated preprocess function hash {Hasher.hash(preprocess)}")
 
     data = replace_oov_tokens_with_the(data, tokenizer)
 
@@ -144,15 +141,21 @@ def preprocess_dataset(
         for entry in data:
             entry["ref_logprobs"] = entry["logprobs"]
 
-    dataset = Dataset.from_list(data)    
-    dataset = dataset.map(preprocess, keep_in_memory=True, load_from_cache_file=False)
-    dataset = dataset.with_format(columns=columns)
+    # now without Huggingface datasets
+    dataset = []
+    for i in range(len(data)):
+        entry = dict(data[i])
+        for k, v in preprocess(data[i]).items():
+            entry[k] = v
+        dataset.append(entry)        
+    for entry in dataset:
+        entry["model_version"] = entry["metadata"]["model_version"]
+        entry["rollout_index"] = entry["metadata"]["rollout_index"]
+        entry["step_index"] = entry["metadata"]["step_index"]
     if not isinstance(tokenizer.eos_token_id, int):
         raise ValueError(f"Tokenizer {tokenizer} does not have an eos_token_id")
-    dataset = dataset.add_column("model_version", [entry["metadata"]["model_version"] for entry in data])  # type: ignore
-    dataset = dataset.add_column("rollout_index", [entry["metadata"]["rollout_index"] for entry in data])  # type: ignore    
-    dataset = dataset.add_column("step_index", [entry["metadata"]["step_index"] for entry in data])  # type: ignore
     dataset = populate_rl_data(dataset=dataset, eos_token_id=tokenizer.eos_token_id, config=rl_config)
+    print(dataset[0].keys())
     return dataset
 
 
@@ -318,6 +321,7 @@ def run_preprocessing_loop(
 
     world_map = WorldMap(cfg, verbose=True)
     exp_root_dir = Path(cfg.output_dir)
+    setup_logging(exp_root_dir / "preprocessor", "preprocessor")
 
     run = init_wandb(cfg, exp_root_dir / "preprocessor", flatten_dict_config(cfg))
     if run is None:
@@ -429,7 +433,9 @@ def run_preprocessing_loop(
                         logger.error(dataset.__traceback_str)
                         raise dataset
                     start_writing = time.time()
-                    buffer += dataset
+                    logger.info(f"Start writing")
+                    for entry in dataset:
+                        buffer.append(entry)
                     processed_chunks += 1
 
                     if len(buffer) < cfg.preprocess.buffer_size:
@@ -450,10 +456,12 @@ def run_preprocessing_loop(
                         filtered_buffer = buffer
                         num_filtered_out = 0
 
+                    logger.info("Really start writing")
                     # Write the entries (filtered or unfiltered based on config)
                     for entry in filtered_buffer:
                         writer.write(entry)
                     writing_took = time.time() - start_writing
+                    logger.info("Wrote")
                     stats_aggregator.update([len(entry["input_ids"]) for entry in filtered_buffer])
                     published_samples += len(filtered_buffer)  # Count only written samples
                     max_model_version = max([entry["model_version"] for entry in filtered_buffer]) if filtered_buffer else 0
