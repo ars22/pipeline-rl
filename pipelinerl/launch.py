@@ -233,6 +233,8 @@ def run_finetune(cfg: DictConfig, world_map: WorldMap, gpus: list[int], exp_dir:
             hostfile_path,
             "--deepspeed_inclusion_filter",
             deepspeed_include_filter,
+            "--deepspeed_multinode_launcher",
+            "nossh"
         ]
     # get path to this file
     this_file_path = Path(os.path.dirname(os.path.abspath(__file__)))
