@@ -1,5 +1,7 @@
 defaults:
   - base
+  - override streams: redis
+  - _self_
 
 finetune:
   model_class: vision2seq-language-modeling
