@@ -137,6 +137,7 @@ debug:
   mode: ""
   streams_from: null
   place_inference_workers: true
+  use_existing_llms: false
 
 me:
   # Which job is this one? This will be autopopulated

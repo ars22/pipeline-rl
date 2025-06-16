@@ -444,10 +444,14 @@ def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | No
         elif job.kind == "environment":
             processes.extend(run_environment(cfg, job))
         elif job.kind == "actor_llm":
+            if cfg.debug.use_existing_llms:
+                continue
             processes.extend(run_actor_llm(cfg, world_map, job.replica_idx, job.local_idx, job.gpus, exp_dir))
         elif job.kind == "preprocessor":
             processes.extend(run_preprocess(world_map, job.replica_idx, exp_dir))
         elif job.kind == "preprocessor_llm":
+            if cfg.debug.use_existing_llms:
+                continue            
             processes.extend(run_ref_llm(cfg, job.replica_idx, job.local_idx, job.gpus, exp_dir))
         elif job.kind == "finetune":
             processes.extend(run_finetune(cfg, world_map, job.gpus, exp_dir))
