@@ -178,6 +178,22 @@ def rl_step(
     if is_packed:
         model_inputs["position_ids"] = batch["position_ids"]
 
+    # Check if model has value head
+    has_value_head = hasattr(model, 'value_head') or (hasattr(model, 'module') and hasattr(model.module, 'value_head'))
+    
+    # If using value head, pass rewards as value labels for training
+    if has_value_head:
+        # Get model dtype from input_ids
+        model_dtype = batch["input_ids"].dtype if batch["input_ids"].dtype in [torch.float16, torch.bfloat16, torch.float32] else torch.bfloat16
+        # For models, we need to check logits dtype
+        if hasattr(model, 'module'):
+            if hasattr(model.module, 'dtype'):
+                model_dtype = model.module.dtype
+        elif hasattr(model, 'dtype'):
+            model_dtype = model.dtype
+        value_labels = batch["rewards"].clone().to(dtype=model_dtype)
+        model_inputs["value_labels"] = value_labels
+    
     outputs = model(**model_inputs)
 
     # compute log probs and entropy
@@ -187,6 +203,11 @@ def rl_step(
     probs = F.softmax(logits, dim=-1)
     entropy = -(probs * logprobs).sum(dim=-1)
     del logits, probs
+    
+    # Get value predictions if available
+    value_predictions = None
+    if has_value_head and hasattr(outputs, 'value'):
+        value_predictions = outputs.value[:, :-1]  # Shift to align with other sequences
 
     # get log probs for actual tokens
     new_logprobs = torch.gather(logprobs, dim=2, index=batch["input_ids"][:, 1:].unsqueeze(2)).squeeze(2)
@@ -262,7 +283,17 @@ def rl_step(
     )
     loss = loss * tokens_weights  # 1 x (BxL) x 1
 
-    final_loss = -sum_sum(loss, masks_shifted, segments)
+    policy_loss_total = -sum_sum(loss, masks_shifted, segments)
+    
+    # Add value loss if model has value head
+    value_loss = torch.tensor(0.0, device=policy_loss_total.device, dtype=policy_loss_total.dtype)
+    if has_value_head and hasattr(outputs, 'value_loss') and outputs.value_loss is not None:
+        value_loss = outputs.value_loss
+        # Combine policy loss and value loss
+        value_loss_coef = getattr(config, 'value_loss_coef', 0.5)  # Default coefficient for value loss
+        final_loss = policy_loss_total + value_loss_coef * value_loss
+    else:
+        final_loss = policy_loss_total
 
     # ensure loss is valid
     assert torch.isfinite(final_loss), f"Non-finite loss detected: {final_loss}"
@@ -272,6 +303,7 @@ def rl_step(
         "loss": final_loss.item(),
         "max_loss": final_loss.item(),
         "min_loss": final_loss.item(),
+        "value_loss": value_loss.item() if torch.is_tensor(value_loss) else value_loss,
         "reward": mean_sum(rewards, masks_shifted, segments).item(),
         "max_reward": rewards[masks_shifted].max().item(),
         "min_reward": rewards[masks_shifted].min().item(),
@@ -309,6 +341,12 @@ def rl_step(
         "entropy_bonus_coef": num_sequences * entropy_bonus_coef,
         "num_output_tokens_sum": masks_shifted.sum().item(),
     }
+    
+    # Add value prediction stats if available
+    if value_predictions is not None:
+        stats["value_mean"] = mean_sum(value_predictions, masks_shifted, segments).item()
+        stats["value_max"] = value_predictions[masks_shifted].max().item() if masks_shifted.any() else 0.0
+        stats["value_min"] = value_predictions[masks_shifted].min().item() if masks_shifted.any() else 0.0
 
     return final_loss, stats
 
