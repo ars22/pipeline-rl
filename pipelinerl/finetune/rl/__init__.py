@@ -246,7 +246,7 @@ def rl_step(
         # Compute value-based advantages: A(s,a) = MC_return - V(s)
         # where MC_return is the Monte Carlo return (rewards) and V(s) is the value prediction
         value_based_advantages = rewards - value_predictions
-        log_p_weights = value_based_advantages
+        log_p_weights = value_based_advantages.detach()
     else:
         log_p_weights = advantages if config.use_advantages else rewards
     if config.relu_log_p_weights:
