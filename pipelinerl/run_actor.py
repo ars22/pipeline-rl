@@ -176,7 +176,6 @@ async def schedule_rollouts(
             for task in asyncio.all_tasks(loop=loop):
                 if task != current_task:
                     task.cancel()
-            # Directly put the exception in the SharedMemoryQueue
             result_queue.put(e)
             logger.error("Stopped all tasks and put exception in the result queue")
         finally:
@@ -438,15 +437,14 @@ class ActorLoop:
                 if not self.is_scheduling_paused:
                     while True:
                         blocked_by_lag = submitted_groups == can_submit_before_update and self.is_training
-                        if not blocked_by_lag:
+                        if not blocked_by_lag and not self.problem_queue.full():
                             try:
-                                problem = next(problem_iter)
                                 try:
-                                    # Directly put the problem in the SharedMemoryQueue
+                                    problem = next(problem_iter)
                                     self.problem_queue.put(problem, block=False)
                                     submitted_groups += 1
-                                except queue.Full:
-                                    break
+                                except queue.Full:            
+                                    assert False, "Problem queue was not full just a moment ago, but now it is full"
                             except StopIteration:
                                 break
                         else:
