@@ -1,5 +1,6 @@
 import pickle
 import struct
+from multiprocessing import Queue
 from multiprocessing.managers import SharedMemoryManager, SyncManager
 from typing import Any
 from queue import Empty
@@ -109,11 +110,11 @@ class SharedMemoryQueue:
     """
     A fixed-size queue backed by shared memory.
     
-    Uses a SharedMemoryArray for storage and manager's Queues to track available and filled slots.
+    Uses a SharedMemoryArray for storage and multiprocessing Queues to track available and filled slots.
     Items are stored in the shared memory array and slot indices are managed via the queues.
     """
 
-    def __init__(self, manager: SyncManager, smm: SharedMemoryManager, max_size: int, max_entry_size: int):
+    def __init__(self, smm: SharedMemoryManager, max_size: int, max_entry_size: int):
         """
         Initialize a shared memory queue.
 
@@ -126,10 +127,10 @@ class SharedMemoryQueue:
         self.shared_array = SharedMemoryArray(smm, max_size, max_entry_size)
         
         # Queue to track available slots (indices)
-        self.free_slots = manager.Queue(maxsize=max_size)
+        self.free_slots = Queue(maxsize=max_size)
         
         # Queue to track filled slots (indices)
-        self.content_slots = manager.Queue(maxsize=max_size)
+        self.content_slots = Queue(maxsize=max_size)
         
         # Initialize with all slots available
         for i in range(max_size):

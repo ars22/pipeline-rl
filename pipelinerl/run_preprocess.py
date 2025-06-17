@@ -8,11 +8,11 @@ import multiprocessing as mp
 import queue
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor
 from functools import partial
+from multiprocessing import Process, Queue
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
-from queue import Empty, Queue
+from queue import Empty
 from typing import List
 import random
 
@@ -255,20 +255,27 @@ def process_chunk(
     input_queue: SharedMemoryQueue,
     output_queue: SharedMemoryQueue,
 ):
+    """Worker process function to preprocess chunks of data"""
     try:
-        chunk = input_queue.get()
-        dataset = preprocess_dataset(
-            llm=llm,
-            data=chunk,
-            tokenizer=tokenizer,
-            seq_length=seq_length,
-            rl_config=rl_config,
-        )
-        output_queue.put(dataset)
-    except Exception as e:
-        logger.error(f"Failed to preprocess chunk: {e}")
-        e.__traceback_str = traceback.format_exc()
-        output_queue.put(e)
+        while True:
+            try:
+                chunk = input_queue.get()
+                dataset = preprocess_dataset(
+                    llm=llm,
+                    data=chunk,
+                    tokenizer=tokenizer,
+                    seq_length=seq_length,
+                    rl_config=rl_config,
+                )
+                output_queue.put(dataset)
+            except Exception as e:
+                error_info = {
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                }
+                output_queue.put(error_info)
+    except KeyboardInterrupt:
+        return
 
 
 def filter_zero_advantage_groups(dataset: list[dict], epsilon: float = 1e-6) -> tuple[list[dict], int]:
@@ -376,13 +383,34 @@ def run_preprocessing_loop(
     buffer = []
     total_filtered_out = 0  # Track total filtered samples across all batches
     with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
-        with mp.Manager() as manager, SharedMemoryManager() as smm:
-            input_queue = SharedMemoryQueue(manager, smm, cfg.preprocess.input_queue_size, cfg.preprocess.shared_memory_entry_size)
-            output_queue = SharedMemoryQueue(manager, smm, cfg.preprocess.output_queue_size, cfg.preprocess.shared_memory_entry_size)
+        with SharedMemoryManager() as smm:
+            # Create shared memory queues without the manager parameter
+            input_queue = SharedMemoryQueue(smm, cfg.preprocess.input_queue_size, cfg.preprocess.shared_memory_entry_size)
+            output_queue = SharedMemoryQueue(smm, cfg.preprocess.output_queue_size, cfg.preprocess.shared_memory_entry_size)
             logger.info(f"Input queue size: {input_queue.get_memory_size() / 2**30} Gb")
-            logger.info(f"Output queue size: {input_queue.get_memory_size() / 2**30} Gb")
+            logger.info(f"Output queue size: {output_queue.get_memory_size() / 2**30} Gb")
             logger.info(f"Start {worker_pool_size} workers for preprocessing")
-            with ProcessPoolExecutor(max_workers=worker_pool_size) as executor:
+            
+            # List to keep track of worker processes
+            workers = []
+            
+            # Start worker processes
+            for _ in range(worker_pool_size):
+                worker = Process(
+                    target=process_chunk,
+                    args=(
+                        None,  # We'll assign the LLM in the main loop
+                        tokenizer,
+                        cfg.finetune.seq_length,
+                        rl_config,
+                        input_queue,
+                        output_queue,
+                    )
+                )
+                worker.start()
+                workers.append(worker)
+            
+            try:
                 while True:
                     llm = llms[next_llm_index] if llms else None
                     if not input_queue.full():
@@ -390,24 +418,9 @@ def run_preprocessing_loop(
                             raw_chunk = raw_chunk_queue.get(timeout=0.001)
                             if isinstance(raw_chunk, Exception):
                                 raise raw_chunk
+                            
+                            # Put chunk in the input queue for workers
                             input_queue.put(raw_chunk)
-                            future = executor.submit(
-                                process_chunk,
-                                llm,
-                                tokenizer,
-                                cfg.finetune.seq_length,
-                                rl_config,
-                                input_queue,
-                                output_queue,
-                            )
-                            future.add_done_callback(
-                                lambda fut: logger.error(
-                                    f"Exception while preprocessing: {fut.exception()}",
-                                    exc_info=fut.exception(),
-                                )
-                                if fut.exception()
-                                else None
-                            )
                             submitted_chunks += 1
                             next_llm_index = (next_llm_index + 1) % len(llms) if llms else 0
                         except Empty:
@@ -420,10 +433,12 @@ def run_preprocessing_loop(
                         fetching_took = time.time() - start_processing
                     except Empty:
                         continue
-                    if isinstance(dataset, Exception):
-                        logger.error(f"Got exception from the result queue")
-                        logger.error(dataset.__traceback_str)
-                        raise dataset
+                    
+                    if isinstance(dataset, dict) and "error" in dataset:
+                        logger.error(f"Got exception from the result queue: {dataset['error']}")
+                        logger.error(f"Traceback: {dataset['traceback']}")
+                        raise Exception(dataset['error'])
+                    
                     start_writing = time.time()
                     logger.info(f"Start writing")
                     for entry in dataset:
@@ -479,4 +494,10 @@ def run_preprocessing_loop(
                         f" {samples_in_output_queue} samples in output queue, max output queue entry size {output_queue.max_actual_entry_size()} bytes"
                     )
                     buffer = []
+            finally:
+                # Clean up worker processes
+                for worker in workers:
+                    if worker.is_alive():
+                        worker.terminate()
+                        worker.join(timeout=1.0)
 
