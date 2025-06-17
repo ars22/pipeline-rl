@@ -440,7 +440,6 @@ def run_preprocessing_loop(
                         raise Exception(dataset['error'])
                     
                     start_writing = time.time()
-                    logger.info(f"Start writing")
                     for entry in dataset:
                         buffer.append(entry)
                     processed_chunks += 1
