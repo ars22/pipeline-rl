@@ -3,7 +3,7 @@ import struct
 from multiprocessing import Queue
 from multiprocessing.managers import SharedMemoryManager, SyncManager
 from typing import Any
-from queue import Empty
+from queue import Empty, Full
 
 
 class SharedMemoryArray:
@@ -146,7 +146,10 @@ class SharedMemoryQueue:
             timeout: Timeout for blocking operations
         """
         # Get an available slot
-        slot_index = self.free_slots.get(block=block, timeout=timeout)
+        try:
+            slot_index = self.free_slots.get(block=block, timeout=timeout)
+        except Empty:
+            raise Full()
         
         # Store the item in the shared array
         self.shared_array[slot_index] = item

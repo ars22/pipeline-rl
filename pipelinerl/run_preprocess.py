@@ -348,7 +348,7 @@ def run_preprocessing_loop(
     stats_streams = SingleStreamSpec(exp_path=exp_root_dir, topic="preprocessor_stats")
     logger.info("Streams initialized")
 
-    raw_chunk_queue = Queue(cfg.preprocess.group_queue_size)
+    raw_chunk_queue = Queue(cfg.preprocess.raw_queue_size)
     rl_config = RLConfig(**cfg.finetune.rl)
     dataset_loader_worker_fn = partial(
         run_dataset_loader,
