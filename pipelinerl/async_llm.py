@@ -10,7 +10,7 @@ from tapeagents.llms.trainable import TrainableLLM
 
 from pipelinerl.finetune.data import MASKED_TOKEN_ID
 from pipelinerl.rollouts import TrainingText
-from pipelinerl.processor_factory import processor_factory
+from pipelinerl.processor_factory import get_processor
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     
     if use_processor:
         # Use processor for vision-language models
-        processor = processor_factory.get_processor(llm.model_name)
+        processor = get_processor(llm.model_name)
         
         try:
             # Apply chat template using processor for proper image token handling
