@@ -51,16 +51,11 @@ async def generate_counting_rollout(
     training_text = make_training_text(llm, llm_call)
     training_text.reward = reward
 
-    finished = 1 if training_text.input_ids[-1] == llm.tokenizer.eos_token_id else 0
-
     metrics = BaseMetrics(
         reward=reward,
         success=reward,
         no_error=not error,
         no_answer=error,
-        overflow=0 if finished else 1,
-        prompt_tokens= [llm_call.prompt_length_tokens],
-        output_tokens=[llm_call.output_length_tokens],
     )
 
     return RolloutResult(
