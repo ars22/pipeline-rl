@@ -11,9 +11,8 @@ from PIL import Image
 
 from pipelinerl.rollouts import RolloutResult
 from tapeagents.core import Prompt
-from pipelinerl.async_vlm import TrainableVLM
-
-from pipelinerl.async_vlm import vlm_async_generate, make_multimodal_training_text
+from tapeagents.llms.trainable import TrainableLLM
+from pipelinerl.async_llm import llm_async_generate, make_training_text
 from .evaluation import evaluate_answer
 
 logger = logging.getLogger(__name__)
@@ -61,7 +60,7 @@ def create_multimodal_message(image: Image.Image, question: str) -> Dict[str, An
 
 async def generate_chartqa_rollout(
     cfg: DictConfig,
-    llm: TrainableVLM,
+    llm: TrainableLLM,
     problem: dict,
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
@@ -80,52 +79,51 @@ async def generate_chartqa_rollout(
     prompt = Prompt(messages=messages)
 
     time_start = time.time()
-    vlm_call = await vlm_async_generate(llm, prompt, session)
+    llm_call = await llm_async_generate(llm, prompt, session)
     latency = time.time() - time_start
 
-    assert vlm_call.output.content is not None
+    assert llm_call.output.content is not None
     rewards = ChartQARewardTable(**dict(cfg.rewards))
     discount_factor = cfg.actor.discount_factor
 
     # Evaluate the answer using our custom evaluation logic
     try:
-        answer_status = evaluate_answer(vlm_call.output.content, problem["answer"])
+        answer_status = evaluate_answer(llm_call.output.content, problem["answer"])
     except Exception as e:
         logger.error(f"Error evaluating answer: {e}")
         answer_status = "unparsable"
 
     try:
-        trace = make_multimodal_training_text(llm, vlm_call)
+        trace = make_training_text(llm, llm_call)
         # Check if the generation is finished (ended with EOS token)
-        finished = 1 if trace.input_ids[-1] == llm.tokenizer.eos_token_id else 0
     except Exception as e:
         logger.error(f"Error creating training text: {e}")
         raise
 
     # Determine reward based on answer status and finished state
     try:
-        match (answer_status, finished):
-            case ("wrong", 0):
+        match (answer_status, trace.finished):
+            case ("wrong", False):
                 reward = rewards.wrong_answer_not_finished
-            case ("wrong", 1):
+            case ("wrong", True):
                 reward = rewards.wrong_answer_finished
-            case ("no_answer", 0):
+            case ("no_answer", False):
                 reward = rewards.no_answer_not_finished
-            case ("no_answer", 1):
+            case ("no_answer", True):
                 reward = rewards.no_answer_finished
-            case ("unparsable", 0):
+            case ("unparsable", False):
                 reward = rewards.unparsable_not_finished
-            case ("unparsable", 1):
+            case ("unparsable", True):
                 reward = rewards.unparsable_finished
-            case ("correct", 0):
+            case ("correct", False):
                 reward = rewards.correct_answer_not_finished
-            case ("correct", 1):
+            case ("correct", True):
                 reward = rewards.correct_answer_finished
             case _:
-                raise ValueError(f"Invalid answer_status/finished combination: {answer_status}/{finished}")
+                raise ValueError(f"Invalid answer_status/finished combination: {answer_status}/{trace.finished}")
 
         # Apply discount factor based on output length
-        reward *= discount_factor**vlm_call.output_length_tokens
+        reward *= discount_factor**llm_call.output_length_tokens
         trace.reward = reward
     except Exception as e:
         logger.error(f"Error calculating reward: {e}")
@@ -136,14 +134,11 @@ async def generate_chartqa_rollout(
         "success": answer_status == "correct",
         "no_error": answer_status != "unparsable",
         "no_answer": answer_status == "no_answer",
-        "overflow": 0 if finished else 1,
     }
 
     return RolloutResult(
         training_texts=[trace],
         metrics=metrics,
         dataset_name=problem.get("dataset"),
-        prompt_tokens=[vlm_call.prompt_length_tokens],
-        output_tokens=[vlm_call.output_length_tokens],
         latency=latency,
     )

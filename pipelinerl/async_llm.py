@@ -1,14 +1,50 @@
+import base64
+import io
 import logging
+
 import aiohttp
-
-from pipelinerl.finetune.data import MASKED_TOKEN_ID
-from pipelinerl.rollouts import TrainingText
-
+import numpy as np
+from PIL import Image
 from tapeagents.core import LLMCall, LLMOutput, Prompt, TokenLogprob
 from tapeagents.llms.trainable import TrainableLLM
 
+from pipelinerl.finetune.data import MASKED_TOKEN_ID
+from pipelinerl.rollouts import TrainingText
+from pipelinerl.processor_factory import processor_factory
 
 logger = logging.getLogger(__name__)
+
+
+def extract_images_from_messages(messages: list[dict]) -> list[Image.Image]:
+    """Extract PIL Images from multimodal messages."""
+
+    images = []
+    for message in messages:
+        if isinstance(message.get("content"), list):
+            for content_item in message["content"]:
+                if content_item is None:
+                    continue
+                if content_item.get("type") == "image" and "image" in content_item:
+                    images.append(content_item["image"])
+                elif (
+                    content_item.get("type") == "image_url"
+                    and "image_url" in content_item
+                ):
+                    # Handle base64 format
+                    url = content_item["image_url"]["url"]
+                    if url.startswith("data:image;base64,"):
+                        try:
+                            base64_data = url.split("data:image;base64,")[1]
+                            image_data = base64.b64decode(base64_data)
+                            image = Image.open(io.BytesIO(image_data))
+                            images.append(image)
+                        except Exception as e:
+                            raise e
+
+    if not images:
+        raise ValueError("No images found in messages")
+
+    return images
 
 
 async def llm_async_generate(
@@ -112,13 +148,46 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     finished = llm_call.output.content.endswith(llm.tokenizer.eos_token)
     prompt_tokens = llm_call.prompt_length_tokens
     output_tokens = llm_call.output_length_tokens
+    # Extract visual features if present
+    pixel_values = None
+    image_thw = None
+
+    if hasattr(llm_call.prompt, "messages"):
+        # Use processor factory to get cached processor instance
+        processor = processor_factory.get_processor(llm.model_name)
+        images = extract_images_from_messages(llm_call.prompt.messages)
+        if images:
+            # Load processor if not already loaded
+            try:
+                # Process images and text with the model's processor
+                # Apply chat template to get text representation
+                text = processor.apply_chat_template(
+                    llm_call.prompt.messages, tokenize=False, add_generation_prompt=True
+                )
+
+                # Process with both text and images
+                processed = processor(
+                    text=[text], images=images, padding=True, return_tensors=None
+                )
+                # Convert numpy arrays to lists for JSON serialization
+                pixel_values = processed.pixel_values.astype(
+                    np.float16
+                )  # num_channels, image_size, image_size
+                image_thw = processed.image_grid_thw  # 3
+            except Exception as e:
+                raise ValueError(f"Failed to process images with processor: {e}")
+
     return TrainingText(
         text=text,
-        n_predicted=len(llm_call.logprobs),
+        n_predicted=len(
+            llm_call.logprobs
+        ),  # TODO: should be character based, not token based
         input_ids=input_ids,
         labels=labels,
         logprobs=logprobs,
         finished=finished,
         prompt_tokens=prompt_tokens,
         output_tokens=output_tokens,
+        pixel_values=pixel_values,
+        image_thw=image_thw,
     )

@@ -588,12 +588,8 @@ def run_actor_loop(cfg: DictConfig):
     else:
         actor_model_path = cfg.model_path
     
-    # Use TrainableVLM for vision-language models
-    is_vision_model = cfg.finetune.model_class == "vision2seq-language-modeling"
-    llm_class = TrainableVLM if is_vision_model else TrainableLLM
-    
     train_llms = [
-        llm_class(
+        TrainableLLM(
             base_url=url,
             model_name=str(actor_model_path),
             tokenizer_name=str(actor_model_path),
@@ -605,7 +601,7 @@ def run_actor_loop(cfg: DictConfig):
         for url in llm_urls
     ]
     test_llms = [
-        llm_class(
+        TrainableLLM(
             base_url=url,
             model_name=str(actor_model_path),
             tokenizer_name=str(actor_model_path),
