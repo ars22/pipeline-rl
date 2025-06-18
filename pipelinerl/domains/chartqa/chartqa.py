@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 from pydantic import BaseModel
 from PIL import Image
 
-from pipelinerl.rollouts import RolloutResult
+from pipelinerl.rollouts import RolloutResult, BaseMetrics
 from tapeagents.core import Prompt
 from tapeagents.llms.trainable import TrainableLLM
 from pipelinerl.async_llm import llm_async_generate, make_training_text
@@ -129,12 +129,12 @@ async def generate_chartqa_rollout(
         logger.error(f"Error calculating reward: {e}")
         raise
 
-    metrics = {
-        "reward": reward,
-        "success": answer_status == "correct",
-        "no_error": answer_status != "unparsable",
-        "no_answer": answer_status == "no_answer",
-    }
+    metrics = BaseMetrics(
+        reward=reward,
+        success=answer_status == "correct",
+        no_error=answer_status != "unparsable",
+        no_answer=answer_status == "no_answer",
+    )
 
     return RolloutResult(
         training_texts=[trace],
