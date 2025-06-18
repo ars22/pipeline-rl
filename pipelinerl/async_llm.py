@@ -41,9 +41,6 @@ def extract_images_from_messages(messages: list[dict]) -> list[Image.Image]:
                         except Exception as e:
                             raise e
 
-    if not images:
-        raise ValueError("No images found in messages")
-
     return images
 
 
@@ -166,7 +163,7 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
                 padding=True, 
                 return_tensors=None
             )
-            pixel_values = processed.pixel_values.astype(np.float16)
+            pixel_values = processed.pixel_values.astype(np.float16) # TODO: confirm that this still works
             image_thw = processed.image_grid_thw
             
         except Exception as e:
