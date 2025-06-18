@@ -2,15 +2,18 @@ import logging
 import aiohttp
 
 from pipelinerl.finetune.data import MASKED_TOKEN_ID
+from pipelinerl.rollouts import TrainingText
 
-from tapeagents.core import LLMCall, LLMOutput, Prompt, TokenLogprob, TrainingText
+from tapeagents.core import LLMCall, LLMOutput, Prompt, TokenLogprob
 from tapeagents.llms.trainable import TrainableLLM
 
 
 logger = logging.getLogger(__name__)
 
 
-async def llm_async_generate(llm: TrainableLLM, prompt: Prompt, session: aiohttp.ClientSession) -> LLMCall:
+async def llm_async_generate(
+    llm: TrainableLLM, prompt: Prompt, session: aiohttp.ClientSession
+) -> LLMCall:
     llm.load_tokenizer()
     headers = {"Content-Type": "application/json"}
     if llm.api_token:
@@ -72,26 +75,50 @@ async def llm_async_generate(llm: TrainableLLM, prompt: Prompt, session: aiohttp
 
     output = LLMOutput(content=content)
     llm_call = llm.log_output(prompt, output, count_tokens=False)
-    llm_call.prompt_length_tokens = data['usage']['prompt_tokens']
-    llm_call.output_length_tokens = data['usage']['completion_tokens']
+    llm_call.prompt_length_tokens = data["usage"]["prompt_tokens"]
+    llm_call.output_length_tokens = data["usage"]["completion_tokens"]
     assert llm_call is not None, "llm_call is None"
     llm_call.logprobs = parsed_logprobs
     return llm_call
 
 
 def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
-    training_text = llm.make_training_text(llm_call.prompt, llm_call.output)
+    prompt_text = llm.tokenizer.apply_chat_template(
+        conversation=llm_call.prompt.messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    text = llm.tokenizer.apply_chat_template(
+        llm_call.prompt.messages
+        + [{"role": "assistant", "content": llm_call.output.content}],
+        tokenize=False,
+    )
+    output_text = text[len(prompt_text) :]
+
+    if llm.tokenizer.bos_token and text.startswith(llm.tokenizer.bos_token):
+        text = text[len(llm.tokenizer.bos_token) :]
+
     if not llm_call.logprobs:
         raise ValueError("Logprobs are required to make training data for RL")
     # We add the exact token ids and logprobs to "training_text" to ensure inference/training consistency
     prompt_token_ids = llm.tokenizer.apply_chat_template(
         llm_call.prompt.messages, add_special_tokens=True, add_generation_prompt=True
-    )    
+    )
     labels = [lp.token_id for lp in llm_call.logprobs]
     input_ids = prompt_token_ids + labels
     # Apply masking to input tokens that aren't generated
     labels = [MASKED_TOKEN_ID] * len(prompt_token_ids) + labels
-    training_text.input_ids = input_ids
-    training_text.labels = labels
-    training_text.logprobs = [lp.logprob for lp in llm_call.logprobs]
-    return training_text
+    logprobs = [lp.logprob for lp in llm_call.logprobs]
+    finished = llm_call.output.content.endswith(llm.tokenizer.eos_token)
+    prompt_tokens = llm_call.prompt_length_tokens
+    output_tokens = llm_call.output_length_tokens
+    return TrainingText(
+        text=text,
+        n_predicted=len(llm_call.logprobs),
+        input_ids=input_ids,
+        labels=labels,
+        logprobs=logprobs,
+        finished=finished,
+        prompt_tokens=prompt_tokens,
+        output_tokens=output_tokens,
+    )

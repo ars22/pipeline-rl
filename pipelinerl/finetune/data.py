@@ -14,7 +14,7 @@ from transformers import BatchEncoding
 from transformers import default_data_collator
 import os
 
-from tapeagents.core import TrainingText
+from pipelinerl.rollouts import TrainingText
 
 from .context import get_accelerator, logger
 from .rl import RL_DATA_COLUMNS, prepare_rl_fields
