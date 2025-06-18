@@ -342,6 +342,16 @@ class ActorLoop:
         self.latency_list = []
         self.model_versions_list = []
         self.sliding_stats = defaultdict(list)
+    
+    def compute_domain_agnostic_metrics(self, result: RolloutResult) -> Dict[str, float]:
+        metrics = {}
+        
+        metrics['overflow'] = all([not training_text.finished for training_text in result.training_texts ])
+        metrics['num_turns'] = len(result.training_texts)
+        metrics['prompt_tokens'] = [training_text.prompt_tokens for training_text in result.training_texts]
+        metrics['output_tokens'] = [training_text.output_tokens for training_text in result.training_texts]
+        
+        return metrics
 
     def update_stats(self, rollout_results: List[RolloutResult]):
         for result in rollout_results:
@@ -350,16 +360,18 @@ class ActorLoop:
             group_id = result.group_id
             self.latency_list.append(result.latency)
             self.model_versions_list.append(result.model_version)
-            for k, v in result.metrics.model_dump().items():
+            domain_agnostic_metrics = self.compute_domain_agnostic_metrics(result) 
+            all_metrics = result.metrics.model_dump() | domain_agnostic_metrics
+            for k, v in all_metrics.items():
                 if isinstance(v, list):
                     self.stats[k][dataset_name][group_id] += v
-                elif isinstance(v, float) or isinstance(v, bool):
+                elif isinstance(v, float) | isinstance(v, bool) | isinstance(v, int):
                     self.stats[k][dataset_name][group_id].append(v)
                 else:
                     raise ValueError(f"Unsupported metric type: {type(v)} for key {k}")
         
-        prompt_length_tokens = list(itertools.chain(*(result.metrics.prompt_tokens for result in rollout_results)))
-        output_length_tokens = list(itertools.chain(*(result.metrics.output_tokens for result in rollout_results)))
+        prompt_length_tokens = [training_text.prompt_tokens for result in rollout_results for training_text in result.training_texts]
+        output_length_tokens = [training_text.output_tokens for result in rollout_results for training_text in result.training_texts]
         self.sliding_aggregator.update(prompt_length_tokens, output_length_tokens)
         sliding_window_stats = self.sliding_aggregator.get_stats()
         if sliding_window_stats is not None:
