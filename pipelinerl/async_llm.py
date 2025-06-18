@@ -119,16 +119,71 @@ async def llm_async_generate(
 
 
 def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
-    prompt_text = llm.tokenizer.apply_chat_template(
-        conversation=llm_call.prompt.messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-    text = llm.tokenizer.apply_chat_template(
-        llm_call.prompt.messages
-        + [{"role": "assistant", "content": llm_call.output.content}],
-        tokenize=False,
-    )
+    # Extract visual features if present
+    pixel_values = None
+    image_thw = None
+    images = []
+    use_processor = False
+    full_messages = llm_call.prompt.messages + [{"role": "assistant", "content": llm_call.output.content}]
+    
+    if hasattr(llm_call.prompt, "messages"):
+        images = extract_images_from_messages(llm_call.prompt.messages)
+        if images:
+            use_processor = True
+    
+    if use_processor:
+        # Use processor for vision-language models
+        processor = processor_factory.get_processor(llm.model_name)
+        
+        try:
+            # Apply chat template using processor for proper image token handling
+            prompt_text = processor.apply_chat_template(
+                llm_call.prompt.messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            
+            # Create full conversation with assistant response
+            text = processor.apply_chat_template(
+                full_messages,
+                tokenize=False,
+            )
+            
+            # Process prompt with images to get token IDs with image placeholders
+            prompt_inputs = processor(
+                text=processor.apply_chat_template(llm_call.prompt.messages, tokenize=False, add_generation_prompt=True),
+                images=images,
+                return_tensors=None,
+            )
+            prompt_token_ids = prompt_inputs["input_ids"]
+            
+            # Process images to get visual features
+            processed = processor(
+                text=[prompt_text], 
+                images=images, 
+                padding=True, 
+                return_tensors=None
+            )
+            pixel_values = processed.pixel_values.astype(np.float16)
+            image_thw = processed.image_grid_thw
+            
+        except Exception as e:
+            raise ValueError(f"Failed to process with vision-language processor: {e}")
+    else:
+        # Use tokenizer for text-only models
+        prompt_text = llm.tokenizer.apply_chat_template(
+            conversation=llm_call.prompt.messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        text = llm.tokenizer.apply_chat_template(
+            full_messages,
+            tokenize=False,
+        )
+        prompt_token_ids = llm.tokenizer.apply_chat_template(
+            llm_call.prompt.messages, add_special_tokens=True, add_generation_prompt=True
+        )
+    
     output_text = text[len(prompt_text) :]
 
     if llm.tokenizer.bos_token and text.startswith(llm.tokenizer.bos_token):
@@ -136,10 +191,8 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
 
     if not llm_call.logprobs:
         raise ValueError("Logprobs are required to make training data for RL")
+    
     # We add the exact token ids and logprobs to "training_text" to ensure inference/training consistency
-    prompt_token_ids = llm.tokenizer.apply_chat_template(
-        llm_call.prompt.messages, add_special_tokens=True, add_generation_prompt=True
-    )
     labels = [lp.token_id for lp in llm_call.logprobs]
     input_ids = prompt_token_ids + labels
     # Apply masking to input tokens that aren't generated
@@ -148,34 +201,6 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     finished = llm_call.output.content.endswith(llm.tokenizer.eos_token)
     prompt_tokens = llm_call.prompt_length_tokens
     output_tokens = llm_call.output_length_tokens
-    # Extract visual features if present
-    pixel_values = None
-    image_thw = None
-
-    if hasattr(llm_call.prompt, "messages"):
-        # Use processor factory to get cached processor instance
-        processor = processor_factory.get_processor(llm.model_name)
-        images = extract_images_from_messages(llm_call.prompt.messages)
-        if images:
-            # Load processor if not already loaded
-            try:
-                # Process images and text with the model's processor
-                # Apply chat template to get text representation
-                text = processor.apply_chat_template(
-                    llm_call.prompt.messages, tokenize=False, add_generation_prompt=True
-                )
-
-                # Process with both text and images
-                processed = processor(
-                    text=[text], images=images, padding=True, return_tensors=None
-                )
-                # Convert numpy arrays to lists for JSON serialization
-                pixel_values = processed.pixel_values.astype(
-                    np.float16
-                )  # num_channels, image_size, image_size
-                image_thw = processed.image_grid_thw  # 3
-            except Exception as e:
-                raise ValueError(f"Failed to process images with processor: {e}")
 
     return TrainingText(
         text=text,
