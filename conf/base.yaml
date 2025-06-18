@@ -43,11 +43,7 @@ actor:
   log_each_n_secs: 0
   llm_max_rollouts: 64
   rollout_workers: 1
-  rollout_policy: pipelinerl.domains.math.generate_math_rollout
   discount_factor: 1
-  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
-  task_template: |-
-    {task}
   throughput_window_size: 50
 environment:
   _target_: pipelinerl.domains.math.MathEnvironment
@@ -122,17 +118,7 @@ force_restart: false
 pop_old_data: true
 max_lag: null
 attempts: 8
-
-dataset_loader: pipelinerl.domains.math.load_datasets
-train_dataset_names:
-- open_reasoner_zero_57k
-- open_reasoner_zero_extended_72k 
 train_subset: null
-test_dataset_names:
-  - aime_2024
-  - amc_2023
-  - math_500
-
 debug:
   mode: ""
   streams_from: null
