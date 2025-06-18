@@ -114,7 +114,7 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     output_tokens = llm_call.output_length_tokens
     return TrainingText(
         text=text,
-        n_predicted=len(llm_call.logprobs),
+        n_predicted=len(output_text),
         input_ids=input_ids,
         labels=labels,
         logprobs=logprobs,
