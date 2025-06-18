@@ -175,7 +175,7 @@ def collate(
     visual_fields = {"pixel_values", "image_thw"}
     
     for k, seq_list in example_dict.items():
-        if k == "group_id": # TODO: why is group_id here now?
+        if any(isinstance(seq, (str, dict)) for seq in seq_list):
             continue
         if k in visual_fields:
             # Handle visual tensors: filter out None values and stack
