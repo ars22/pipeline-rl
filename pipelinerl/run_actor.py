@@ -18,7 +18,6 @@ import uvloop
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
 from tapeagents.llms import TrainableLLM
-from pipelinerl.async_vlm import TrainableVLM
 from typing import Dict, List
 
 import wandb
