@@ -45,8 +45,7 @@ actor:
   rollout_workers: 1
   discount_factor: 1
   throughput_window_size: 50
-environment:
-  _target_: pipelinerl.domains.math.MathEnvironment
+environment: null
 preprocess:
   input: actor
   output: training_data
