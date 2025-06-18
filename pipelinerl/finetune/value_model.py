@@ -42,7 +42,7 @@ class ValueHead(nn.Module):
     def __init__(self, hidden_size: int, dropout: float = 0.1):
         super().__init__()
         self.output = nn.Linear(hidden_size, 1)
-        nn.init.normal_(self.output.weight, std=0.01)
+        nn.init.normal_(self.output.weight, std=1e-3)
         nn.init.zeros_(self.output.bias)
         
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
