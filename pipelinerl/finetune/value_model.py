@@ -41,15 +41,11 @@ class ValueHead(nn.Module):
     
     def __init__(self, hidden_size: int, dropout: float = 0.1):
         super().__init__()
-        self.dense = nn.Linear(hidden_size, hidden_size)
-        self.dropout = nn.Dropout(dropout)
         self.output = nn.Linear(hidden_size, 1)
+        nn.init.normal_(self.output.weight, std=0.01)
+        nn.init.zeros_(self.output.bias)
         
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = self.dense(hidden_states)
-        hidden_states = torch.tanh(hidden_states)
-        hidden_states = self.dropout(hidden_states)
         values = self.output(hidden_states).squeeze(-1)  # (batch_size, sequence_length)
         return values
 
@@ -92,8 +88,6 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
             value_labels (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
                 Labels for computing the value loss. These are the rewards to predict.
         """
-        # Force output_hidden_states to True to get hidden states for value head
-        output_hidden_states = True
         
         # Get outputs from the base model
         outputs = self.pretrained_model(
@@ -105,7 +99,7 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
             labels=labels,
             use_cache=use_cache,
             output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
+            output_hidden_states=True,
             return_dict=True,
         )
         
@@ -115,46 +109,22 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
         # Compute values
         values = self.value_head(hidden_states)
         
-        # Compute value loss if labels are provided
-        value_loss = None
-        if value_labels is not None:
-            # Only compute loss for non-padding tokens
-            if labels is not None:
-                # Use the same mask as language modeling (where labels != -100)
-                value_mask = labels != -100
-                value_mask = value_mask[:, 1:]  # Shift mask to align with values
+        # Use the same mask as language modeling (where labels != -100)
+        value_mask = labels != -100
+        value_mask = value_mask[:, 1:]  # Shift mask to align with values
                 
-                # Ensure value_labels are properly shaped
-                if value_labels.dim() == 3:
-                    value_labels = value_labels.squeeze(-1)
-                value_labels = value_labels[:, 1:]  # Shift labels
+        # Ensure value_labels are properly shaped
+        if value_labels.dim() == 3:
+            value_labels = value_labels.squeeze(-1)
+        value_labels = value_labels[:, 1:]  # Shift labels
                 
-                # Compute MSE loss only on valid positions
-                if value_mask.any():
-                    masked_values = values[:, :-1][value_mask]
-                    masked_labels = value_labels[value_mask]
-                    value_loss = nn.functional.mse_loss(masked_values, masked_labels.to(masked_values.dtype), reduction='mean')
-                else:
-                    value_loss = torch.tensor(0.0, device=values.device, dtype=values.dtype)
-            else:
-                # If no language modeling labels, use attention mask
-                if attention_mask is not None:
-                    value_mask = attention_mask[:, 1:].bool()
-                    if value_labels.dim() == 3:
-                        value_labels = value_labels.squeeze(-1)
-                    value_labels = value_labels[:, 1:]
-                    
-                    if value_mask.any():
-                        masked_values = values[:, :-1][value_mask]
-                        masked_labels = value_labels[value_mask]
-                        value_loss = nn.functional.mse_loss(masked_values, masked_labels.to(masked_values.dtype), reduction='mean')
-                    else:
-                        value_loss = torch.tensor(0.0, device=values.device, dtype=values.dtype)
-                else:
-                    # No mask available, compute loss on all positions
-                    if value_labels.dim() == 3:
-                        value_labels = value_labels.squeeze(-1)
-                    value_loss = nn.functional.mse_loss(values[:, :-1], value_labels[:, 1:].to(values.dtype), reduction='mean')
+        # Compute MSE loss only on valid positions
+        if value_mask.any():
+            masked_values = values[:, :-1][value_mask]
+            masked_labels = value_labels[value_mask]
+            value_loss = nn.functional.mse_loss(masked_values, masked_labels.to(masked_values.dtype), reduction='mean')
+        else:
+            value_loss = torch.tensor(0.0, device=values.device, dtype=values.dtype)
         
         return CausalLMOutputWithValue(
             loss=outputs.loss,

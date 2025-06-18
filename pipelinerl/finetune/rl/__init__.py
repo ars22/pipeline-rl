@@ -91,6 +91,10 @@ class RLConfig(BaseModel):
         default=False,
         description="Filter out groups where all advantages are zero during preprocessing",
     )
+    value_loss_coef: float = Field(
+        default=0.1,
+        description="Coefficient for the value loss in the final loss",
+    )
 
 
 def make_rl_data_callback(args, current_dir, rl_config, model):
@@ -303,7 +307,7 @@ def rl_step(
     if has_value_head and hasattr(outputs, 'value_loss') and outputs.value_loss is not None:
         value_loss = outputs.value_loss.to(policy_loss_total.dtype)
         # Combine policy loss and value loss
-        value_loss_coef = getattr(config, 'value_loss_coef', 0.5)  # Default coefficient for value loss
+        value_loss_coef = getattr(config, 'value_loss_coef', 0.1)  # Default coefficient for value loss
         final_loss = policy_loss_total + value_loss_coef * value_loss
     else:
         final_loss = policy_loss_total
