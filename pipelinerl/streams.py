@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import pickle
+import numpy
 import orjson
 import json
 import logging
@@ -252,9 +253,10 @@ class FileStreamWriter(StreamWriter):
         self._file.close()
 
     def write(self, data):
+        # Textual streams are so useful, that we try hard to jsonify the given object.
         if isinstance(data, BaseModel):
             data = data.model_dump()
-        self._file.write(orjson.dumps(data).decode("utf-8"))
+        self._file.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY).decode("utf-8"))
         self._file.write("\n")
         self._file.flush()
 

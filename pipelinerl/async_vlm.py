@@ -204,7 +204,7 @@ def make_multimodal_training_text(vlm: TrainableVLM, vlm_call: VLMCall) -> Multi
                         return_tensors=None
                     )
                     # Convert numpy arrays to lists for JSON serialization
-                    pixel_values = processed.pixel_values.tolist() # num_channels, image_size, image_size
+                    pixel_values = processed.pixel_values # num_channels, image_size, image_size
                     image_thw = processed.image_grid_thw.tolist() # 3
                 except Exception as e:
                     raise ValueError(f"Failed to process images with processor: {e}")

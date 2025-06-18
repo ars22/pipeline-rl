@@ -48,6 +48,8 @@ actor:
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
     {task}
+  problem_queue_size: 64
+  result_queue_size: 64
   throughput_window_size: 50
   shared_memory_entry_size: 10000000
 environment:
@@ -56,7 +58,9 @@ preprocess:
   input: actor
   output: training_data
   n_workers: 8
-  queue_size: 8
+  raw_queue_size: 8
+  input_queue_size: 32
+  output_queue_size: 32
   chunk_n_groups: 2
   submit_delay: 0.
   pop_old_data: ${..pop_old_data} 

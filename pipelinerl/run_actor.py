@@ -5,6 +5,7 @@ import math
 import multiprocessing as mp
 import os
 import queue
+from queue import Empty
 import random
 import time
 from collections import defaultdict
@@ -23,7 +24,7 @@ from typing import Dict, List
 import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
 from pipelinerl.rollouts import RolloutResult
-from pipelinerl.shared_memory_array import SharedMemoryArray
+from pipelinerl.shared_memory_array import SharedMemoryArray, SharedMemoryQueue
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import (
     SingleStreamSpec,
@@ -111,9 +112,8 @@ def make_stats_dict() -> dict:
 async def schedule_rollouts(
     cfg: DictConfig,
     attempts: int,
-    problem_queue: mp.Queue,
-    result_queue: mp.Queue,
-    io_buffer,
+    problem_queue: SharedMemoryQueue,
+    result_queue: SharedMemoryQueue,
     trainer_state: TrainerState,
     llms: list[TrainableLLM],
     scheduler_name: str,
@@ -141,7 +141,6 @@ async def schedule_rollouts(
 
     async def rollout_and_maybe_produce_result(
         problem: dict,
-        slot: int,
         group_id: int,
         rollout_index: int,
         llm_index: int,
@@ -167,9 +166,7 @@ async def schedule_rollouts(
             if len(group_rollouts[group_id]) == attempts:
                 # This is blocking call, but there's just one other thread reading from this queue.
                 random.shuffle(group_rollouts[group_id])
-                group_bytes = group_rollouts[group_id]
-                io_buffer[slot] = group_bytes
-                result_queue.put(slot)
+                result_queue.put(group_rollouts[group_id])
                 del group_rollouts[group_id]
             finished_rollouts += 1
         except Exception as e:
@@ -179,8 +176,7 @@ async def schedule_rollouts(
             for task in asyncio.all_tasks(loop=loop):
                 if task != current_task:
                     task.cancel()
-            io_buffer[slot] = e
-            result_queue.put(slot)
+            result_queue.put(e)
             logger.error("Stopped all tasks and put exception in the result queue")
         finally:
             active_rollouts[llm_index] -= 1
@@ -188,7 +184,6 @@ async def schedule_rollouts(
     group_id = -1
     group_rollout_index = attempts
     problem = None
-    slot = None
 
     last_logged = time.time()
     logger.info("Starting rollout scheduler")
@@ -203,15 +198,14 @@ async def schedule_rollouts(
                     f"groups in progress: {len(group_rollouts)}, "
                     f"rollouts started so far: {started_rollouts}, "
                     f"rollouts finished so far: {finished_rollouts}, "
-                    f"max group size in bytes: {io_buffer._max_written_entry_size}, "
+                    f"max group size in bytes: {result_queue.max_actual_entry_size()}, "
                 )
                 last_logged = time.time()
 
             if group_rollout_index == attempts:
                 try:
-                    slot = problem_queue.get_nowait()
-                    problem = io_buffer[slot]
-                except queue.Empty:
+                    problem = problem_queue.get(block=False)
+                except Empty:
                     # give some quality time for other couroutines to work
                     await asyncio.sleep(0.01)
                     continue
@@ -226,11 +220,10 @@ async def schedule_rollouts(
                 continue
             active_rollouts[next_llm] += 1
             started_rollouts += 1
-            assert problem is not None and slot is not None
+            assert problem is not None
             loop.create_task(
                 rollout_and_maybe_produce_result(
                     problem=problem,
-                    slot=slot,
                     group_id=group_id,
                     rollout_index=group_rollout_index,
                     llm_index=next_llm,
@@ -244,9 +237,8 @@ async def schedule_rollouts(
 def rollout_maker_entrypoint(
     cfg: DictConfig,
     attempts: int,
-    problem_queue: mp.Queue,
-    result_queue: mp.Queue,
-    io_buffer,
+    problem_queue: SharedMemoryQueue,
+    result_queue: SharedMemoryQueue,
     llms: list[TrainableLLM],
     scheduler_name: str,
 ):
@@ -259,7 +251,7 @@ def rollout_maker_entrypoint(
     loop = uvloop.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(
-        schedule_rollouts(cfg, attempts, problem_queue, result_queue, io_buffer, trainer_state, llms, scheduler_name)
+        schedule_rollouts(cfg, attempts, problem_queue, result_queue, trainer_state, llms, scheduler_name)
     )
     loop.close()
     logger.info("Rollout maker loop closed")
@@ -308,17 +300,14 @@ class ActorLoop:
         self.smm = SharedMemoryManager()
         self.smm.start()
 
-        # we can have a pending almost ready group for each last rollout in progress ...
-        self.max_groups_in_progress = cfg.actor.llm_max_rollouts * len(self.llms)
-        max_ready_groups_waiting = 128
-        self.problem_queue = mp.Queue()
-        self.result_queue = mp.Queue(max_ready_groups_waiting)
-        self.buffer_size = self.max_groups_in_progress + max_ready_groups_waiting
-        self.io_buffer = SharedMemoryArray(self.smm, self.buffer_size, cfg.actor.shared_memory_entry_size)
-        self.free_slots = set(range(self.buffer_size))
+        
+        # Use SharedMemoryQueue instead of separate problem_queue, result_queue, and io_buffer
+        self.problem_queue = SharedMemoryQueue(self.smm, self.cfg.actor.problem_queue_size, cfg.actor.shared_memory_entry_size)
+        self.result_queue = SharedMemoryQueue(self.smm, self.cfg.actor.result_queue_size, cfg.actor.shared_memory_entry_size)
+        
         logger.info(f"Initialized {'train' if self.is_training else 'test'} actor loop")
-        logger.info(f"Max groups in progress: {self.max_groups_in_progress}, buffer size: {self.buffer_size}")
-        logger.info(f"Shared memory buffer size: {self.io_buffer.get_memory_size() / 2**30} Gb")
+        logger.info(f"Problem queue size: {self.problem_queue.max_size}, result queue size: {self.result_queue.max_size}")
+        logger.info(f"Result queue buffer size: {self.result_queue.get_memory_size() / 2**30} Gb")
 
         # Create and start multiple rollout processes
         self.rollout_processes = []
@@ -331,7 +320,7 @@ class ActorLoop:
             )
             process = mp.Process(
                 target=rollout_maker_entrypoint,
-                args=(self.cfg, attempts, self.problem_queue, self.result_queue, self.io_buffer, llms, scheduler_name),
+                args=(self.cfg, attempts, self.problem_queue, self.result_queue, llms, scheduler_name),
             )
             process.start()
             self.rollout_processes.append(process)
@@ -444,19 +433,18 @@ class ActorLoop:
                     trainer_version_to_publish = last_trainer_version
                     last_trainer_version = self.trainer_state.propagated_weight_version
 
-                # First, submit all problems you can
+                # First, submit all problems you can until the problem queue is full
                 if not self.is_scheduling_paused:
                     while True:
                         blocked_by_lag = submitted_groups == can_submit_before_update and self.is_training
-                        in_progress = submitted_groups - finished_groups
-                        assert 0 <= in_progress and in_progress <= self.max_groups_in_progress
-                        if not blocked_by_lag and in_progress < self.max_groups_in_progress:
+                        if not blocked_by_lag and not self.problem_queue.full():
                             try:
-                                problem = next(problem_iter)
-                                slot = self.free_slots.pop()
-                                self.io_buffer[slot] = problem
-                                self.problem_queue.put_nowait(slot)
-                                submitted_groups += 1
+                                try:
+                                    problem = next(problem_iter)
+                                    self.problem_queue.put(problem, block=False)
+                                    submitted_groups += 1
+                                except queue.Full:            
+                                    assert False, "Problem queue was not full just a moment ago, but now it is full"
                             except StopIteration:
                                 break
                         else:
@@ -464,14 +452,14 @@ class ActorLoop:
 
                 # Second, try return a result
                 try:
-                    slot = self.result_queue.get_nowait()
-                    rollout_results = self.io_buffer[slot]
-                    self.free_slots.add(slot)
-                    if isinstance(rollout_results, Exception):
-                        logger.error("Stop actor loop due to error")
-                        raise rollout_results
+                    # Directly get the result from the SharedMemoryQueue
+                    rollout_results = self.result_queue.get(block=False)
                 except queue.Empty:
                     continue
+
+                if isinstance(rollout_results, Exception):
+                    logger.error("Stop actor loop due to error")
+                    raise rollout_results
 
                 assert isinstance(rollout_results, list)
                 assert isinstance(rollout_results[0], RolloutResult)
@@ -487,7 +475,7 @@ class ActorLoop:
                 in_progress = submitted_groups - finished_groups
                 logger.info(
                     f"Published {group_samples} {'train' if self.is_training else 'test'} samples"
-                    f" to {self.data_stream}, total {published_samples} samples so far, {samples_in_queue} samples in the queue,"
+                    f" to {self.data_stream}, total {published_samples} samples so far, {samples_in_queue} samples in the result queue,"
                     f" {in_progress} groups in progress"
                 )
 
@@ -506,7 +494,8 @@ class ActorLoop:
                     if self.is_training:
                         loop_stats = {
                             "published_samples": published_samples,
-                            "samples_in_queue": samples_in_queue,
+                            "problem_queue_size": self.problem_queue.qsize(),
+                            "result_queue_size": self.result_queue.qsize(),
                             "finished_groups": finished_groups,
                             "trainer_model_version": trainer_version_to_publish, 
                             "time_since_start": time.time() - loop_start_time,
