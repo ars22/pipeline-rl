@@ -48,8 +48,7 @@ actor:
   result_queue_size: 64
   throughput_window_size: 50
   shared_memory_entry_size: 10000000
-environment:
-  _target_: pipelinerl.domains.math.MathEnvironment
+environment: null
 preprocess:
   input: actor
   output: training_data
