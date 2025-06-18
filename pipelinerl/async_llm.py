@@ -155,7 +155,9 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
                 images=images,
                 return_tensors=None,
             )
-            prompt_token_ids = prompt_inputs["input_ids"]
+            
+            # prompt_inputs["input_ids"] is a list of list
+            prompt_token_ids = prompt_inputs["input_ids"][0]
             
             # Process images to get visual features
             processed = processor(
@@ -186,8 +188,11 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     
     output_text = text[len(prompt_text) :]
 
-    if llm.tokenizer.bos_token and text.startswith(llm.tokenizer.bos_token):
-        text = text[len(llm.tokenizer.bos_token) :]
+    # Get the appropriate tokenizer (from processor if using vision model)
+    tokenizer = processor.tokenizer if use_processor else llm.tokenizer
+    
+    if tokenizer.bos_token and text.startswith(tokenizer.bos_token):
+        text = text[len(tokenizer.bos_token) :]
 
     if not llm_call.logprobs:
         raise ValueError("Logprobs are required to make training data for RL")
@@ -198,7 +203,7 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     # Apply masking to input tokens that aren't generated
     labels = [MASKED_TOKEN_ID] * len(prompt_token_ids) + labels
     logprobs = [lp.logprob for lp in llm_call.logprobs]
-    finished = llm_call.output.content.endswith(llm.tokenizer.eos_token)
+    finished = llm_call.output.content.endswith(tokenizer.eos_token)
     prompt_tokens = llm_call.prompt_length_tokens
     output_tokens = llm_call.output_length_tokens
 
