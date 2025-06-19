@@ -46,6 +46,15 @@ def _popen(
 def validate_config(cfg: DictConfig):
     if cfg.world.preprocessor_fraction == 0 and cfg.finetune.rl.kl_coef > 0.0:
         raise ValueError("Preprocessor fraction must be > 0 if KL is used")
+    
+    # Check for vision language model constraints
+    if cfg.finetune.model_class == "vision2seq-language-modeling":
+        if "Qwen2.5-VL" not in cfg.model_path:
+            raise ValueError("Only Qwen2.5-VL models are supported for vision language modeling")
+        if cfg.finetune.seq_packing:
+            raise ValueError("Vision language models cannot use sequence packing (seq_packing must be false)")
+        if cfg.finetune.train_batch_size > 1:
+            raise ValueError("Vision language models cannot use batch size > 1 (train_batch_size must be 1)")
 
 
 def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path):
