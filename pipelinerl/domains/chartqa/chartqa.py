@@ -39,8 +39,6 @@ def encode_image_to_base64(image: Image.Image) -> str:
 
 def create_multimodal_message(image: Image.Image, question: str) -> Dict[str, Any]:
     """Create a multimodal message with image and text."""
-    # make image all the same size
-    image = image.resize((224, 224))  # Resize to a standard size if needed
     image_base64 = encode_image_to_base64(image)
     
     return {
