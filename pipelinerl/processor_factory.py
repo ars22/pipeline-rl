@@ -10,7 +10,8 @@ def get_processor(model_name: str) -> AutoProcessor:
     """Get or create an AutoProcessor for the given model."""
     if model_name not in _processors:
         logger.info(f"Loading processor for model: {model_name}")
-        _processors[model_name] = AutoProcessor.from_pretrained(model_name)
+        #TODO: should be args
+        _processors[model_name] = AutoProcessor.from_pretrained(model_name, min_pixels=28*28, max_pixels=1280*28*28)
     return _processors[model_name]
 
 def clear_cache() -> None:
