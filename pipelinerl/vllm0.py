@@ -34,7 +34,7 @@ from vllm.worker.multi_step_model_runner import MultiStepModelRunner
 
 
 import torch.distributed as dist
-from pipelinerl.run_finetune import TrainerMessage, WeightUpdateRequest
+from pipelinerl.finetune_loop import TrainerMessage, WeightUpdateRequest
 import pipelinerl.torch_utils
 
 logger = logging.getLogger(__name__)

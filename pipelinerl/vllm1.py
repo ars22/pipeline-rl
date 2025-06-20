@@ -24,7 +24,7 @@ from vllm.v1.engine.core_client import AsyncMPClient
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 
-from pipelinerl.run_finetune import WeightUpdateRequest
+from pipelinerl.finetune_loop import WeightUpdateRequest
 from typing import Any, Protocol, runtime_checkable
 import pipelinerl.torch_utils
 
