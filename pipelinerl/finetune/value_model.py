@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 from typing import Optional, Tuple, Union
+from transformers import AutoModelForCausalLM
 
 
 @dataclass
@@ -39,7 +40,7 @@ class CausalLMOutputWithValue(ModelOutput):
 class ValueHead(nn.Module):
     """Value head for predicting rewards/values."""
     
-    def __init__(self, hidden_size: int, dropout: float = 0.1):
+    def __init__(self, hidden_size: int):
         super().__init__()
         self.output = nn.Linear(hidden_size, 1)
         nn.init.normal_(self.output.weight, std=1e-3)
@@ -55,14 +56,14 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
     A wrapper around a causal language model that adds a value head for PPO training.
     """
     
-    def __init__(self, pretrained_model: PreTrainedModel, dropout: float = 0.1):
+    def __init__(self, pretrained_model):
         super().__init__()
         self.pretrained_model = pretrained_model
         self.config = pretrained_model.config
         hidden_size = self.config.hidden_size
         
         # Initialize value head
-        self.value_head = ValueHead(hidden_size, dropout=dropout)
+        self.value_head = ValueHead(hidden_size)
         
         # Copy relevant attributes from the pretrained model
         self.main_input_name = pretrained_model.main_input_name

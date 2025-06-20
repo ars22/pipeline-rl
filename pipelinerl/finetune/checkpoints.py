@@ -143,7 +143,7 @@ def load_model(args, model_class, current_dir):
     
     model = model_cls.from_pretrained(model_to_load, **loading_args)
 
-    elif args.gradient_checkpointing:
+    if args.gradient_checkpointing:
         model.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": args.reentrant_checkpointing}
         )
