@@ -148,7 +148,7 @@ async def run_server(args, **uvicorn_kwargs) -> None:
     signal.signal(signal.SIGTERM, signal_handler)
 
     engine_args = AsyncEngineArgs.from_cli_args(args)
-    engine_args.worker_extension_cls = "pipelinerl.run_llm.WorkerExtension"
+    engine_args.worker_extension_cls = "pipelinerl.vllm1.WorkerExtension"
     engine_config = engine_args.create_engine_config(UsageContext.OPENAI_API_SERVER)
     engine = AsyncLLM.from_vllm_config(
         vllm_config=engine_config,
