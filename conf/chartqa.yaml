@@ -21,7 +21,7 @@ test_llm:
 
 actor:
   rollout_policy: pipelinerl.domains.chartqa.generate_chartqa_rollout
-  system_prompt: "You are an expert at analyzing charts and graphs. Please examine the chart carefully and answer the question accurately."
+  system_prompt: You are an expert at analyzing charts and graphs. Please examine the chart carefully and answer the question accurately. Remember to provide your final answer in a boxed format, like \\boxed{{your answer}}.
   task_template: |-
     Question: {question}
     

@@ -87,8 +87,12 @@ async def generate_chartqa_rollout(
     discount_factor = cfg.actor.discount_factor
 
     # Evaluate the answer using our custom evaluation logic
+    if llm.tokenizer.eos_token is not None and llm_call.output.content.endswith(llm.tokenizer.eos_token):
+        content = llm_call.output.content[:-len(llm.tokenizer.eos_token)] 
+    else:
+        content = llm_call.output.content
     try:
-        answer_status = evaluate_answer(llm_call.output.content, problem["answer"])
+        answer_status = evaluate_answer(content, problem["answer"])
     except Exception as e:
         logger.error(f"Error evaluating answer: {e}")
         answer_status = "unparsable"
