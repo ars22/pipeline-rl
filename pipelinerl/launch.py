@@ -110,7 +110,11 @@ def run_actor_llm(
     # TODO: add support for tensor and process parallelism
     log_dir = exp_dir / f"actor_vllm_{actor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
-    entrypoint = "pipelinerl.entrypoints.run_vllm0"
+    entrypoint = (
+        "pipelinerl.entrypoints.run_vllm1" 
+        if cfg.vllm_config.use_v1 else 
+        "pipelinerl.entrypoints.run_vllm0"
+    )
     cmd = [
         "python",
         "-m",

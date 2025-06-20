@@ -75,6 +75,7 @@ test_llm:
     top_k: 50
 
 vllm_config:
+  use_v1: false
   vllm_kwargs:
     dtype: bfloat16
     gpu-memory-utilization: 0.9
