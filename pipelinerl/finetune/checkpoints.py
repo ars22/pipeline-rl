@@ -36,6 +36,8 @@ def get_auto_model_class(
     match model_class:
         case "causal-language-modeling":
             return AutoModelForCausalLM
+        case "causal-language-modeling-with-value-head":
+            return AutoModelForCausalLMWithValueHead
         case "seq2seq-language-modeling":
             return AutoModelForSeq2SeqLM
         case "vision2seq-language-modeling":
@@ -72,9 +74,6 @@ def load_processor(config_name):
 
 def load_model(args, model_class, current_dir):
     get_accelerator().wait_for_everyone()
-    
-    # Check if value head is enabled
-    use_value_head = getattr(args, 'use_value_head', False)
 
     assert not (
         os.path.exists(current_dir / "pytorch_model.bin")
@@ -142,26 +141,8 @@ def load_model(args, model_class, current_dir):
 
     logger.info(f"Loading args: {loading_args}")
     
-    # Load the base model
-    if use_value_head and model_class == "causal-language-modeling":
-        # First load the base model
-        base_model = model_cls.from_pretrained(model_to_load, **loading_args)
-        # Then wrap it with value head
-        model = AutoModelForCausalLMWithValueHead(base_model)
-        logger.info("Loaded model with value head for PPO training")
-    else:
-        model = model_cls.from_pretrained(model_to_load, **loading_args)
+    model = model_cls.from_pretrained(model_to_load, **loading_args)
 
-    if args.lora.enabled:
-        # If using value head, apply LoRA to the base model
-        if use_value_head and hasattr(model, 'pretrained_model'):
-            model.pretrained_model = prepare_lora_model(args.lora, model.pretrained_model, args.gradient_checkpointing)
-            if has_lora_checkpoint(current_dir):
-                lora_load(current_dir, model.pretrained_model)
-        else:
-            model = prepare_lora_model(args.lora, model, args.gradient_checkpointing)
-            if has_lora_checkpoint(current_dir):
-                lora_load(current_dir, model)
     elif args.gradient_checkpointing:
         model.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": args.reentrant_checkpointing}
