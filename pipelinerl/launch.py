@@ -166,7 +166,7 @@ def run_actor(world_map: WorldMap, actor_idx: int, exp_dir: Path):
     cmd = [
         "python",
         "-m",
-        "pipelinerl.entrypoints.actor",
+        "pipelinerl.entrypoints.run_actor",
         "--config-dir",
         f"{exp_dir}/conf",
         "--config-name",
@@ -189,7 +189,7 @@ def run_environment(cfg: DictConfig, job: Job):
     cmd = [
         "python",
         "-m",
-        "pipelinerl.entrypoints.environment",
+        "pipelinerl.entrypoints.run_environment",
         "--config-dir",
         f"{cfg.output_dir}/conf",
         "--config-name",
@@ -283,7 +283,7 @@ def run_finetune(cfg: DictConfig, world_map: WorldMap, gpus: list[int], exp_dir:
     cmd += [
         "--num_processes",
         str(world_map.total_finetune_gpus),
-        "pipelinerl/entrypoints/finetune.py",
+        "pipelinerl/entrypoints/run_finetune.py",
         "--config-dir",
         f"{exp_dir}/conf",
         "--config-name",
@@ -313,7 +313,7 @@ def run_preprocess(world_map: WorldMap, preprocessor_idx: int, exp_dir: Path):
     cmd = [
         "python",
         "-m",
-        "pipelinerl.entrypoints.preprocess",
+        "pipelinerl.entrypoints.run_preprocess",
         "--config-dir",
         f"{exp_dir}/conf",
         "--config-name",
