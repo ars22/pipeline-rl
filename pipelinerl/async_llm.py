@@ -164,7 +164,7 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
                 text=[prompt_text], images=images, padding=True, return_tensors=None
             )
             visual_features = {
-                key: value.astype(np.float16)
+                key: value
                 for key, value in processed.items()
                 if isinstance(value, np.ndarray)
                 and key not in ["input_ids", "attention_mask"]

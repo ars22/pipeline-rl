@@ -171,21 +171,19 @@ def collate(
     result = {}
     
     # Visual feature fields that should be stacked, not padded
-    visual_fields = {"pixel_values", "image_thw"}
-    
-    for k, seq_list in example_dict.items():
-        if any(isinstance(seq, (str, dict)) for seq in seq_list):
-            continue
-        if k in visual_fields:
-            # Handle visual tensors: filter out None values and stack
-            if k == "image_thw":
-                # image_thw should remain as a list of lists for the model to iterate over
-                # Don't convert to tensor - just collect the lists
+    if "visual_features" in example_dict and isinstance(example_dict["visual_features"][0], dict):
+        for k, seq_list in example_dict["visual_features"][0].items():
+            if k == "image_grid_thw":
+                # image_grid_thw should remain as a list
                 result[k] = seq_list
             else:
                 # Other visual fields like pixel_values can be stacked as tensors
                 valid_tensors = [torch.tensor(seq) for seq in seq_list]
                 result[k] = torch.stack(valid_tensors)
+    
+    for k, seq_list in example_dict.items():
+        if any(isinstance(seq, (str, dict)) for seq in seq_list):
+            continue
         else:
             # Handle sequence data: pad as usual
             padded_sequences = []
