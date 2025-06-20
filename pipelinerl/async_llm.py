@@ -117,21 +117,22 @@ async def llm_async_generate(
 
 def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     # Extract visual features if present
-    pixel_values = None
-    image_thw = None
     images = []
     use_processor = False
-    full_messages = llm_call.prompt.messages + [{"role": "assistant", "content": llm_call.output.content}]
-    
+    visual_features = None
+    full_messages = llm_call.prompt.messages + [
+        {"role": "assistant", "content": llm_call.output.content}
+    ]
+
     if hasattr(llm_call.prompt, "messages"):
         images = extract_images_from_messages(llm_call.prompt.messages)
         if images:
             use_processor = True
-    
+
     if use_processor:
         # Use processor for vision-language models
         processor = get_processor(llm.model_name)
-        
+
         try:
             # Apply chat template using processor for proper image token handling
             prompt_text = processor.apply_chat_template(
@@ -139,33 +140,36 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
                 tokenize=False,
                 add_generation_prompt=True,
             )
-            
+
             # Create full conversation with assistant response
             text = processor.apply_chat_template(
                 full_messages,
                 tokenize=False,
             )
-            
+
             # Process prompt with images to get token IDs with image placeholders
             prompt_inputs = processor(
-                text=processor.apply_chat_template(llm_call.prompt.messages, tokenize=False, add_generation_prompt=True),
+                text=processor.apply_chat_template(
+                    llm_call.prompt.messages, tokenize=False, add_generation_prompt=True
+                ),
                 images=images,
                 return_tensors=None,
             )
-            
+
             # prompt_inputs["input_ids"] is a list of list
             prompt_token_ids = prompt_inputs["input_ids"][0]
-            
+
             # Process images to get visual features
             processed = processor(
-                text=[prompt_text], 
-                images=images, 
-                padding=True, 
-                return_tensors=None
+                text=[prompt_text], images=images, padding=True, return_tensors=None
             )
-            pixel_values = processed.pixel_values.astype(np.float16) # TODO: confirm that this still works
-            image_thw = processed.image_grid_thw
-            
+            visual_features = {
+                key: value
+                for key, value in processed.items()
+                if isinstance(value, np.ndarray)
+                and key not in ["input_ids", "attention_mask"]
+            }
+
         except Exception as e:
             raise ValueError(f"Failed to process with vision-language processor: {e}")
     else:
@@ -180,20 +184,22 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
             tokenize=False,
         )
         prompt_token_ids = llm.tokenizer.apply_chat_template(
-            llm_call.prompt.messages, add_special_tokens=True, add_generation_prompt=True
+            llm_call.prompt.messages,
+            add_special_tokens=True,
+            add_generation_prompt=True,
         )
-    
+
     output_text = text[len(prompt_text) :]
 
     # Get the appropriate tokenizer (from processor if using vision model)
     tokenizer = processor.tokenizer if use_processor else llm.tokenizer
-    
+
     if tokenizer.bos_token and text.startswith(tokenizer.bos_token):
         text = text[len(tokenizer.bos_token) :]
 
     if not llm_call.logprobs:
         raise ValueError("Logprobs are required to make training data for RL")
-    
+
     # We add the exact token ids and logprobs to "training_text" to ensure inference/training consistency
     labels = [lp.token_id for lp in llm_call.logprobs]
     input_ids = prompt_token_ids + labels
@@ -213,6 +219,5 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
         finished=finished,
         prompt_tokens=prompt_tokens,
         output_tokens=output_tokens,
-        pixel_values=pixel_values,
-        image_thw=image_thw,
+        visual_features=visual_features,
     )

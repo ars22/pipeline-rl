@@ -1,7 +1,5 @@
 from pydantic import BaseModel, Field
-from tapeagents.core import LLMCall
-from tapeagents.llms.trainable import TrainableLLM
-from typing import List, Optional
+from typing import List, Optional, Dict
 import numpy as np
 
 class BaseMetrics(BaseModel):
@@ -45,8 +43,7 @@ class TrainingText(BaseModel):
     finished: bool = False
     prompt_tokens: int = Field(default=0)
     output_tokens: int = Field(default=0)
-    pixel_values: Optional[np.ndarray] = None 
-    image_thw: Optional[np.ndarray] = None
+    visual_features: Optional[Dict[str, np.ndarray]] = None  # For vision language models
     metadata: dict = Field(default_factory=dict)
 
     model_config = {"arbitrary_types_allowed": True}

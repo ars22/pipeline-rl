@@ -63,14 +63,11 @@ def evaluate_answer(predicted: str, ground_truth: str) -> str:
         - "no_answer": No answer provided
         - "unparsable": Could not parse answer
     """
-    if not predicted or predicted.strip() == "":
-        return "no_answer"
-    
     try:
         # First try to extract answer from \\boxed{} format
         boxed_answer = extract_boxed_answer(predicted)
         if not boxed_answer:
-            return "unparsable"
+            return "no_answer"
         if relaxed_correctness(ground_truth, boxed_answer):
             return "correct"
         else:

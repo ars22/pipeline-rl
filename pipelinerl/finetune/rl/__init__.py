@@ -185,8 +185,8 @@ def rl_step(
     # Add visual features if present (for multimodal models)
     if "pixel_values" in batch and batch["pixel_values"] is not None:
         model_inputs["pixel_values"] = batch["pixel_values"]
-    if "image_thw" in batch and batch["image_thw"] is not None:
-        model_inputs["image_grid_thw"] = batch["image_thw"].reshape((1, 3))
+    if "image_grid_thw" in batch and batch["image_grid_thw"] is not None:
+        model_inputs["image_grid_thw"] = batch["image_grid_thw"].reshape((1, 3))
 
     # Check if model has value head
     has_value_head = hasattr(model, 'value_head') or (hasattr(model, 'module') and hasattr(model.module, 'value_head'))
