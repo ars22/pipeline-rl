@@ -113,30 +113,10 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
         # Compute values
         values = self.value_head(hidden_states)
 
-        # Use the same mask as language modeling (where labels != -100)
-        value_mask = labels != -100
-        value_mask = value_mask[:, 1:]  # Shift mask to align with values
-
-        # Ensure value_labels are properly shaped
-        if value_labels.dim() == 3:
-            value_labels = value_labels.squeeze(-1)
-        value_labels = value_labels[:, 1:]  # Shift labels
-
-        # Compute MSE loss only on valid positions
-        if value_mask.any():
-            masked_values = values[:, :-1][value_mask]
-            masked_labels = value_labels[value_mask]
-            value_loss = nn.functional.mse_loss(
-                masked_values, masked_labels.to(masked_values.dtype), reduction="mean"
-            )
-        else:
-            value_loss = torch.tensor(0.0, device=values.device, dtype=values.dtype)
-
         return CausalLMOutputWithValue(
             loss=outputs.loss,
             logits=outputs.logits,
             value=values,
-            value_loss=value_loss,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
@@ -225,8 +205,6 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
         """Load a model with value head from pretrained weights."""
-        import os
-        from transformers import AutoModelForCausalLM
 
         logger.info(f"Loading pretrained model from {pretrained_model_name_or_path}...")
 

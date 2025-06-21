@@ -191,19 +191,6 @@ def rl_step(
     # Check if model has value head
     has_value_head = hasattr(model, 'value_head') or (hasattr(model, 'module') and hasattr(model.module, 'value_head'))
     
-    # If using value head, pass rewards as value labels for training
-    if has_value_head:
-        # Get model dtype from input_ids
-        #model_dtype = batch["input_ids"].dtype if batch["input_ids"].dtype in [torch.float16, torch.bfloat16, torch.float32] else torch.bfloat16
-        ## For models, we need to check logits dtype
-        #if hasattr(model, 'module'):
-        #    if hasattr(model.module, 'dtype'):
-        #        model_dtype = model.module.dtype
-        #elif hasattr(model, 'dtype'):
-        #    model_dtype = model.dtype
-        value_labels = batch["rewards"].clone().to(dtype=model.module.dtype)
-        model_inputs["value_labels"] = value_labels
-    
     outputs = model(**model_inputs)
 
     # compute log probs and entropy
@@ -302,10 +289,26 @@ def rl_step(
 
     policy_loss_total = -sum_sum(loss, masks_shifted, segments)
     
-    # Add value loss if model has value head
+    # Compute value loss if model has value head
     value_loss = torch.tensor(0.0, device=policy_loss_total.device, dtype=policy_loss_total.dtype)
-    if has_value_head and hasattr(outputs, 'value_loss') and outputs.value_loss is not None:
-        value_loss = outputs.value_loss.to(policy_loss_total.dtype)
+    if has_value_head and hasattr(outputs, 'value') and outputs.value is not None:
+        # Get the value predictions
+        values = outputs.value
+        
+        # Use the same mask as language modeling (where labels != -100)
+        value_mask = masks_shifted  # Use the pre-computed shifted mask
+        
+        # Use the already extracted and shifted rewards as value labels
+        value_labels = rewards  # This is already shifted (from line 216)
+        
+        # Compute MSE loss only on valid positions
+        if value_mask.any():
+            masked_values = values[:, :-1][value_mask]
+            masked_labels = value_labels[value_mask]
+            value_loss = F.mse_loss(
+                masked_values, masked_labels.to(masked_values.dtype), reduction="mean"
+            )
+        
         # Combine policy loss and value loss
         value_loss_coef = getattr(config, 'value_loss_coef', 0.1)  # Default coefficient for value loss
         final_loss = policy_loss_total + value_loss_coef * value_loss
