@@ -5,6 +5,9 @@ from transformers import PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 from typing import Optional, Tuple, Union
 from transformers import AutoModelForCausalLM
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -144,6 +147,7 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
     def save_pretrained(self, *args, **kwargs):
         """Save the model and value head weights."""
         # First save the base model
+        logger.info("Saving the pretrained model...")
         self.pretrained_model.save_pretrained(*args, **kwargs)
         
         # Then save the value head weights separately
@@ -152,11 +156,28 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
         value_head_path = os.path.join(save_directory, "value_head.pt")
         torch.save(self.value_head.state_dict(), value_head_path)
     
+    def save_checkpoint(self, output_dir: str):
+        """Save the model and value head weights to a checkpoint."""
+        logger.info("Saving model checkpoint...")
+        import os
+        self.save_pretrained(output_dir)
+        
+        # Save additional metadata if needed
+        metadata = {
+            "model_type": self.pretrained_model.__class__.__name__,
+            "value_head_type": self.value_head.__class__.__name__,
+        }
+        metadata_path = os.path.join(output_dir, "metadata.json")
+        with open(metadata_path, 'w') as f:
+            import json
+            json.dump(metadata, f)
+    
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
         """Load a model with value head from pretrained weights."""
         import os
         from transformers import AutoModelForCausalLM
+        logger.info(f"Loading pretrained model from {pretrained_model_name_or_path}...")
         
         # Load the base model
         pretrained_model = AutoModelForCausalLM.from_pretrained(

@@ -346,6 +346,7 @@ def save_model_only(
     unwrapped_model = get_accelerator().unwrap_model(model) if unwrap else model
     
     # Handle value head model
+    # for non-deepspeed models
     if isinstance(unwrapped_model, AutoModelForCausalLMWithValueHead):
         logger.info("Saving model with value head")
         unwrapped_model.save_pretrained(
@@ -355,13 +356,7 @@ def save_model_only(
             state_dict=get_accelerator().get_state_dict(model),
             safe_serialization=safe_serialization,
         )
-        return
-    
-    if lora:
-        lora_save(output_dir, unwrapped_model)
-        return
-
-    # for non-deepspeed models
+        logger.info(f"Saved model with value head to {output_dir}")
     elif isinstance(unwrapped_model, transformers.PreTrainedModel):
         logger.info("Saving model using transformers save_pretrained")
         unwrapped_model.save_pretrained(  # type: ignore
