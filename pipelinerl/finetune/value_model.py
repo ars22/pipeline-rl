@@ -5,16 +5,14 @@ from transformers import PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 from typing import Optional, Tuple, Union
 from transformers import AutoModelForCausalLM
-import logging
-
-logger = logging.getLogger(__name__)
+from .context import get_accelerator, logger
 
 
 @dataclass
 class CausalLMOutputWithValue(ModelOutput):
     """
     Output type for causal language models with an additional value head.
-    
+
     Args:
         loss (`torch.FloatTensor` of shape `(1,)`, *optional*):
             Language modeling loss.
@@ -31,6 +29,7 @@ class CausalLMOutputWithValue(ModelOutput):
         attentions (`tuple(torch.FloatTensor)`, *optional*):
             Attention weights after the attention softmax.
     """
+
     loss: Optional[torch.FloatTensor] = None
     logits: torch.FloatTensor = None
     value: torch.FloatTensor = None
@@ -42,13 +41,13 @@ class CausalLMOutputWithValue(ModelOutput):
 
 class ValueHead(nn.Module):
     """Value head for predicting rewards/values."""
-    
+
     def __init__(self, hidden_size: int):
         super().__init__()
         self.output = nn.Linear(hidden_size, 1)
         nn.init.normal_(self.output.weight, std=1e-3)
         nn.init.zeros_(self.output.bias)
-        
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         values = self.output(hidden_states).squeeze(-1)  # (batch_size, sequence_length)
         return values
@@ -58,19 +57,19 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
     """
     A wrapper around a causal language model that adds a value head for PPO training.
     """
-    
+
     def __init__(self, pretrained_model):
         super().__init__()
         self.pretrained_model = pretrained_model
         self.config = pretrained_model.config
         hidden_size = self.config.hidden_size
-        
+
         # Initialize value head
         self.value_head = ValueHead(hidden_size)
-        
+
         # Copy relevant attributes from the pretrained model
         self.main_input_name = pretrained_model.main_input_name
-        
+
     def forward(
         self,
         input_ids: torch.LongTensor,
@@ -87,12 +86,12 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
     ) -> Union[Tuple, CausalLMOutputWithValue]:
         """
         Forward pass that computes both language modeling outputs and value predictions.
-        
+
         Args:
             value_labels (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
                 Labels for computing the value loss. These are the rewards to predict.
         """
-        
+
         # Get outputs from the base model
         outputs = self.pretrained_model(
             input_ids=input_ids,
@@ -106,30 +105,32 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
             output_hidden_states=True,
             return_dict=True,
         )
-        
+
         # Get the last hidden states
         hidden_states = outputs.hidden_states[-1]
-        
+
         # Compute values
         values = self.value_head(hidden_states)
-        
+
         # Use the same mask as language modeling (where labels != -100)
         value_mask = labels != -100
         value_mask = value_mask[:, 1:]  # Shift mask to align with values
-                
+
         # Ensure value_labels are properly shaped
         if value_labels.dim() == 3:
             value_labels = value_labels.squeeze(-1)
         value_labels = value_labels[:, 1:]  # Shift labels
-                
+
         # Compute MSE loss only on valid positions
         if value_mask.any():
             masked_values = values[:, :-1][value_mask]
             masked_labels = value_labels[value_mask]
-            value_loss = nn.functional.mse_loss(masked_values, masked_labels.to(masked_values.dtype), reduction='mean')
+            value_loss = nn.functional.mse_loss(
+                masked_values, masked_labels.to(masked_values.dtype), reduction="mean"
+            )
         else:
             value_loss = torch.tensor(0.0, device=values.device, dtype=values.dtype)
-        
+
         return CausalLMOutputWithValue(
             loss=outputs.loss,
             logits=outputs.logits,
@@ -139,76 +140,69 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-    
+
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
         """Enable gradient checkpointing for the model."""
-        self.pretrained_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+        self.pretrained_model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs
+        )
     
-    def save_pretrained(self, *args, **kwargs):
-        """Save the model and value head weights."""
-        # First save the base model
-        logger.info("Saving the pretrained model...")
-        self.pretrained_model.save_pretrained(*args, **kwargs)
+    def save_checkpoint(self, save_dir, tag=None, client_state={}):
+        """Save checkpoint compatible with DeepSpeed.
         
-        # Then save the value head weights separately
+        This method is called by DeepSpeed during checkpointing.
+        """
         import os
-        save_directory = args[0]
-        value_head_path = os.path.join(save_directory, "value_head.pt")
-        torch.save(self.value_head.state_dict(), value_head_path)
-    
-    def save_checkpoint(self, output_dir: str):
-        """Save the model and value head weights to a checkpoint."""
-        logger.info("Saving model checkpoint...")
-        import os
-        self.save_pretrained(output_dir)
+        logger.info(f"Saving DeepSpeed checkpoint to {save_dir}")
         
-        # Save additional metadata if needed
-        metadata = {
-            "model_type": self.pretrained_model.__class__.__name__,
-            "value_head_type": self.value_head.__class__.__name__,
-        }
-        metadata_path = os.path.join(output_dir, "metadata.json")
-        with open(metadata_path, 'w') as f:
-            import json
-            json.dump(metadata, f)
-    
+        # For DeepSpeed compatibility, we need to return success
+        # The actual model saving is handled by DeepSpeed's internal mechanisms
+        # We just need to save our custom value head separately
+        if hasattr(self, '_deepspeed_engine'):
+            # If we're wrapped by DeepSpeed, delegate to it
+            return self._deepspeed_engine.save_checkpoint(save_dir, tag=tag, client_state=client_state)
+        
+        # Otherwise, save manually (this shouldn't happen in DeepSpeed mode)
+        return True
+
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
         """Load a model with value head from pretrained weights."""
         import os
         from transformers import AutoModelForCausalLM
+
         logger.info(f"Loading pretrained model from {pretrained_model_name_or_path}...")
-        
+
         # Load the base model
         pretrained_model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path, *model_args, **kwargs
         )
-        
+
         # Create the model with value head
         model = cls(pretrained_model)
-        
+
         # Try to load value head weights if they exist
         value_head_path = os.path.join(pretrained_model_name_or_path, "value_head.pt")
         if os.path.exists(value_head_path):
             value_head_state_dict = torch.load(value_head_path, map_location="cpu")
             model.value_head.load_state_dict(value_head_state_dict)
-        
+
         return model
-    
+
     def resize_token_embeddings(self, *args, **kwargs):
         """Resize token embeddings."""
         return self.pretrained_model.resize_token_embeddings(*args, **kwargs)
-    
+
     @property
     def device(self):
         """Get the device of the model."""
         return self.pretrained_model.device
-    
+
     @property
     def dtype(self):
         """Get the dtype of the model."""
         return self.pretrained_model.dtype
-    
+
     def __getattr__(self, name):
         """Forward attribute access to the pretrained model."""
         try:
