@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 from dataclasses import dataclass
@@ -164,6 +165,62 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
         
         # Otherwise, save manually (this shouldn't happen in DeepSpeed mode)
         return True
+    
+    def save_pretrained(
+        self,
+        save_directory: Union[str, os.PathLike],
+        is_main_process: bool = True,
+        state_dict: Optional[dict] = None,
+        save_function: callable = torch.save,
+        safe_serialization: bool = False,
+        **kwargs,
+    ):
+        """Save model with value head.
+        
+        This saves both the pretrained model and the value head weights separately.
+        """
+        import os
+        
+        if state_dict is None:
+            state_dict = self.state_dict()
+        
+        # Extract pretrained model and value head state dicts
+        pretrained_model_state_dict = {}
+        value_head_state_dict = {}
+        
+        for key, value in state_dict.items():
+            if key.startswith("value_head."):
+                # Remove the "value_head." prefix
+                new_key = key[len("value_head."):]
+                value_head_state_dict[new_key] = value
+            elif key.startswith("pretrained_model."):
+                # Remove the "pretrained_model." prefix
+                new_key = key[len("pretrained_model."):]
+                pretrained_model_state_dict[new_key] = value
+            else:
+                # Handle keys that don't have expected prefixes
+                logger.warning(f"Unexpected key in state dict: {key}")
+                # Try to determine where it belongs based on the model structure
+                if hasattr(self.value_head, key.split('.')[0]):
+                    value_head_state_dict[key] = value
+                else:
+                    pretrained_model_state_dict[key] = value
+        
+        # Save the pretrained model
+        self.pretrained_model.save_pretrained(
+            save_directory,
+            is_main_process=is_main_process,
+            state_dict=pretrained_model_state_dict,
+            save_function=save_function,
+            safe_serialization=safe_serialization,
+            **kwargs,
+        )
+        
+        # Save value head separately
+        if is_main_process:
+            value_head_path = os.path.join(save_directory, "value_head.pt")
+            save_function(value_head_state_dict, value_head_path)
+            logger.info(f"Saved value head to {value_head_path}")
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):

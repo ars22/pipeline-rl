@@ -194,14 +194,14 @@ def rl_step(
     # If using value head, pass rewards as value labels for training
     if has_value_head:
         # Get model dtype from input_ids
-        model_dtype = batch["input_ids"].dtype if batch["input_ids"].dtype in [torch.float16, torch.bfloat16, torch.float32] else torch.bfloat16
-        # For models, we need to check logits dtype
-        if hasattr(model, 'module'):
-            if hasattr(model.module, 'dtype'):
-                model_dtype = model.module.dtype
-        elif hasattr(model, 'dtype'):
-            model_dtype = model.dtype
-        value_labels = batch["rewards"].clone().to(dtype=model_dtype)
+        #model_dtype = batch["input_ids"].dtype if batch["input_ids"].dtype in [torch.float16, torch.bfloat16, torch.float32] else torch.bfloat16
+        ## For models, we need to check logits dtype
+        #if hasattr(model, 'module'):
+        #    if hasattr(model.module, 'dtype'):
+        #        model_dtype = model.module.dtype
+        #elif hasattr(model, 'dtype'):
+        #    model_dtype = model.dtype
+        value_labels = batch["rewards"].clone().to(dtype=model.module.dtype)
         model_inputs["value_labels"] = value_labels
     
     outputs = model(**model_inputs)

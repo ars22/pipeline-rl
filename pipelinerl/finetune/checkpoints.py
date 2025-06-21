@@ -349,49 +349,13 @@ def save_model_only(
     # Handle value head model
     if isinstance(unwrapped_model, AutoModelForCausalLMWithValueHead):
         logger.info("Saving model with value head")
-        logger.info(f"type of unwrapped_model.pretrained_model: {type(unwrapped_model.pretrained_model)}")
-        
-        # For non-DeepSpeed models, get the state dict normally
-        full_state_dict = get_accelerator().get_state_dict(model)
-        
-        if full_state_dict is None:
-            # Fallback: get state dict directly from unwrapped model
-            logger.warning("get_state_dict returned None, using unwrapped model state dict")
-            full_state_dict = unwrapped_model.state_dict()
-        
-        # Extract only the pretrained_model parts
-        pretrained_model_state_dict = {}
-        value_head_state_dict = {}
-        
-        for key, value in full_state_dict.items():
-            logger.info(f"Processing key: {key}")
-            if key.startswith("value_head."):
-                # Remove the "value_head." prefix
-                new_key = key[len("value_head."):]
-                value_head_state_dict[new_key] = value
-            elif key.startswith("pretrained_model."):
-                # Remove the "pretrained_model." prefix
-                new_key = key[len("pretrained_model."):]
-                pretrained_model_state_dict[new_key] = value
-            else:
-                raise ValueError(
-                    f"Unexpected key in state dict: {key}. "
-                )
-        
-            # Save the pretrained model with extracted state dict
-            unwrapped_model.pretrained_model.save_pretrained(
-                output_dir,
-                is_main_process=get_accelerator().is_main_process,
-                save_function=get_accelerator().save,
-                state_dict=pretrained_model_state_dict,
-                safe_serialization=safe_serialization,
-            )
-            
-            # Save value head separately
-            if get_accelerator().is_main_process:
-                value_head_path = os.path.join(output_dir, "value_head.pt")
-                get_accelerator().save(value_head_state_dict, value_head_path)
-        
+        unwrapped_model.save_pretrained(
+            output_dir,
+            is_main_process=get_accelerator().is_main_process,
+            save_function=get_accelerator().save,
+            state_dict=get_accelerator().get_state_dict(model),
+            safe_serialization=safe_serialization,
+        )
         logger.info(f"Saved model with value head to {output_dir}")
     elif isinstance(unwrapped_model, transformers.PreTrainedModel):
         logger.info("Saving model using transformers save_pretrained")
