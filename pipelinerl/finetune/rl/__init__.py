@@ -239,13 +239,12 @@ def rl_step(
     assert torch.isfinite(log_ratio_ref_new).all(), f"log_ratio_ref_new is not finite: {log_ratio_ref_new}"
     # compute weights and KL divergence
     # Use value-estimated advantages if available and model has value head
-    if config.use_advantages and value_predictions is not None:
+    if value_predictions is not None:
         # Compute value-based advantages: A(s,a) = MC_return - V(s)
         # where MC_return is the Monte Carlo return (rewards) and V(s) is the value prediction
-        value_based_advantages = rewards - value_predictions
-        log_p_weights = value_based_advantages.detach()
-    else:
-        log_p_weights = advantages if config.use_advantages else rewards
+        advantages = rewards - value_predictions
+
+    log_p_weights = advantages.detach() if config.use_advantages else rewards
     if config.relu_log_p_weights:
         log_p_weights = torch.clamp(log_p_weights, min=0)
 
