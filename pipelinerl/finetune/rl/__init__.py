@@ -337,14 +337,14 @@ def populate_rl_data(dataset: list[BatchEncoding], eos_token_id: int, config: RL
     assert isinstance(df_init, pd.DataFrame)
 
     # Step 1: calculate group-level statistics
-    df_stats = df_init[["group_id", "rollout_index"]].copy()
+    df_stats = df_init[["group_id", "rollout_index", "step_index"]].copy()
     df_stats["num_tokens"] = df_init["input_ids"].apply(lambda x: len(x))
     # We assume that rewards for all tokens are the same
     df_stats["rollout_reward"] = df_init["rewards"].apply(lambda x: x[0])
-    # Check that the reward is the same at each rollout index
+    # Check that the reward is the same for each step in the rollout
     assert df_stats.groupby(["group_id", "rollout_index"])["rollout_reward"].nunique().max() == 1
-    # Only keep rollout_index == 0
-    df_stats = df_stats[df_stats["rollout_index"] == 0].drop(columns=["rollout_index"])
+    # Only keep step_index == 0
+    df_stats = df_stats[df_stats["step_index"] == 0].drop(columns=["step_index"])
     df_grouped = (
         df_stats.groupby("group_id")
         .agg(
