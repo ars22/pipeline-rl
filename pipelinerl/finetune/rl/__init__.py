@@ -293,24 +293,15 @@ def rl_step(
     if has_value_head and hasattr(outputs, 'value') and outputs.value is not None:
         # Get the value predictions
         values = outputs.value
-        
-        # Use the same mask as language modeling (where labels != -100)
-        value_mask = masks_shifted  # Use the pre-computed shifted mask
-        
         # Use the already extracted and shifted rewards as value labels
         value_labels = rewards  # This is already shifted (from line 216)
-        
-        # Compute MSE loss only on valid positions
-        if value_mask.any():
-            masked_values = values[:, :-1][value_mask]
-            masked_labels = value_labels[value_mask]
-            value_loss = F.mse_loss(
-                masked_values, masked_labels.to(masked_values.dtype), reduction="mean"
-            )
+        values = values[:, :-1]
+        values_labels = value_labels
+        value_loss = 0.5 * torch.square(values - values_labels)
+        value_loss = sum_sum(value_loss, masks_shifted, segments)
         
         # Combine policy loss and value loss
-        value_loss_coef = getattr(config, 'value_loss_coef', 0.1)  # Default coefficient for value loss
-        final_loss = policy_loss_total + value_loss_coef * value_loss
+        final_loss = policy_loss_total + config.value_loss_coef * value_loss
     else:
         final_loss = policy_loss_total
 
