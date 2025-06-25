@@ -526,7 +526,7 @@ class ActorLoop:
 
             for dataset_name, list_of_stats_per_metric_and_dataset in self.stats[metric_name].items():
                 for agg, sub_stats in calculate_stats(list_of_stats_per_metric_and_dataset).items():
-                    stats[f"{dataset_name}/{split_name}{metric_name}_{agg}"] = sub_stats
+                    stats[f"{dataset_name}/{metric_name}_{agg}"] = sub_stats
 
         stats |= (
             {
