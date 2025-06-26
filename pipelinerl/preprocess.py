@@ -405,7 +405,7 @@ def run_preprocessing_loop(
     buffer = []
     # Queue for holding processed entries, with size based on batch_size * accumulation_steps
     batch_size = cfg.finetune.train_batch_size
-    accumulation_steps = cfg.finetune.gradient_accumulation_steps
+    accumulation_steps = cfg.finetune.gradient_accumulation_passes
     max_queue_size = batch_size * accumulation_steps
     processed_entries_queue = deque(maxlen=max_queue_size)
     

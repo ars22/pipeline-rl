@@ -296,7 +296,7 @@ def run_finetune(cfg: DictConfig, world_map: WorldMap, gpus: list[int], exp_dir:
         f"+me.weight_update_group_world_size={world_map.weight_update_group_size}",
         f"+me.llm_urls={'+'.join(world_map.get_actor_urls())}",
     ]
-    if cfg.debug.mode in ["finetune", "open_loop"]:
+    if cfg.debug.mode in ["finetune", "open_loop", "finetune+preprocessor"]:
         cmd.append("finetune.send_weight_updates=False")
 
     logger.info(f"Running finetune with command: {' '.join(cmd)}")
@@ -551,6 +551,8 @@ def main(cfg: DictConfig):
             debug_link_streams(cfg, [cfg.finetune.input])
         elif cfg.debug.mode == "preprocessor":
             debug_link_streams(cfg, [cfg.preprocess.input])
+        elif cfg.debug.mode == "finetune+preprocessor":
+            debug_link_streams(cfg, [cfg.preprocess.input])
     else:
         with read_stream(lead_launcher_stream) as stream:
             if (msg := next(stream.read())) != init_msg:
@@ -565,6 +567,8 @@ def main(cfg: DictConfig):
         processes.extend(launch_jobs(cfg, world_map, ["preprocessor", "preprocessor_llm"]))
     elif cfg.debug.mode == "actor+preprocessor":
         processes.extend(launch_jobs(cfg, world_map, ["actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm"]))       
+    elif cfg.debug.mode == "finetune+preprocessor":
+        processes.extend(launch_jobs(cfg, world_map, ["finetune", "preprocessor", "preprocessor_llm"]))
     elif cfg.debug.mode in ["", "open_loop"]:
         processes.extend(launch_jobs(cfg, world_map))
     else:
