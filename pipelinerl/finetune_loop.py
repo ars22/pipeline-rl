@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import MixedPrecision
-from transformers import PreTrainedTokenizerFast, get_scheduler, set_seed
+from transformers import PreTrainedTokenizerFast, get_scheduler, set_seed, BatchEncoding
 
 import pipelinerl.torch_utils
 from pipelinerl.finetune.checkpoints import (
@@ -88,137 +88,50 @@ def gather_rl_metrics(rl_metrics: Dict[str, List]) -> Dict[str, List]:
     return gathered_rl_metrics
 
 
-def run_sample_loader(data_stream: SingleStreamSpec, sample_queue: Queue[Dict | Exception], pop_old_data: bool = False):
-    with read_stream(data_stream) as stream_reader:
-        pop_count = 0  # Counter for popped items
-        while True:
-            try:
-                for data_item in stream_reader.read():
-                    if pop_old_data:
-                        if sample_queue.full():
-                            sample_queue.get()  # Pop old data
-                            pop_count += 1
-                            if pop_count % 100 == 0:
-                                logger.info(f"Popped {pop_count} old items from the sample queue")
-                        sample_queue.put_nowait(data_item)
-                    else:
-                        sample_queue.put(data_item)
-            except Exception as e:
-                logger.error(f"Error in stream reader: {e}")
-                sample_queue.put(e)
-                break
 
 
-def sample_generator_fn(sample_queue):
-    while True:
-        timeout = 0.1
-        while True:
-            try:
-                sample_or_exc = sample_queue.get(timeout=timeout)
-                break
-            except Empty:
-                logger.info(f"Sample queue is empty, retrying with timeout {timeout}")
-                timeout = min(timeout * 1.5, 5.0)
-                yield None
-        if isinstance(sample_or_exc, Exception):
-            raise sample_or_exc
-        assert isinstance(sample_or_exc, Dict)
-        yield sample_or_exc
-
-
-def run_batch_data_loader(
-    sample_queue: Queue[Dict | Exception],
+def run_data_loader(
+    data_stream: SingleStreamSpec,
     batch_queue: Queue[VersionedTensors | Exception],
 ):
     """Load BatchEncoding objects directly from preprocessor."""
-    sample_generator = sample_generator_fn(sample_queue)
-    while True:
-        try:
-            # Read BatchEncoding object directly from preprocessor
-            batch_encoding = next(sample_generator)
-            if batch_encoding is None:
-                continue
-            
-            # Move tensors to device
-            batch = {
-                k: (v.to(get_accelerator().device) if isinstance(v, torch.Tensor) else v)
-                for k, v in batch_encoding.items()
-            }
-            
-            # Extract model version from batch (assuming first sample's version)
-            # Note: model_version should be included in the BatchEncoding from preprocessor
-            model_version = batch.get("model_version", [0])[0] if "model_version" in batch else 0
-            
-            batch = VersionedTensors(tensors=batch, model_version=model_version)
-            batch_queue.put(batch)
-            logger.debug(f"Loaded batch, queue size is now {batch_queue.qsize()}")
+    with read_stream(data_stream) as stream_reader:
+        while True:
+            try:
+                for batch_encoding in stream_reader.read():
+                    if isinstance(batch_encoding, Exception):
+                        batch_queue.put(batch_encoding)
+                        break
+                    
+                    # Ensure batch_encoding is properly converted to BatchEncoding if needed
+                    if not hasattr(batch_encoding, 'data'):
+                        # Convert dict to BatchEncoding if it's not already
+                        batch_encoding = BatchEncoding(batch_encoding)
+                    
+                    # Move tensors to device, converting lists to tensors for known tensor fields
+                    tensor_fields = {'input_ids', 'attention_mask', 'labels', 'position_ids', 'rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'overflow'}
+                    batch = {}
+                    for k, v in batch_encoding.items():
+                        if isinstance(v, torch.Tensor):
+                            batch[k] = v.to(get_accelerator().device)
+                        elif k in tensor_fields and isinstance(v, list):
+                            # Convert lists back to tensors for known tensor fields
+                            batch[k] = torch.tensor(v, dtype=torch.long).to(get_accelerator().device)
+                        else:
+                            batch[k] = v
+                    
+                    # Extract model version from batch (assuming first sample's version)
+                    # Note: model_version should be included in the BatchEncoding from preprocessor
+                    model_version = batch.get("model_version", [0])[0] if "model_version" in batch else 0
+                    
+                    batch = VersionedTensors(tensors=batch, model_version=model_version)
+                    batch_queue.put(batch)
+                    logger.debug(f"Loaded batch, queue size is now {batch_queue.qsize()}")
 
-        except Exception as e:
-            logger.error(f"Error in dataset loader: {e}")
-            batch_queue.put(e)
-            break
-
-
-def run_dynamic_batch_size_data_loader(
-    sample_queue: Queue[Dict | Exception],
-    batch_queue: Queue[VersionedTensors | Exception],
-    max_seq_length: int,
-    samples_per_worker_per_step: int,
-    tokenizer: PreTrainedTokenizerFast,
-):
-    """Incrementally load chunks to populate the dataset queue."""
-
-    current_batch = []
-    current_length = 0
-    samples_in_step = 0
-    sample_generator = sample_generator_fn(sample_queue)
-    skip_count = 0
-    while True:
-        try:
-            while True:
-                # TODO: handle timeout
-                entry = next(sample_generator)
-                sample_length = len(entry["input_ids"]) if entry else 0
-
-                if sample_length > max_seq_length:
-                    skip_count += 1
-                    logger.warning(
-                        f"Sample length {sample_length} > max allowed length {max_seq_length}, skipping. Total {skip_count} samples skipped so far."
-                    )
-                    continue
-
-                # check if adding current sample would exceed max_seq_length or if we've reached sample limit
-                boundary = samples_in_step == samples_per_worker_per_step
-                if (current_length + sample_length > max_seq_length) or boundary:
-                    logger.debug(
-                        f"Adding batch with total sequence length {current_length} and {len(current_batch)} samples"
-                    )
-                    collated_batch = collate_packed(current_batch, tokenizer=tokenizer)
-                    collated_batch = {
-                        k: (v.to(get_accelerator().device) if isinstance(v, torch.Tensor) else v)
-                        for k, v in collated_batch.items()
-                    }
-                    collated_batch = VersionedTensors(
-                        tensors=collated_batch,
-                        model_version=min(sample["model_version"] for sample in current_batch),
-                    )
-                    batch_queue.put(collated_batch)
-
-                    current_batch = []
-                    current_length = 0
-                    if boundary:
-                        samples_in_step = 0
-
-                if entry:
-                    # add sample to current batch
-                    current_batch.append(entry)
-                    current_length += sample_length
-                    samples_in_step += 1
-
-        except Exception as e:
-            logger.error(f"Error in dataset loader: {e}")
-            batch_queue.put(e)
-            break
+            except Exception as e:
+                logger.error(f"Error in stream reader: {e}")
+                batch_queue.put(e)
+                break
 
 
 TRAINER_TOPIC = "weight_update_request"
@@ -453,9 +366,6 @@ def run_finetuning_loop(
         partition=get_accelerator().process_index,
     )
 
-    # Use the new batch data loader that reads BatchEncoding objects directly
-    run_data_loader = run_batch_data_loader
-
     logger.info(f"Using {'packed' if args.seq_packing else 'unpacked'} collate function")
 
     optimizer = get_optimizer(args.optim, model, args.learning_rate, args.weight_decay)
@@ -541,23 +451,11 @@ def run_finetuning_loop(
     else:
         weight_update_manager = None
 
-    sample_queue = Queue(maxsize=args.queue_size)
-    sample_loader_worker_fn = partial(
-        run_sample_loader,
-        data_stream=data_stream,
-        sample_queue=sample_queue,
-        pop_old_data=cfg.max_lag is None and cfg.pop_old_data and not cfg.debug.mode,
-    )
-
-    stream_to_queue_thread = threading.Thread(target=sample_loader_worker_fn, args=())
-    stream_to_queue_thread.start()
-
     batch_queue = Queue(maxsize=1)
     data_loader_worker_fn = partial(
         run_data_loader,
+        data_stream=data_stream,
         batch_queue=batch_queue,
-        sample_queue=sample_queue,
-        tokenizer=tokenizer,
     )
     data_loader_thread = threading.Thread(target=data_loader_worker_fn, args=())
 
@@ -567,6 +465,13 @@ def run_finetuning_loop(
 
     try:
         logger.info("Start training")
+        
+        # Send initial trainer status to preprocessor
+        if get_accelerator().is_main_process:
+            with write_to_streams(trainer_status_stream) as writer:
+                writer.write(TrainerStatusMessage(samples_processed=training_metrics.samples))
+            logger.info(f"Sent initial trainer status: {training_metrics.samples} samples processed")
+        
         rl_finetuning_worker(
             args,
             model,
@@ -575,7 +480,6 @@ def run_finetuning_loop(
             weight_update_manager,
             tokenizer,
             training_metrics,
-            sample_queue,
             batch_queue,
         )
     finally:
@@ -592,7 +496,6 @@ def rl_finetuning_worker(
     weight_update_manager: WeightUpdateManager | None,
     tokenizer: PreTrainedTokenizerFast,
     training_metrics: TrainingMetrics,
-    sample_queue: Queue[Dict | Exception],
     batch_queue: Queue[VersionedTensors | Exception],
 ):
     local_samples = torch.tensor([0], device=get_accelerator().device)
@@ -828,7 +731,7 @@ def rl_finetuning_worker(
                     "stats/epoch": training_metrics.epoch,
                     "stats/min_actor_version": lag_stats["min_version"],
                     "stats/max_actor_version": lag_stats["max_version"],
-                    "stats/queue/samples": sample_queue.qsize(),
+                    "stats/queue/batches": batch_queue.qsize(),
                     "stats/time_waiting_for_data": training_metrics.time_waiting_for_data,
                     "stats/lag": training_metrics.last_broadcasted_version - lag_stats["min_version"],
                     "throughput/tokens_perGPU_per_sec": this_worker_tokens / sum(passes_took) if passes_took else 0,

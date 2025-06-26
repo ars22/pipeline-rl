@@ -256,6 +256,8 @@ class FileStreamWriter(StreamWriter):
         # Textual streams are so useful, that we try hard to jsonify the given object.
         if isinstance(data, BaseModel):
             data = data.model_dump()
+        elif hasattr(data, '__class__') and 'BatchEncoding' in str(type(data)):
+            data = {k: v.tolist() if hasattr(v, 'tolist') else v for k, v in data.items()}
         self._file.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY).decode("utf-8"))
         self._file.write("\n")
         self._file.flush()
