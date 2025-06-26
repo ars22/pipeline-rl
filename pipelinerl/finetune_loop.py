@@ -126,34 +126,32 @@ def sample_generator_fn(sample_queue):
         yield sample_or_exc
 
 
-def run_fixed_batch_data_loader(
+def run_batch_data_loader(
     sample_queue: Queue[Dict | Exception],
     batch_queue: Queue[VersionedTensors | Exception],
-    batch_size: int,
-    tokenizer: PreTrainedTokenizerFast,
 ):
-    """Incrementally load chunks to populate the dataset queue."""
+    """Load BatchEncoding objects directly from preprocessor."""
     sample_generator = sample_generator_fn(sample_queue)
     while True:
         try:
-            buffer = []
-            while True:
-                entry = next(sample_generator)
-                if entry is None:
-                    continue
-                buffer.append(entry)
-                if len(buffer) == batch_size:
-                    batch = collate(buffer, tokenizer=tokenizer)
-                    batch = {
-                        k: (v.to(get_accelerator().device) if isinstance(v, torch.Tensor) else v)
-                        for k, v in batch.items()
-                    }
-                    batch = VersionedTensors(
-                        tensors=batch, model_version=min(sample["model_version"] for sample in buffer)
-                    )
-                    batch_queue.put(batch)
-                    logger.debug(f"Loaded {len(buffer)} samples, queue size is now {batch_queue.qsize()}")
-                    break
+            # Read BatchEncoding object directly from preprocessor
+            batch_encoding = next(sample_generator)
+            if batch_encoding is None:
+                continue
+            
+            # Move tensors to device
+            batch = {
+                k: (v.to(get_accelerator().device) if isinstance(v, torch.Tensor) else v)
+                for k, v in batch_encoding.items()
+            }
+            
+            # Extract model version from batch (assuming first sample's version)
+            # Note: model_version should be included in the BatchEncoding from preprocessor
+            model_version = batch.get("model_version", [0])[0] if "model_version" in batch else 0
+            
+            batch = VersionedTensors(tensors=batch, model_version=model_version)
+            batch_queue.put(batch)
+            logger.debug(f"Loaded batch, queue size is now {batch_queue.qsize()}")
 
         except Exception as e:
             logger.error(f"Error in dataset loader: {e}")
@@ -248,6 +246,12 @@ class WeightUpdateSuccess(BaseModel):
 class WeightBeingSavedToDisk(BaseModel):
     kind: Literal["weight_being_saved_to_disk"] = "weight_being_saved_to_disk"
     version: int
+    timestamp: float = time.time()
+
+
+class TrainerStatusMessage(BaseModel):
+    kind: Literal["trainer_status"] = "trainer_status"
+    samples_processed: int
     timestamp: float = time.time()
 
 
@@ -422,6 +426,7 @@ def run_finetuning_loop(
 
     # Render-vous with inference servers
     weight_update_stream = SingleStreamSpec(exp_path=exp_root_dir, topic="weight_update_request")
+    trainer_status_stream = SingleStreamSpec(exp_path=exp_root_dir, topic="trainer_status")
 
     # Logging
     if get_accelerator().is_main_process:
@@ -448,15 +453,8 @@ def run_finetuning_loop(
         partition=get_accelerator().process_index,
     )
 
-    if args.seq_packing:
-        samples_per_worker_per_step = gradient_accumulation_passes_per_gpu * args.train_batch_size
-        run_data_loader = partial(
-            run_dynamic_batch_size_data_loader,
-            max_seq_length=args.seq_length,
-            samples_per_worker_per_step=samples_per_worker_per_step,
-        )
-    else:
-        run_data_loader = partial(run_fixed_batch_data_loader, batch_size=args.train_batch_size)
+    # Use the new batch data loader that reads BatchEncoding objects directly
+    run_data_loader = run_batch_data_loader
 
     logger.info(f"Using {'packed' if args.seq_packing else 'unpacked'} collate function")
 
@@ -786,6 +784,14 @@ def rl_finetuning_worker(
         training_metrics.samples = start_samples + total_samples
         this_worker_tokens = sum(tokens_processed)
         training_metrics.tokens += this_worker_tokens * get_accelerator().state.num_processes
+        
+        # Send trainer status to preprocessor
+        if get_accelerator().is_main_process:
+            try:
+                with write_to_streams(trainer_status_stream) as writer:
+                    writer.write(TrainerStatusMessage(samples_processed=training_metrics.samples))
+            except Exception as e:
+                logger.warning(f"Failed to send trainer status: {e}")
         try:
             # Synchronize workers before optimizer step
             logger.info("Waiting for all workers to synchronize...")
