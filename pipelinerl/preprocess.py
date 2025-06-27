@@ -3,6 +3,7 @@ import os
 
 os.environ["HF_DATASETS_DISABLE_PROGRESS_BARS"] = "1"
 
+import json
 import logging
 import multiprocessing as mp
 import queue
@@ -12,7 +13,7 @@ from functools import partial
 from multiprocessing import Process, Queue
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
-from queue import Empty
+from queue import Empty, Full
 from typing import List
 import random
 
@@ -327,6 +328,31 @@ def filter_zero_advantage_groups(dataset: list[dict], epsilon: float = 1e-6) -> 
     
     return filtered_entries, num_filtered_out
 
+
+def load_preprocessor_state(state_path: Path) -> int:
+    """Load published samples count from preprocessor_state.json"""
+    if not state_path.exists():
+        return 0
+    
+    try:
+        with open(state_path) as f:
+            state = json.load(f)
+        return state.get("published_samples", 0)
+    except (json.JSONDecodeError, KeyError, FileNotFoundError):
+        logger.warning(f"Could not load preprocessor state from {state_path}, starting from 0")
+        return 0
+
+
+def save_preprocessor_state(state_path: Path, published_samples: int) -> None:
+    """Save published samples count to preprocessor_state.json"""
+    state = {"published_samples": published_samples}
+    try:
+        with open(state_path, "w") as f:
+            json.dump(state, f)
+    except Exception as e:
+        logger.error(f"Failed to save preprocessor state to {state_path}: {e}")
+
+
 def run_preprocessing_loop(
     cfg: DictConfig,
 ):
@@ -383,8 +409,36 @@ def run_preprocessing_loop(
     # Start the dataset loader thread using Thread
     dataset_loader_thread = threading.Thread(target=dataset_loader_worker_fn)
     dataset_loader_thread.start()
+    
+    # Global variable for latest trainer status
+    global trainer_samples_processed
+    trainer_samples_processed = last_trainer_samples_processed
+    trainer_status_lock = threading.Lock()
+    
+    def read_trainer_status_worker():
+        """Worker thread to read trainer status messages without blocking main loop"""
+        global trainer_samples_processed
+        with read_stream(trainer_status_stream) as reader:
+            while True:
+                try:
+                    for status_msg in reader.read():
+                        if isinstance(status_msg, dict) and status_msg.get('kind') == 'trainer_status':
+                            samples_processed = status_msg.get('samples_processed', 0)
+                            with trainer_status_lock:
+                                trainer_samples_processed = max(trainer_samples_processed, samples_processed)
+                            logger.info(f"Trainer status received: {status_msg}")
+                except Exception as e:
+                    logger.error(f"Error reading trainer status: {e}")
+                    time.sleep(5)  # Wait before retrying
+    
+    # Start trainer status reader thread
+    trainer_status_thread = threading.Thread(target=read_trainer_status_worker, daemon=True)
+    trainer_status_thread.start()
 
-    published_samples = 0
+    # Load published samples from state file
+    state_path = exp_root_dir / "preprocessor_state.json"
+    published_samples = load_preprocessor_state(state_path)
+    logger.info(f"Loaded published samples count: {published_samples}")
     llms = [
         TrainableLLM(
             base_url=url,
@@ -399,25 +453,24 @@ def run_preprocessing_loop(
     processed_chunks = 0
     worker_pool_size = cfg.preprocess.n_workers
     next_llm_index = 0
+    processed_entries_queue_popped_data = 0
 
     stats_aggregator = SlidingWindowAggregator(window_size=max(10, 1000 // cfg.preprocess.chunk_n_groups))
 
-    buffer = []
+    buffer = Queue()
     # Queue for holding processed entries, with size based on batch_size * accumulation_steps
     batch_size = cfg.finetune.train_batch_size
     accumulation_steps = cfg.finetune.gradient_accumulation_passes
-    max_queue_size = batch_size * accumulation_steps
-    processed_entries_queue = deque(maxlen=max_queue_size)
     
     # Sequence packing configuration
-    seq_packing = cfg.finetune.get('seq_packing', False)
-    max_seq_length = cfg.finetune.seq_length if seq_packing else None
-    samples_per_worker_per_step = batch_size * accumulation_steps if seq_packing else None
+    samples_per_worker_per_step = batch_size * accumulation_steps
+    num_workers = world_map.total_finetune_gpus
+    max_queue_size = samples_per_worker_per_step * num_workers
+    processed_entries_queue = deque(maxlen=max_queue_size*1000)
     
     # Per-worker sample tracking (similar to finetune_loop.py)
-    num_workers = max(world_map.total_finetune_gpus, 1)
     samples_per_worker = [0] * num_workers  # Track samples written per worker
-    target_samples_per_worker = [batch_size * accumulation_steps] * num_workers  # Target per worker
+    target_samples_per_worker = [samples_per_worker_per_step] * num_workers  # Target per worker
     total_filtered_out = 0  # Track total filtered samples across all batches
     with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
         with SharedMemoryManager() as smm:
@@ -464,62 +517,65 @@ def run_preprocessing_loop(
                             pass
 
                     start_processing = time.time()
+                    dataset = None
                     try:
                         # Try to write the next dataset to the output stream, if it is ready
                         dataset = output_queue.get(timeout=0.001)
                         fetching_took = time.time() - start_processing
                     except Empty:
-                        continue
+                        pass
                     
-                    if isinstance(dataset, dict) and "error" in dataset:
-                        logger.error(f"Got exception from the result queue: {dataset['error']}")
-                        logger.error(f"Traceback: {dataset['traceback']}")
-                        raise Exception(dataset['error'])
-                    
-                    start_writing = time.time()
-                    for entry in dataset:
-                        buffer.append(entry)
-                    processed_chunks += 1
+                    if dataset:
+                        if isinstance(dataset, dict) and "error" in dataset:
+                            logger.error(f"Got exception from the result queue: {dataset['error']}")
+                            logger.error(f"Traceback: {dataset['traceback']}")
+                            raise Exception(dataset['error'])
+                        for entry in dataset:
+                            buffer.put(entry)
+                        processed_chunks += 1
+                        if buffer.qsize() < cfg.preprocess.buffer_size:
+                            continue
+                        if cfg.preprocess.buffer_size:
+                            # If buffer size is not set, no point in logging
+                            logger.info(f"Buffer is full with {buffer.qsize()} samples, start writing")
 
-                    if len(buffer) < cfg.preprocess.buffer_size:
-                        continue
-                    if cfg.preprocess.buffer_size:
-                        # If buffer size is not set, no point in logging
-                        logger.info(f"Buffer is full with {len(buffer)} samples, start writing")
-                        random.shuffle(buffer)
-
-                    # Conditionally filter out groups where all advantages are zero
-                    if rl_config.filter_zero_advantage_groups:
-                        filtered_buffer, num_filtered_out = filter_zero_advantage_groups(buffer)
-                        total_filtered_out += num_filtered_out
-                        
-                        if num_filtered_out > 0:
-                            logger.info(f"Filtered out {num_filtered_out} samples from groups with zero advantage.")
-                    else:
-                        filtered_buffer = buffer
+                        # Process entries directly from the queue
                         num_filtered_out = 0
+                        entries_processed = []
+                        while not buffer.empty():
+                            try:
+                                entry = buffer.get_nowait()
+                                if len(processed_entries_queue) == processed_entries_queue.maxlen:
+                                    if not pop_old_data:
+                                        logger.warning("Processed entries queue is full, skipping entry. Consider enabling pop_old_data or increasing queue size.")
+                                        continue
+                                    else:
+                                        processed_entries_queue_popped_data += 1
+                                        if processed_entries_queue_popped_data % 100 == 0 and last_time_notice != processed_entries_queue_popped_data // 100:
+                                            logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
+                                            last_time_notice = processed_entries_queue_popped_data // 100
+                                processed_entries_queue.append(entry)
+                            except Empty:
+                                break
 
-                    for entry in filtered_buffer:
-                        processed_entries_queue.append(entry)
+                        stats_aggregator.update([len(entry["input_ids"]) for entry in entries_processed])
+                        max_model_version = max([entry["model_version"] for entry in entries_processed]) if entries_processed else 0
                     
-                    # Check if trainer is ready for more data by reading trainer status
-                    try:
-                        with read_stream(trainer_status_stream) as trainer_reader:
-                            for status_msg in trainer_reader.read(timeout=0.001):
-                                if isinstance(status_msg, dict) and status_msg.get('kind') == 'trainer_status':
-                                    last_trainer_samples_processed = max(last_trainer_samples_processed, status_msg.get('samples_processed', 0))
-                    except:
-                        pass  # If no status available, use last known value
+                    # Check if trainer is ready for more data by reading trainer status (non-blocking)
+                    with trainer_status_lock:
+                        last_trainer_samples_processed = trainer_samples_processed
                     
                     # Check if trainer is ready for more data and we have samples to send
                     target_published_samples = last_trainer_samples_processed + (batch_size * accumulation_steps)
-                    if published_samples < target_published_samples and len(processed_entries_queue) > 0:
+                    start_writing = time.time()
+                    if published_samples < target_published_samples and len(processed_entries_queue) >= (samples_per_worker_per_step * num_workers):
                         # Per-worker sample tracking and batch creation (similar to finetune_loop.py)
                         for worker_id in range(num_workers):
-                            if seq_packing:
+                            print(f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, target is {target_samples_per_worker[worker_id]}")
+                            if cfg.finetune.seq_packing:
                                 # if worker has enough samples, create a sentinel batch
                                 if samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
-                                    max_model_version = max([entry["model_version"] for entry in filtered_buffer]) if filtered_buffer else 0
+                                    logger.info(f"Worker {worker_id} has enough samples, creating sentinel batch")
                                     sentinel_batch = create_sentinel_batch(
                                         device=None,
                                         tokenizer=tokenizer,
@@ -535,7 +591,7 @@ def run_preprocessing_loop(
                                         entry = processed_entries_queue[0]  # Peek at next entry
                                         sample_length = len(entry["input_ids"])
 
-                                        if current_length + sample_length > max_seq_length and current_batch:
+                                        if current_length + sample_length > cfg.finetune.seq_length:
                                             break  # Current batch is full
                                         
                                         # Add sample to current batch
@@ -543,7 +599,7 @@ def run_preprocessing_loop(
                                         current_length += sample_length
                                         
                                         # Check if we've reached the sample limit per step
-                                        if len(current_batch) >= samples_per_worker_per_step:
+                                        if len(current_batch) + samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
                                             break
                                 
                                     if current_batch:
@@ -556,29 +612,26 @@ def run_preprocessing_loop(
                                         writer.write(batch_encoding)
                                         published_samples += len(current_batch)
                                         samples_per_worker[worker_id] += len(current_batch)
-                                        logger.debug(f"Packed batch with {len(current_batch)} samples for worker {worker_id}")
+                                        logger.info(f"Packed batch with {len(current_batch)} samples for worker {worker_id}")
                             else:
-                                # Standard batching logic - fixed batch size
-                                if len(processed_entries_queue) >= batch_size:
-                                    batch_entries = []
-                                    for _ in range(min(batch_size, len(processed_entries_queue))):
-                                        batch_entries.append(processed_entries_queue.popleft())
-                                    
-                                    # Create BatchEncoding using collate function (supports multiple forward passes)
-                                    batch_encoding = collate(batch_entries, tokenizer=tokenizer)
-                                    # Add model_version to the BatchEncoding for finetune_loop compatibility
-                                    model_versions = [entry["model_version"] for entry in batch_entries]
-                                    batch_encoding["model_version"] = model_versions
-                                    # Write the BatchEncoding object to stream
-                                    writer.write(batch_encoding)
-                                    published_samples += len(batch_entries)
-                                    samples_per_worker[worker_id] += len(batch_entries)
-                                    logger.debug(f"Created batch with {len(batch_entries)} samples for worker {worker_id}")
-                            break  # Only process one worker per iteration
+                                batch_entries = []
+                                for _ in range(batch_size):
+                                    batch_entries.append(processed_entries_queue.popleft())
+                                
+                                # Create BatchEncoding using collate function (supports multiple forward passes)
+                                batch_encoding = collate(batch_entries, tokenizer=tokenizer)
+                                # Add model_version to the BatchEncoding for finetune_loop compatibility
+                                model_versions = [entry["model_version"] for entry in batch_entries]
+                                batch_encoding["model_version"] = model_versions
+                                # Write the BatchEncoding object to stream
+                                writer.write(batch_encoding)
+                                published_samples += len(batch_entries)
+                                samples_per_worker[worker_id] += len(batch_entries)
+                                logger.info(f"Created batch with {len(batch_entries)} samples for worker {worker_id}")
+                    else:
+                        continue
                     
                     writing_took = time.time() - start_writing
-                    stats_aggregator.update([len(entry["input_ids"]) for entry in filtered_buffer])
-                    max_model_version = max([entry["model_version"] for entry in filtered_buffer]) if filtered_buffer else 0
                     samples_in_output_queue = output_queue.qsize() * cfg.preprocess.chunk_n_groups * cfg.attempts
                     stats = {
                         "preprocessor/published_samples": published_samples,
@@ -598,14 +651,16 @@ def run_preprocessing_loop(
                     if wandb_run is not None:
                         wandb_run.log(stats)
                     stats_writer.write(stats)
+                    
+                    # Save preprocessor state after each iteration
+                    save_preprocessor_state(state_path, published_samples)
                     processing_took = time.time() - start_processing
                     logger.info(
-                        f"Processed {len(filtered_buffer)} samples (filtered out {num_filtered_out}) in {processing_took:.3f}s"
+                        f"Processed {len(entries_processed)} samples (filtered out {num_filtered_out}) in {processing_took:.3f}s"
                         f" (last fetching took {fetching_took:.3f}, all writing took {writing_took:.3f})"
                         f" and wrote to {output_stream}, total {published_samples} samples so far,"
                         f" {samples_in_output_queue} samples in output queue, max output queue entry size {output_queue.max_actual_entry_size()} bytes"
                     )
-                    buffer = []
             finally:
                 # Clean up worker processes
                 for worker in workers:

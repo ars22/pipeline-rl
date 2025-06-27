@@ -481,6 +481,7 @@ def run_finetuning_loop(
             tokenizer,
             training_metrics,
             batch_queue,
+            trainer_status_stream,
         )
     finally:
         if actor_update_group:
@@ -497,6 +498,7 @@ def rl_finetuning_worker(
     tokenizer: PreTrainedTokenizerFast,
     training_metrics: TrainingMetrics,
     batch_queue: Queue[VersionedTensors | Exception],
+    trainer_status_stream: Any,
 ):
     local_samples = torch.tensor([0], device=get_accelerator().device)
     # Create a list of tensors with matching dtype (int64)
@@ -695,6 +697,7 @@ def rl_finetuning_worker(
                     writer.write(TrainerStatusMessage(samples_processed=training_metrics.samples))
             except Exception as e:
                 logger.warning(f"Failed to send trainer status: {e}")
+                raise  # Re-raise to see the actual error
         try:
             # Synchronize workers before optimizer step
             logger.info("Waiting for all workers to synchronize...")
@@ -766,6 +769,7 @@ def rl_finetuning_worker(
             time_waiting_for_data = 0.0
 
             average_rl_metrics = get_avg_rl_stats(gathered_rl_metrics, samples_per_step)
+            print(f"DEBUG: loss = {average_rl_metrics['rl/loss']}")
             ess = (
                 average_rl_metrics["rl/ratio_new_old_sum"] ** 2
                 / average_rl_metrics["rl/ratio_new_old_squared_sum"]

@@ -183,6 +183,11 @@ def collate(
     
     for k, seq_list in example_dict.items():
         if any(isinstance(seq, (str, dict)) for seq in seq_list):
+            logger.debug(f"Skipping key '{k}' - contains str/dict sequences")
+            continue
+        # Check if any sequence contains strings or dicts
+        if any(isinstance(item, (str, dict)) for seq in seq_list if isinstance(seq, list) for item in seq):
+            logger.debug(f"Skipping key '{k}' - sequences contain str/dict items")
             continue
         else:
             # Handle sequence data: pad as usual
