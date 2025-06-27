@@ -769,7 +769,6 @@ def rl_finetuning_worker(
             time_waiting_for_data = 0.0
 
             average_rl_metrics = get_avg_rl_stats(gathered_rl_metrics, samples_per_step)
-            print(f"DEBUG: loss = {average_rl_metrics['rl/loss']}")
             ess = (
                 average_rl_metrics["rl/ratio_new_old_sum"] ** 2
                 / average_rl_metrics["rl/ratio_new_old_squared_sum"]

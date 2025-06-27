@@ -466,7 +466,7 @@ def run_preprocessing_loop(
     samples_per_worker_per_step = batch_size * accumulation_steps
     num_workers = world_map.total_finetune_gpus
     max_queue_size = samples_per_worker_per_step * num_workers
-    processed_entries_queue = deque(maxlen=max_queue_size*1000)
+    processed_entries_queue = deque(maxlen=max_queue_size)
     
     # Per-worker sample tracking (similar to finetune_loop.py)
     samples_per_worker = [0] * num_workers  # Track samples written per worker
