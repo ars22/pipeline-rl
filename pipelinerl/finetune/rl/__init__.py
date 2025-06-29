@@ -301,8 +301,11 @@ def rl_step(
         value_labels = rewards  # This is already shifted (from line 216)
         values = values[:, :-1]
         values_labels = value_labels
-        value_loss = 0.5 * torch.square(values - values_labels)
-        value_loss = sum_sum(value_loss, masks_shifted, segments) * tokens_weights
+        assert values.shape == tokens_weights.shape, (
+            f"Values shape {values.shape} does not match example weights shape {tokens_weights.shape}"
+        )
+        value_loss = 0.5 * torch.square(values - values_labels) * tokens_weights
+        value_loss = sum_sum(value_loss, masks_shifted, segments) 
         
         # Combine policy loss and value loss
         final_loss = policy_loss_total + config.value_loss_coef * value_loss
