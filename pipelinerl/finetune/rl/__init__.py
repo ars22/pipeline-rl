@@ -95,6 +95,10 @@ class RLConfig(BaseModel):
         default=0.1,
         description="Coefficient for the value loss in the final loss",
     )
+    clip_eps: float = Field(
+        default=0.2,
+        description="Value function clipping parameter",
+    )
 
 
 def make_rl_data_callback(args, current_dir, rl_config, model):
@@ -298,7 +302,7 @@ def rl_step(
         values = values[:, :-1]
         values_labels = value_labels
         value_loss = 0.5 * torch.square(values - values_labels)
-        value_loss = sum_sum(value_loss, masks_shifted, segments)
+        value_loss = sum_sum(value_loss, masks_shifted, segments) * tokens_weights
         
         # Combine policy loss and value loss
         final_loss = policy_loss_total + config.value_loss_coef * value_loss
