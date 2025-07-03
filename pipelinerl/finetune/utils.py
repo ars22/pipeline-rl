@@ -46,6 +46,7 @@ def create_sentinel_batch(device, tokenizer=None, model_version=0) -> BatchEncod
         "old_logprobs": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "group_tokens": torch.tensor(ones, dtype=torch.float).reshape(1, -1),
         "overflow": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
+        "sentinel": torch.tensor([1], dtype=torch.float).reshape(1, -1),
     }
 
     sentinel_batch = {

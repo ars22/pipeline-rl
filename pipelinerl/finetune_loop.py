@@ -568,18 +568,12 @@ def rl_finetuning_worker(
 
         before_getting_next_batch = time.time()
 
-        # check if current worker has process enough data to do a grad step
+
+        versioned_batch = next(data_generator)
+        is_sentinel_batch = bool(versioned_batch.tensors.get("sentinel", False))
         if local_samples[0] == target_samples_per_worker:
-            logger.debug("creating sentinel batch")
-            sentinel_batch = create_sentinel_batch(
-                get_accelerator().device, tokenizer, model_version=last_model_version
-            )
-            # Wrap sentinel batch in VersionedTensors to match data_generator format
-            versioned_batch = VersionedTensors(tensors=sentinel_batch, model_version=last_model_version)
-            is_sentinel_batch = True
-        else:
-            versioned_batch = next(data_generator)
-            is_sentinel_batch = False
+            assert is_sentinel_batch, "We should get a sentinel batch"
+            logger.info("next batch should be a sentinel batch")
 
         time_waiting_for_data += time.time() - before_getting_next_batch
         # check if too old, don't drop but count
