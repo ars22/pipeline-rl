@@ -360,10 +360,12 @@ def run_preprocessing_loop(
 
     world_map = WorldMap(cfg, verbose=True)
     exp_root_dir = Path(cfg.output_dir)
-    setup_logging(exp_root_dir / "preprocessor", "preprocessor")
+    preprocess_dir = exp_root_dir / "preprocess"
+    preprocess_dir.mkdir(parents=True, exist_ok=True)
+    setup_logging(preprocess_dir, "preprocessor")
 
     if cfg.wandb.use_wandb:
-        wandb_run = init_wandb(cfg, exp_root_dir / "preprocessor", flatten_dict_config(cfg))
+        wandb_run = init_wandb(cfg, preprocess_dir, flatten_dict_config(cfg))
         if wandb_run is None:
             raise ValueError("Failed to initialize wandb run")
     else:
@@ -371,17 +373,6 @@ def run_preprocessing_loop(
 
     tokenizer = load_tokenizer(cfg.finetune.config_name)
     
-    # Load training state to get last processed samples count
-    training_state_dir = exp_root_dir / "training_state"
-    last_trainer_samples_processed = 0
-    if training_state_dir.exists():
-        training_state = load_training_checkpoint(training_state_dir, None, None, None)
-        if training_state and 'samples' in training_state:
-            last_trainer_samples_processed = training_state['samples']
-            logger.info(f"Loaded last trainer samples processed: {last_trainer_samples_processed}")
-        else:
-            logger.info("No previous training state found, starting from 0")
-
     llm_urls = str(cfg.me.llm_urls).split("+") if cfg.me.llm_urls else []
     if llm_urls:
         wait_for_inference_servers(llm_urls)
@@ -398,22 +389,23 @@ def run_preprocessing_loop(
 
     raw_chunk_queue = Queue(cfg.preprocess.raw_queue_size)
     rl_config = RLConfig(**cfg.finetune.rl)
+    pop_old_data = cfg.max_lag is None and cfg.pop_old_data and not cfg.debug.mode
     dataset_loader_worker_fn = partial(
         run_dataset_loader,
         raw_chunk_queue=raw_chunk_queue,
         data_stream=input_stream,
         check_group_size=cfg.attempts,
         chunk_n_groups=cfg.preprocess.chunk_n_groups,
-        pop_old_data=cfg.max_lag is None and cfg.pop_old_data and not cfg.debug.mode,
+        pop_old_data=pop_old_data,
     )
     # Start the dataset loader thread using Thread
     dataset_loader_thread = threading.Thread(target=dataset_loader_worker_fn)
     dataset_loader_thread.start()
     
     # Global variable for latest trainer status
-    global trainer_samples_processed
-    trainer_samples_processed = last_trainer_samples_processed
     trainer_status_lock = threading.Lock()
+    global trainer_samples_processed
+    trainer_samples_processed = -1  # Initialize before thread function definition
     
     def read_trainer_status_worker():
         """Worker thread to read trainer status messages without blocking main loop"""
@@ -436,7 +428,12 @@ def run_preprocessing_loop(
     trainer_status_thread.start()
 
     # Load published samples from state file
-    state_path = exp_root_dir / "preprocessor_state.json"
+    state_path = preprocess_dir / "preprocessor_state.json"
+    
+    # Handle force_restart flag
+    if cfg.force_restart and state_path.exists():
+        logger.info(f"force_restart=True, removing existing preprocessor state at {state_path}")
+        state_path.unlink()
     published_samples = load_preprocessor_state(state_path)
     logger.info(f"Loaded published samples count: {published_samples}")
     llms = [
@@ -454,17 +451,18 @@ def run_preprocessing_loop(
     worker_pool_size = cfg.preprocess.n_workers
     next_llm_index = 0
     processed_entries_queue_popped_data = 0
+    last_time_notice = 0
 
     stats_aggregator = SlidingWindowAggregator(window_size=max(10, 1000 // cfg.preprocess.chunk_n_groups))
 
     buffer = Queue()
     # Queue for holding processed entries, with size based on batch_size * accumulation_steps
     batch_size = cfg.finetune.train_batch_size
-    accumulation_steps = cfg.finetune.gradient_accumulation_passes
     
     # Sequence packing configuration
-    samples_per_worker_per_step = batch_size * accumulation_steps
     num_workers = world_map.total_finetune_gpus
+    gradient_accumulation_passes_per_gpu = cfg.finetune.gradient_accumulation_passes // num_workers
+    samples_per_worker_per_step = batch_size * gradient_accumulation_passes_per_gpu
     max_queue_size = samples_per_worker_per_step * num_workers
     processed_entries_queue = deque(maxlen=max_queue_size)
     
@@ -544,16 +542,16 @@ def run_preprocessing_loop(
                         entries_processed = []
                         while not buffer.empty():
                             try:
-                                entry = buffer.get_nowait()
                                 if len(processed_entries_queue) == processed_entries_queue.maxlen:
                                     if not pop_old_data:
                                         logger.warning("Processed entries queue is full, skipping entry. Consider enabling pop_old_data or increasing queue size.")
-                                        continue
+                                        break 
                                     else:
                                         processed_entries_queue_popped_data += 1
                                         if processed_entries_queue_popped_data % 100 == 0 and last_time_notice != processed_entries_queue_popped_data // 100:
                                             logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
                                             last_time_notice = processed_entries_queue_popped_data // 100
+                                entry = buffer.get_nowait()
                                 processed_entries_queue.append(entry)
                             except Empty:
                                 break
@@ -566,14 +564,15 @@ def run_preprocessing_loop(
                         last_trainer_samples_processed = trainer_samples_processed
                     
                     # Check if trainer is ready for more data and we have samples to send
-                    target_published_samples = last_trainer_samples_processed + (batch_size * accumulation_steps)
+                    target_published_samples = last_trainer_samples_processed + (batch_size * gradient_accumulation_passes_per_gpu * num_workers)
                     start_writing = time.time()
                     if published_samples < target_published_samples and len(processed_entries_queue) >= (samples_per_worker_per_step * num_workers):
                         # Per-worker sample tracking and batch creation (similar to finetune_loop.py)
                         for worker_id in range(num_workers):
-                            print(f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, target is {target_samples_per_worker[worker_id]}")
+                            logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, target is {target_samples_per_worker[worker_id]}")
                             if cfg.finetune.seq_packing:
                                 # if worker has enough samples, create a sentinel batch
+                                #TODO: rm debug code
                                 if samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
                                     logger.info(f"Worker {worker_id} has enough samples, creating sentinel batch")
                                     sentinel_batch = create_sentinel_batch(
@@ -582,10 +581,9 @@ def run_preprocessing_loop(
                                         model_version=max_model_version
                                     )
                                     writer.write(sentinel_batch)
-                                else:
+                                elif samples_per_worker[worker_id] < target_samples_per_worker[worker_id]:
                                     current_batch = []
                                     current_length = 0
-                                    skip_count = 0
                                     
                                     while len(processed_entries_queue) > 0:
                                         entry = processed_entries_queue[0]  # Peek at next entry
@@ -613,6 +611,11 @@ def run_preprocessing_loop(
                                         published_samples += len(current_batch)
                                         samples_per_worker[worker_id] += len(current_batch)
                                         logger.info(f"Packed batch with {len(current_batch)} samples for worker {worker_id}")
+                                else:
+                                    raise ValueError(
+                                        f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, "
+                                        f"but target is {target_samples_per_worker[worker_id]}"
+                                    )
                             else:
                                 batch_entries = []
                                 for _ in range(batch_size):
@@ -629,6 +632,13 @@ def run_preprocessing_loop(
                                 samples_per_worker[worker_id] += len(batch_entries)
                                 logger.info(f"Created batch with {len(batch_entries)} samples for worker {worker_id}")
                     else:
+                        #TODO: rm debug code and logging
+                        logger.info(
+                            f"Not enough samples to write: {len(processed_entries_queue)} in queue, "
+                            f"published_samples {published_samples}, target {target_published_samples}, "
+                            f"last_trainer_samples_processed {last_trainer_samples_processed}"
+                        )
+                        time.sleep(1)  # Sleep to avoid busy waiting
                         continue
                     
                     writing_took = time.time() - start_writing
