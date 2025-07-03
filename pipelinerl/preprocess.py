@@ -468,7 +468,6 @@ def run_preprocessing_loop(
     
     # Per-worker sample tracking (similar to finetune_loop.py)
     samples_per_worker = [0] * num_workers  # Track samples written per worker
-    target_samples_per_worker = [samples_per_worker_per_step] * num_workers  # Target per worker
     total_filtered_out = 0  # Track total filtered samples across all batches
     with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
         with SharedMemoryManager() as smm:
@@ -541,12 +540,10 @@ def run_preprocessing_loop(
                     num_filtered_out = 0
                     entries_processed = []
                     # print how many entries in buffer
-                    logger.info(f"Buffer has {buffer.qsize()} entries")
                     while not buffer.empty():
                         try:
                             if len(processed_entries_queue) == processed_entries_queue.maxlen:
                                 if not pop_old_data:
-                                    logger.warning("Processed entries queue is full, skipping entry. Consider enabling pop_old_data or increasing queue size.")
                                     break 
                                 else:
                                     processed_entries_queue_popped_data += 1
@@ -565,8 +562,12 @@ def run_preprocessing_loop(
                     with trainer_status_lock:
                         last_trainer_samples_processed = trainer_samples_processed
                     
-                    # Check if trainer is ready for more data and we have samples to send
+                    if last_trainer_samples_processed < 0:
+                        # did not receive any trainer status yet, skip this iteration
+                        continue
+
                     target_published_samples = last_trainer_samples_processed + (batch_size * gradient_accumulation_passes_per_gpu * num_workers)
+                    target_samples_per_worker = [target_published_samples // num_workers] * num_workers
                     start_writing = time.time()
                     if published_samples < target_published_samples and len(processed_entries_queue) >= (samples_per_worker_per_step * num_workers):
                         # Per-worker sample tracking and batch creation (similar to finetune_loop.py)
@@ -576,7 +577,7 @@ def run_preprocessing_loop(
                                 # if worker has enough samples, create a sentinel batch
                                 #TODO: rm debug code
                                 if samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
-                                    logger.info(f"Worker {worker_id} has enough samples, creating sentinel batch")
+                                    logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]}/{target_samples_per_worker[worker_id]} samples, creating sentinel batch")
                                     sentinel_batch = create_sentinel_batch(
                                         device=None,
                                         tokenizer=tokenizer,
