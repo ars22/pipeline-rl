@@ -569,71 +569,72 @@ def run_preprocessing_loop(
                     target_published_samples = last_trainer_samples_processed + (batch_size * gradient_accumulation_passes_per_gpu * num_workers)
                     target_samples_per_worker = [target_published_samples // num_workers] * num_workers
                     start_writing = time.time()
-                    if published_samples < target_published_samples and len(processed_entries_queue) >= (samples_per_worker_per_step * num_workers):
+                    if len(processed_entries_queue) >= (samples_per_worker_per_step * num_workers):
                         # Per-worker sample tracking and batch creation (similar to finetune_loop.py)
-                        for worker_id in range(num_workers):
-                            logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, target is {target_samples_per_worker[worker_id]}")
-                            if cfg.finetune.seq_packing:
-                                # if worker has enough samples, create a sentinel batch
-                                #TODO: rm debug code
-                                if samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
-                                    logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]}/{target_samples_per_worker[worker_id]} samples, creating sentinel batch")
-                                    sentinel_batch = create_sentinel_batch(
-                                        device=None,
-                                        tokenizer=tokenizer,
-                                        model_version=max_model_version
-                                    )
-                                    writer.write(sentinel_batch)
-                                elif samples_per_worker[worker_id] < target_samples_per_worker[worker_id]:
-                                    current_batch = []
-                                    current_length = 0
-                                    
-                                    while len(processed_entries_queue) > 0:
-                                        entry = processed_entries_queue[0]  # Peek at next entry
-                                        sample_length = len(entry["input_ids"])
+                        while published_samples < target_published_samples:
+                            for worker_id in range(num_workers):
+                                logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, target is {target_samples_per_worker[worker_id]}")
+                                if cfg.finetune.seq_packing:
+                                    # if worker has enough samples, create a sentinel batch
+                                    #TODO: rm debug code
+                                    if samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
+                                        logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]}/{target_samples_per_worker[worker_id]} samples, creating sentinel batch")
+                                        sentinel_batch = create_sentinel_batch(
+                                            device=None,
+                                            tokenizer=tokenizer,
+                                            model_version=max_model_version
+                                        )
+                                        writer.write(sentinel_batch)
+                                    elif samples_per_worker[worker_id] < target_samples_per_worker[worker_id]:
+                                        current_batch = []
+                                        current_length = 0
+                                        
+                                        while len(processed_entries_queue) > 0:
+                                            entry = processed_entries_queue[0]  # Peek at next entry
+                                            sample_length = len(entry["input_ids"])
 
-                                        if current_length + sample_length > cfg.finetune.seq_length:
-                                            break  # Current batch is full
-                                        
-                                        # Add sample to current batch
-                                        current_batch.append(processed_entries_queue.popleft())
-                                        current_length += sample_length
-                                        
-                                        # Check if we've reached the sample limit per step
-                                        if len(current_batch) + samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
-                                            break
-                                
-                                    if current_batch:
-                                        # Create BatchEncoding using collate_packed function
-                                        batch_encoding = collate_packed(current_batch, tokenizer=tokenizer)
-                                        # Add model_version to the BatchEncoding for finetune_loop compatibility
-                                        model_versions = [entry["model_version"] for entry in current_batch]
-                                        batch_encoding["model_version"] = model_versions
-                                        # Write the BatchEncoding object to stream
-                                        writer.write(batch_encoding)
-                                        published_samples += len(current_batch)
-                                        samples_per_worker[worker_id] += len(current_batch)
-                                        logger.info(f"Packed batch with {len(current_batch)} samples for worker {worker_id}")
+                                            if current_length + sample_length > cfg.finetune.seq_length:
+                                                break  # Current batch is full
+                                            
+                                            # Add sample to current batch
+                                            current_batch.append(processed_entries_queue.popleft())
+                                            current_length += sample_length
+                                            
+                                            # Check if we've reached the sample limit per step
+                                            if len(current_batch) + samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
+                                                break
+                                    
+                                        if current_batch:
+                                            # Create BatchEncoding using collate_packed function
+                                            batch_encoding = collate_packed(current_batch, tokenizer=tokenizer)
+                                            # Add model_version to the BatchEncoding for finetune_loop compatibility
+                                            model_versions = [entry["model_version"] for entry in current_batch]
+                                            batch_encoding["model_version"] = model_versions
+                                            # Write the BatchEncoding object to stream
+                                            writer.write(batch_encoding)
+                                            published_samples += len(current_batch)
+                                            samples_per_worker[worker_id] += len(current_batch)
+                                            logger.info(f"Packed batch with {len(current_batch)} samples for worker {worker_id}")
+                                    else:
+                                        raise ValueError(
+                                            f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, "
+                                            f"but target is {target_samples_per_worker[worker_id]}"
+                                        )
                                 else:
-                                    raise ValueError(
-                                        f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, "
-                                        f"but target is {target_samples_per_worker[worker_id]}"
-                                    )
-                            else:
-                                batch_entries = []
-                                for _ in range(batch_size):
-                                    batch_entries.append(processed_entries_queue.popleft())
-                                
-                                # Create BatchEncoding using collate function (supports multiple forward passes)
-                                batch_encoding = collate(batch_entries, tokenizer=tokenizer)
-                                # Add model_version to the BatchEncoding for finetune_loop compatibility
-                                model_versions = [entry["model_version"] for entry in batch_entries]
-                                batch_encoding["model_version"] = model_versions
-                                # Write the BatchEncoding object to stream
-                                writer.write(batch_encoding)
-                                published_samples += len(batch_entries)
-                                samples_per_worker[worker_id] += len(batch_entries)
-                                logger.info(f"Created batch with {len(batch_entries)} samples for worker {worker_id}")
+                                    batch_entries = []
+                                    for _ in range(batch_size):
+                                        batch_entries.append(processed_entries_queue.popleft())
+                                    
+                                    # Create BatchEncoding using collate function (supports multiple forward passes)
+                                    batch_encoding = collate(batch_entries, tokenizer=tokenizer)
+                                    # Add model_version to the BatchEncoding for finetune_loop compatibility
+                                    model_versions = [entry["model_version"] for entry in batch_entries]
+                                    batch_encoding["model_version"] = model_versions
+                                    # Write the BatchEncoding object to stream
+                                    writer.write(batch_encoding)
+                                    published_samples += len(batch_entries)
+                                    samples_per_worker[worker_id] += len(batch_entries)
+                                    logger.info(f"Created batch with {len(batch_entries)} samples for worker {worker_id}")
                     else:
                         #TODO: rm debug code and logging
                         logger.info(

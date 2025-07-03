@@ -571,9 +571,11 @@ def rl_finetuning_worker(
         # check if current worker has process enough data to do a grad step
         if local_samples[0] == target_samples_per_worker:
             logger.debug("creating sentinel batch")
-            versioned_batch = create_sentinel_batch(
+            sentinel_batch = create_sentinel_batch(
                 get_accelerator().device, tokenizer, model_version=last_model_version
             )
+            # Wrap sentinel batch in VersionedTensors to match data_generator format
+            versioned_batch = VersionedTensors(tensors=sentinel_batch, model_version=last_model_version)
             is_sentinel_batch = True
         else:
             versioned_batch = next(data_generator)
