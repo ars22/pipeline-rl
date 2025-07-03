@@ -537,24 +537,26 @@ def run_preprocessing_loop(
                             # If buffer size is not set, no point in logging
                             logger.info(f"Buffer is full with {buffer.qsize()} samples, start writing")
 
-                        # Process entries directly from the queue
-                        num_filtered_out = 0
-                        entries_processed = []
-                        while not buffer.empty():
-                            try:
-                                if len(processed_entries_queue) == processed_entries_queue.maxlen:
-                                    if not pop_old_data:
-                                        logger.warning("Processed entries queue is full, skipping entry. Consider enabling pop_old_data or increasing queue size.")
-                                        break 
-                                    else:
-                                        processed_entries_queue_popped_data += 1
-                                        if processed_entries_queue_popped_data % 100 == 0 and last_time_notice != processed_entries_queue_popped_data // 100:
-                                            logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
-                                            last_time_notice = processed_entries_queue_popped_data // 100
-                                entry = buffer.get_nowait()
-                                processed_entries_queue.append(entry)
-                            except Empty:
-                                break
+                    # Process entries directly from the queue
+                    num_filtered_out = 0
+                    entries_processed = []
+                    # print how many entries in buffer
+                    logger.info(f"Buffer has {buffer.qsize()} entries")
+                    while not buffer.empty():
+                        try:
+                            if len(processed_entries_queue) == processed_entries_queue.maxlen:
+                                if not pop_old_data:
+                                    logger.warning("Processed entries queue is full, skipping entry. Consider enabling pop_old_data or increasing queue size.")
+                                    break 
+                                else:
+                                    processed_entries_queue_popped_data += 1
+                                    if processed_entries_queue_popped_data % 100 == 0 and last_time_notice != processed_entries_queue_popped_data // 100:
+                                        logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
+                                        last_time_notice = processed_entries_queue_popped_data // 100
+                            entry = buffer.get_nowait()
+                            processed_entries_queue.append(entry)
+                        except Empty:
+                            break
 
                         stats_aggregator.update([len(entry["input_ids"]) for entry in entries_processed])
                         max_model_version = max([entry["model_version"] for entry in entries_processed]) if entries_processed else 0
@@ -636,6 +638,7 @@ def run_preprocessing_loop(
                         logger.info(
                             f"Not enough samples to write: {len(processed_entries_queue)} in queue, "
                             f"published_samples {published_samples}, target {target_published_samples}, "
+                            f"Buffer size: {buffer.qsize()}, "
                             f"last_trainer_samples_processed {last_trainer_samples_processed}"
                         )
                         time.sleep(1)  # Sleep to avoid busy waiting
