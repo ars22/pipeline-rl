@@ -2,17 +2,18 @@ import torch
 from pydantic import BaseModel
 import logging
 from pipelinerl.finetune.context import get_accelerator
-from transformers.tokenization_utils_base import BatchEncoding
+from pipelinerl.finetune.types import PipelineBatchEncoding
 
 logger = logging.getLogger(__name__)
 
 
+#TODO: why do we need VersionedTensors?
 class VersionedTensors(BaseModel):
     tensors: dict
     model_version: int
 
 
-def create_sentinel_batch(device, tokenizer=None, model_version=0) -> BatchEncoding:
+def create_sentinel_batch(device, tokenizer=None, model_version=0) -> PipelineBatchEncoding:
     """
     Create a sentinel batch that matches the format expected by rl_step and works with sequence packing.
     The batch will have valid tokens for loss calculation but will be marked as sentinel to ensure zero loss contribution.
@@ -46,14 +47,11 @@ def create_sentinel_batch(device, tokenizer=None, model_version=0) -> BatchEncod
         "old_logprobs": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "group_tokens": torch.tensor(ones, dtype=torch.float).reshape(1, -1),
         "overflow": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
-        "sentinel": torch.tensor([1], dtype=torch.float).reshape(1, -1),
     }
 
-    sentinel_batch = {
-        k: (v.to(get_accelerator().device) if isinstance(v, torch.Tensor) else v) for k, v in sentinel_batch.items()
-    }
-    
-    # Add model_version to match the expected format
-    sentinel_batch["model_version"] = [model_version]
+    # Add model_version and sentinel flag to match the expected format
+    sentinel_batch["model_version"] = model_version
+    sentinel_batch["sentinel"] = True
+    sentinel_batch["is_packed"] = True 
 
-    return BatchEncoding(sentinel_batch)
+    return PipelineBatchEncoding(**sentinel_batch)

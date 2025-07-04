@@ -605,12 +605,7 @@ def run_preprocessing_loop(
                                                 break
                                     
                                         if current_batch:
-                                            # Create BatchEncoding using collate_packed function
                                             batch_encoding = collate_packed(current_batch, tokenizer=tokenizer)
-                                            # Add model_version to the BatchEncoding for finetune_loop compatibility
-                                            model_versions = [entry["model_version"] for entry in current_batch]
-                                            batch_encoding["model_version"] = model_versions
-                                            # Write the BatchEncoding object to stream
                                             writer.write(batch_encoding)
                                             published_samples += len(current_batch)
                                             samples_per_worker[worker_id] += len(current_batch)
@@ -624,13 +619,7 @@ def run_preprocessing_loop(
                                     batch_entries = []
                                     for _ in range(batch_size):
                                         batch_entries.append(processed_entries_queue.popleft())
-                                    
-                                    # Create BatchEncoding using collate function (supports multiple forward passes)
                                     batch_encoding = collate(batch_entries, tokenizer=tokenizer)
-                                    # Add model_version to the BatchEncoding for finetune_loop compatibility
-                                    model_versions = [entry["model_version"] for entry in batch_entries]
-                                    batch_encoding["model_version"] = model_versions
-                                    # Write the BatchEncoding object to stream
                                     writer.write(batch_encoding)
                                     published_samples += len(batch_entries)
                                     samples_per_worker[worker_id] += len(batch_entries)

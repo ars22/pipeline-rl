@@ -10,7 +10,6 @@ from datasets.combine import interleave_datasets
 from datasets.fingerprint import Hasher
 from datasets.load import load_dataset
 from torch.utils.data.dataloader import DataLoader
-from transformers import BatchEncoding
 from transformers import default_data_collator
 import os
 
@@ -18,7 +17,7 @@ from pipelinerl.rollouts import TrainingText
 
 from .context import get_accelerator, logger
 from .rl import RL_DATA_COLUMNS, prepare_rl_fields
-from .types import DataArgs, DataPartArgs
+from .types import DataArgs, DataPartArgs, PipelineBatchEncoding
 
 datasets.builder.has_sufficient_disk_space = (
     lambda needed_bytes, directory=".": True
@@ -113,21 +112,24 @@ def preprocess_fn(
     tokenizer: transformers.PreTrainedTokenizerBase,
     seq_length: int,
     is_rl: bool = False,
-) -> BatchEncoding:
+) -> dict[str, Any]:
     if "input_ids" in entry and entry["input_ids"]:
-        # build the `encoding` object from the given tokenization
-        encoding = BatchEncoding()
-        encoding["input_ids"] = entry["input_ids"]
-        encoding["labels"] = entry["labels"]
-        encoding["attention_mask"] = [1] * len(entry["input_ids"])
+        # build the encoding dict from the given tokenization
+        encoding = {
+            "input_ids": entry["input_ids"],
+            "labels": entry["labels"],
+            "attention_mask": [1] * len(entry["input_ids"])
+        }
     else:
-        # tokenize text to build the `encoding` object
-        encoding = tokenizer(
+        # tokenize text to build the encoding dict
+        tokenizer_output = tokenizer(
             entry["text"],
             return_offsets_mapping=True,
             max_length=seq_length,
             truncation=True,
         )
+        # Convert BatchEncoding to dict
+        encoding = dict(tokenizer_output)
         if "predicted_spans" in entry:
             predicted_spans = entry["predicted_spans"]
         else:
@@ -162,8 +164,9 @@ def collate(
     tokenizer: transformers.PreTrainedTokenizerBase,
     label_mask_value: int = MASKED_TOKEN_ID,
     pad_to_multiple_of: int = 16,
-) -> BatchEncoding:
+) -> PipelineBatchEncoding:
     # turn list of dicts with the same keys into a dict of lists
+    model_versions = [example.get("model_version", 0) for example in examples]
     example_dict = {key: [example[key] for example in examples] for key in examples[0].keys()}
     seq_length = max(len(i) for i in example_dict["input_ids"])
     if seq_length % pad_to_multiple_of:
@@ -182,6 +185,10 @@ def collate(
                 result[k] = torch.stack(valid_tensors)
     
     for k, seq_list in example_dict.items():
+        # Handle model_version specially - it should remain as a list of integers
+        if k == "model_version":
+            result[k] = seq_list  # Keep as list of ints, one per example
+            continue
         if any(isinstance(seq, (str, dict)) for seq in seq_list):
             logger.debug(f"Skipping key '{k}' - contains str/dict sequences")
             continue
@@ -200,14 +207,18 @@ def collate(
                 padded = (seq + padding) if tokenizer.padding_side == "right" else (padding + seq)
                 padded_sequences.append(padded)
             result[k] = torch.tensor(padded_sequences)
-    return BatchEncoding(result, tensor_type="pt")
+    result["model_version"] = min(model_versions)
+    result["is_packed"] = False 
+    return PipelineBatchEncoding(**result)
 
 
 def collate_packed(
     examples: list[dict[str, list[int]]],
     tokenizer: transformers.PreTrainedTokenizerBase,
     label_pad_value: int = MASKED_TOKEN_ID,
-) -> BatchEncoding:
+) -> PipelineBatchEncoding:
+    model_versions = [example.get("model_version", 0) for example in examples]
+    
     # pre-compute total length and create tensors in one go
     total_length = sum(len(example["input_ids"]) for example in examples)
 
@@ -254,7 +265,9 @@ def collate_packed(
     extra_tensors = default_data_collator([{k: extra_lists[k] for k in extra_keys}], return_tensors="pt")
 
     result = {**base_tensors, **extra_tensors}
-    return BatchEncoding(result)
+    result["model_version"] = min(model_versions)
+    result["is_packed"] = True 
+    return PipelineBatchEncoding(**result)
 
 
 def create_dataloader(

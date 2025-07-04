@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Any, Dict, List, Literal, TypeAlias, Union
 
-from pydantic import BaseModel, ConfigDict
+import torch
+from pydantic import BaseModel, ConfigDict, field_validator
 
 ModelClass: TypeAlias = Literal["causal-language-modeling", "seq2seq-language-modeling", "vision2seq-language-modeling"]
 
@@ -40,3 +41,79 @@ class TrainingMetrics:
     max_batch_len: int = 0
     min_batch_len: int = int(1e9)
     time_waiting_for_data: float = 0.0
+
+
+class PipelineBatchEncoding(BaseModel):
+    """Pydantic model for batch encoding with automatic tensor conversion."""
+    
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    # All fields are tensors after validation
+    input_ids: torch.LongTensor
+    attention_mask: torch.LongTensor
+    labels: torch.LongTensor
+    position_ids: torch.LongTensor | None = None  # Required when seq_packing=True
+    
+    rewards: torch.FloatTensor
+    advantages: torch.FloatTensor
+    ref_logprobs: torch.FloatTensor
+    old_logprobs: torch.FloatTensor
+    group_tokens: torch.FloatTensor
+    overflow: torch.FloatTensor
+    
+    model_version: int
+    sentinel: bool = False
+    is_packed: bool = False 
+    
+    # Visual feature fields (optional, for multimodal models)
+    pixel_values: torch.FloatTensor | None = None
+    image_grid_thw: List[List[int]] | None = None
+    
+    @field_validator('input_ids', 'attention_mask', 'labels', 'position_ids', mode='before')
+    @classmethod
+    def convert_to_long_tensor(cls, v: List[int] | None) -> torch.LongTensor | None:
+        """Convert lists to long tensors."""
+        if v is None:
+            return None
+        return torch.tensor(v, dtype=torch.long)
+    
+    @field_validator('rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'overflow', 'pixel_values', mode='before')
+    @classmethod
+    def convert_to_float_tensor(cls, v: List[float] | None) -> torch.FloatTensor | None:
+        """Convert lists to float tensors."""
+        if v is None:
+            return None
+        return torch.tensor(v, dtype=torch.float)
+    
+    def to_device(self, device: Union[str, torch.device]) -> 'PipelineBatchEncoding':
+        """Move all tensors to the specified device and return updated instance."""
+        for field_name in self.model_fields:
+            field_value = getattr(self, field_name)
+            if isinstance(field_value, torch.Tensor):
+                setattr(self, field_name, field_value.to(device))
+        return self
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], **defaults) -> 'PipelineBatchEncoding':
+        """Create from dictionary, filling in missing required fields with defaults."""
+        # Merge defaults with data
+        merged = {**defaults, **data}
+        
+        # Extract only known fields for the model
+        model_fields = {}
+        extra_fields = {}
+        
+        for key, value in merged.items():
+            if key in cls.model_fields:
+                model_fields[key] = value
+            else:
+                extra_fields[key] = value
+        
+        # Create instance with model fields
+        instance = cls(**model_fields)
+        
+        # Add extra fields
+        for key, value in extra_fields.items():
+            instance.model_extra[key] = value
+            
+        return instance

@@ -255,8 +255,16 @@ class FileStreamWriter(StreamWriter):
     def write(self, data):
         # Textual streams are so useful, that we try hard to jsonify the given object.
         if isinstance(data, BaseModel):
-            data = data.model_dump()
-        elif hasattr(data, '__class__') and 'BatchEncoding' in str(type(data)):
+            # Convert Pydantic model to dict, handling tensors
+            data_dict = data.model_dump()
+            # Convert any tensors to numpy arrays for JSON serialization
+            for key, value in data_dict.items():
+                if hasattr(value, 'numpy'):
+                    data_dict[key] = value.numpy()
+                elif hasattr(value, 'tolist'):
+                    data_dict[key] = value.tolist()
+            data = data_dict
+        elif hasattr(data, '__class__') and 'PipelineBatchEncoding' in str(type(data)):
             data = {k: v.tolist() if hasattr(v, 'tolist') else v for k, v in data.items()}
         self._file.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY).decode("utf-8"))
         self._file.write("\n")

@@ -1,6 +1,7 @@
 import logging
 import os
 from functools import partial
+from typing import Any
 from pydantic import BaseModel, Field
 
 import numpy as np
@@ -8,7 +9,8 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from datasets import Dataset
-from transformers import BatchEncoding, PreTrainedModel
+from transformers import PreTrainedModel
+from pipelinerl.finetune.types import PipelineBatchEncoding
 
 from .utils import (
     sum_sum,
@@ -131,7 +133,7 @@ def linear_decay_coef(current_step: int, max_step: int, initial_coef: float, fin
 
 def rl_step(
     model: PreTrainedModel,
-    batch: dict,
+    batch: PipelineBatchEncoding,
     current_step: int,
     max_step: int,
     config: RLConfig,
@@ -142,7 +144,7 @@ def rl_step(
 
     Args:
         model (PreTrainedModel): The model to train
-        batch (dict): Batch of data containing rewards, advantages, masks, input_ids etc.
+        batch (PipelineBatchEncoding): Batch of data containing rewards, advantages, masks, input_ids etc.
         current_step (int): Current training step
         max_step (int): Maximum number of training steps
         config (RLConfig): Configuration for the RL training
@@ -151,13 +153,12 @@ def rl_step(
         tuple[torch.Tensor, dict[str, float]]: Loss tensor and metrics dictionary
     """
     # pre-compute masks
-    masks = batch["labels"] != -100
+    masks = batch.labels != -100
     masks_shifted = masks[:, 1:]
 
     # if we have position_ids, we are packing
-    is_packed = "position_ids" in batch
-    if is_packed:
-        position_ids = batch["position_ids"][0]
+    if batch.is_packed:
+        position_ids = batch.position_ids
         # sequence boundary computation
         sequence_starts = torch.where(position_ids == 0)[0]
         seq_boundaries = torch.cat(
@@ -179,18 +180,18 @@ def rl_step(
         segments = None
 
     model_inputs = {
-        "input_ids": batch["input_ids"],
-        "attention_mask": batch["attention_mask"],
-        "labels": batch["labels"],
+        "input_ids": batch.input_ids,
+        "attention_mask": batch.attention_mask,
+        "labels": batch.labels,
     }
-    if is_packed:
-        model_inputs["position_ids"] = batch["position_ids"]
+    if batch.is_packed:
+        model_inputs["position_ids"] = batch.position_ids
     
     # Add visual features if present (for multimodal models)
-    if "pixel_values" in batch and batch["pixel_values"] is not None:
-        model_inputs["pixel_values"] = batch["pixel_values"]
-    if "image_grid_thw" in batch and batch["image_grid_thw"] is not None:
-        model_inputs["image_grid_thw"] = batch["image_grid_thw"].reshape((1, 3))
+    if hasattr(batch, 'pixel_values') and batch.pixel_values is not None:
+        model_inputs["pixel_values"] = batch.pixel_values
+    if hasattr(batch, 'image_grid_thw') and batch.image_grid_thw is not None:
+        model_inputs["image_grid_thw"] = batch.image_grid_thw.reshape((1, 3))
 
     # Check if model has value head
     has_value_head = hasattr(model, 'value_head') or (hasattr(model, 'module') and hasattr(model.module, 'value_head'))
@@ -211,17 +212,17 @@ def rl_step(
         value_predictions = outputs.value[:, :-1]  # Shift to align with other sequences
 
     # get log probs for actual tokens
-    new_logprobs = torch.gather(logprobs, dim=2, index=batch["input_ids"][:, 1:].unsqueeze(2)).squeeze(2)
+    new_logprobs = torch.gather(logprobs, dim=2, index=batch.input_ids[:, 1:].unsqueeze(2)).squeeze(2)
     assert torch.isfinite(new_logprobs).all(), f"new_logprobs is not finite: {new_logprobs}"
     del logprobs
 
     # get shifted values and compute ratios
-    rewards = batch.pop("rewards")[:, 1:]
-    advantages = batch.pop("advantages")[:, 1:]
-    ref_logprobs = batch["ref_logprobs"][:, 1:]
-    old_logprobs = batch["old_logprobs"][:, 1:]
-    group_tokens = batch["group_tokens"][:, 1:]
-    overflow = batch["overflow"][:, 1:]
+    rewards = batch.rewards[:, 1:]
+    advantages = batch.advantages[:, 1:]
+    ref_logprobs = batch.ref_logprobs[:, 1:]
+    old_logprobs = batch.old_logprobs[:, 1:]
+    group_tokens = batch.group_tokens[:, 1:]
+    overflow = batch.overflow[:, 1:]
 
     if config.group_normalization:
         # assert that group_tokens is not zero
@@ -368,7 +369,7 @@ def rl_step(
     return final_loss, stats
 
 
-def populate_rl_data(dataset: list[BatchEncoding], eos_token_id: int, config: RLConfig) -> list[BatchEncoding]:
+def populate_rl_data(dataset: list[dict[str, Any]], eos_token_id: int, config: RLConfig) -> list[dict[str, Any]]:
     """
     Populates a dataset with reinforcement learning specific data columns including
     rewards, advantages, and token weights.
@@ -454,11 +455,11 @@ def populate_rl_data(dataset: list[BatchEncoding], eos_token_id: int, config: RL
 
 
 def prepare_rl_fields(
-    encoding: BatchEncoding,
+    encoding: dict[str, Any],
     reward: float,
     old_logprobs: list[float],
     ref_logprobs: list[float],
-) -> BatchEncoding:
+) -> dict[str, Any]:
     """
     Convert reward per agent step to reward per token and add returns and advantages placeholders
     """

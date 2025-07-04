@@ -22,9 +22,10 @@ from pydantic import BaseModel
 from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import MixedPrecision
-from transformers import PreTrainedTokenizerFast, get_scheduler, set_seed, BatchEncoding
+from transformers import PreTrainedTokenizerFast, get_scheduler, set_seed
 
 import pipelinerl.torch_utils
+from pipelinerl.finetune.types import PipelineBatchEncoding
 from pipelinerl.finetune.checkpoints import (
     load_model,
     load_tokenizer,
@@ -43,7 +44,7 @@ from pipelinerl.finetune.rl import (
 )
 from pipelinerl.finetune.rl.utils import get_avg_rl_stats
 from pipelinerl.finetune.types import TrainingMetrics
-from pipelinerl.finetune.utils import VersionedTensors, create_sentinel_batch
+from pipelinerl.finetune.utils import create_sentinel_batch
 from pipelinerl.streams import (
     SingleStreamSpec,
     read_stream,
@@ -92,7 +93,7 @@ def gather_rl_metrics(rl_metrics: Dict[str, List]) -> Dict[str, List]:
 
 def run_data_loader(
     data_stream: SingleStreamSpec,
-    batch_queue: Queue[VersionedTensors | Exception],
+    batch_queue: Queue[PipelineBatchEncoding | Exception],
 ):
     """Load BatchEncoding objects directly from preprocessor."""
     with read_stream(data_stream) as stream_reader:
@@ -102,34 +103,11 @@ def run_data_loader(
                     if isinstance(batch_encoding, Exception):
                         batch_queue.put(batch_encoding)
                         break
-                    
-                    # Ensure batch_encoding is properly converted to BatchEncoding if needed
-                    if not hasattr(batch_encoding, 'data'):
-                        # Convert dict to BatchEncoding if it's not already
-                        batch_encoding = BatchEncoding(batch_encoding)
-                    
-                    # Move tensors to device, converting lists to tensors for known tensor fields
-                    long_tensor_fields = {'input_ids', 'attention_mask', 'labels', 'position_ids'}
-                    float_tensor_fields = {'rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'overflow'}
-                    batch = {}
-                    for k, v in batch_encoding.items():
-                        if isinstance(v, torch.Tensor):
-                            batch[k] = v.to(get_accelerator().device)
-                        elif k in long_tensor_fields and isinstance(v, list):
-                            # Convert lists to long tensors for integer fields
-                            batch[k] = torch.tensor(v, dtype=torch.long).to(get_accelerator().device)
-                        elif k in float_tensor_fields and isinstance(v, list):
-                            # Convert lists to float tensors for floating point fields
-                            batch[k] = torch.tensor(v, dtype=torch.float).to(get_accelerator().device)
-                        else:
-                            batch[k] = v
-                    
-                    # Extract model version from batch (assuming first sample's version)
-                    # Note: model_version should be included in the BatchEncoding from preprocessor
-                    model_version = batch.get("model_version", [0])[0] if "model_version" in batch else 0
-                    
-                    batch = VersionedTensors(tensors=batch, model_version=model_version)
-                    batch_queue.put(batch)
+
+                    # Convert to PipelineBatchEncoding and move to device
+                    pipeline_batch = PipelineBatchEncoding(**batch_encoding)
+                    pipeline_batch = pipeline_batch.to_device(get_accelerator().device)
+                    batch_queue.put(pipeline_batch)
                     logger.debug(f"Loaded batch, queue size is now {batch_queue.qsize()}")
 
             except Exception as e:
@@ -284,23 +262,22 @@ class WeightUpdateManager:
 
 def get_batch_token_count(batch):
     """Count actual tokens in batch (excluding padding)"""
-    attention_mask = batch.get("attention_mask")
+    attention_mask = batch.attention_mask
     assert attention_mask is not None, "We need attention_mask for accurate token counting"
     return attention_mask.sum().item()
 
 
 def get_batch_sequence_count(batch):
     """Count actual sequences in a batch, accounting for sequence packing"""
-    is_packed = "position_ids" in batch
-    if is_packed:
+    if batch.position_ids is not None:
         # for packed sequences, count the number of actual sequences by looking at position_ids
-        position_ids = batch["position_ids"][0]  # [1, seq_len]
+        position_ids = batch.position_ids[0]  # [1, seq_len]
         # sequence boundary computation - each position with id 0 starts a new sequence
         sequence_starts = torch.where(position_ids == 0)[0]
         return len(sequence_starts)
     else:
         # For unpacked sequences, each row is one sample
-        return batch["input_ids"].size(0)
+        return batch.input_ids.size(0)
 
 
 def validate_packing_config(args):
@@ -509,7 +486,7 @@ def rl_finetuning_worker(
     weight_update_manager: WeightUpdateManager | None,
     tokenizer: PreTrainedTokenizerFast,
     training_metrics: TrainingMetrics,
-    batch_queue: Queue[VersionedTensors | Exception],
+    batch_queue: Queue[PipelineBatchEncoding | Exception],
     trainer_status_stream: Any,
 ):
     local_samples = torch.tensor([0], device=get_accelerator().device)
@@ -532,7 +509,7 @@ def rl_finetuning_worker(
                     timeout = min(timeout * 1.5, 5.0)
             if isinstance(batch_or_exc, Exception):
                 raise batch_or_exc
-            assert isinstance(batch_or_exc, VersionedTensors)
+            assert isinstance(batch_or_exc, PipelineBatchEncoding)
             yield batch_or_exc
 
     data_generator = batch_generator_fn()
@@ -581,8 +558,8 @@ def rl_finetuning_worker(
         before_getting_next_batch = time.time()
 
 
-        versioned_batch = next(data_generator)
-        is_sentinel_batch = bool(versioned_batch.tensors.get("sentinel", False))
+        batch = next(data_generator)
+        is_sentinel_batch = batch.sentinel
         #TODO: rm debug code
         if local_samples[0] == target_samples_per_worker:
             assert is_sentinel_batch, "We should get a sentinel batch"
@@ -592,17 +569,16 @@ def rl_finetuning_worker(
         # check if too old, don't drop but count
         if (
             args.max_lag is not None
-            and training_metrics.last_broadcasted_version - versioned_batch.model_version > args.max_lag
+            and training_metrics.last_broadcasted_version - batch.model_version > args.max_lag
         ):
             training_metrics.samples_too_old_to_train += args.train_batch_size
-        batch = versioned_batch.tensors
         lag_stats["min_version"] = min(
-            lag_stats.get("min_version", versioned_batch.model_version), versioned_batch.model_version
+            lag_stats.get("min_version", batch.model_version), batch.model_version
         )
         lag_stats["max_version"] = max(
-            lag_stats.get("max_version", versioned_batch.model_version), versioned_batch.model_version
+            lag_stats.get("max_version", batch.model_version), batch.model_version
         )
-        last_model_version = versioned_batch.model_version
+        last_model_version = batch.model_version
 
         if not is_sentinel_batch:
             # We exclude time waiting for data from the pass time
@@ -682,7 +658,7 @@ def rl_finetuning_worker(
         if not is_sentinel_batch:
             passes_took.append(time.time() - time_before_pass)
 
-        logger.debug(f"Did a pass, version was {versioned_batch.model_version}")
+        logger.debug(f"Did a pass, version was {batch.model_version}")
         if not do_optimizer_step:
             continue
 
