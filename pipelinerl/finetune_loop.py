@@ -571,6 +571,7 @@ def rl_finetuning_worker(
 
         versioned_batch = next(data_generator)
         is_sentinel_batch = bool(versioned_batch.tensors.get("sentinel", False))
+        #TODO: rm debug code
         if local_samples[0] == target_samples_per_worker:
             assert is_sentinel_batch, "We should get a sentinel batch"
             logger.info("next batch should be a sentinel batch")
