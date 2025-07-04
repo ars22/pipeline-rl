@@ -84,3 +84,5 @@ rl:
   temperature: 1.0
   entropy_bonus: 0.0
   overlong_filtering: false
+  # Coefficient for value loss (when use_value_head is true)
+  value_loss_coef: 0.

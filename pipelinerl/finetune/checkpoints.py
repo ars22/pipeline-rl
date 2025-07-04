@@ -21,6 +21,7 @@ from transformers.models.auto.modeling_auto import _BaseAutoModelClass
 from .context import get_accelerator, logger
 from .lora import has_lora_checkpoint, lora_load, lora_save, prepare_lora_model
 from .types import ModelClass, TrainingMetrics
+from .value_model import AutoModelForCausalLMWithValueHead
 
 
 def is_deepspeed_model(model) -> bool:
@@ -35,6 +36,8 @@ def get_auto_model_class(
     match model_class:
         case "causal-language-modeling":
             return AutoModelForCausalLM
+        case "causal-language-modeling-with-value-head":
+            return AutoModelForCausalLMWithValueHead
         case "seq2seq-language-modeling":
             return AutoModelForSeq2SeqLM
         case "vision2seq-language-modeling":
@@ -137,13 +140,10 @@ def load_model(args, model_class, current_dir):
         logger.info(f"Initializing model {model_cls} from {args.config_name}")
 
     logger.info(f"Loading args: {loading_args}")
+    
     model = model_cls.from_pretrained(model_to_load, **loading_args)
 
-    if args.lora.enabled:
-        model = prepare_lora_model(args.lora, model, args.gradient_checkpointing)
-        if has_lora_checkpoint(current_dir):
-            lora_load(current_dir, model)
-    elif args.gradient_checkpointing:
+    if args.gradient_checkpointing:
         model.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": args.reentrant_checkpointing}
         )
@@ -344,11 +344,19 @@ def save_model_only(
     logger.info(f"Save model to {output_dir}")
 
     unwrapped_model = get_accelerator().unwrap_model(model) if unwrap else model
-    if lora:
-        lora_save(output_dir, unwrapped_model)
-        return
-
-    # for non-deepspeed models
+    logger.info(f"type of unwrapped_model: {type(unwrapped_model)}")
+    
+    # Handle value head model
+    if isinstance(unwrapped_model, AutoModelForCausalLMWithValueHead):
+        logger.info("Saving model with value head")
+        unwrapped_model.save_pretrained(
+            output_dir,
+            is_main_process=get_accelerator().is_main_process,
+            save_function=get_accelerator().save,
+            state_dict=get_accelerator().get_state_dict(model),
+            safe_serialization=safe_serialization,
+        )
+        logger.info(f"Saved model with value head to {output_dir}")
     elif isinstance(unwrapped_model, transformers.PreTrainedModel):
         logger.info("Saving model using transformers save_pretrained")
         unwrapped_model.save_pretrained(  # type: ignore

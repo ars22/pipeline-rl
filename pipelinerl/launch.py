@@ -55,6 +55,14 @@ def validate_config(cfg: DictConfig):
             raise ValueError("Vision language models cannot use sequence packing (seq_packing must be false)")
         if cfg.finetune.train_batch_size > 1:
             raise ValueError("Vision language models cannot use batch size > 1 (train_batch_size must be 1)")
+    
+    # Check for value loss coefficient constraints
+    if cfg.finetune.model_class == "causal-language-modeling-with-value-head":
+        if cfg.finetune.rl.value_loss_coef <= 0.0:
+            raise ValueError("value_loss_coef must be greater than 0 when using causal-language-modeling-with-value-head")
+    else:
+        if cfg.finetune.rl.value_loss_coef != 0.0:
+            raise ValueError("value_loss_coef must be 0 when not using causal-language-modeling-with-value-head")
 
 
 def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path):
