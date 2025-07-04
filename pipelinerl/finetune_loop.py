@@ -109,14 +109,18 @@ def run_data_loader(
                         batch_encoding = BatchEncoding(batch_encoding)
                     
                     # Move tensors to device, converting lists to tensors for known tensor fields
-                    tensor_fields = {'input_ids', 'attention_mask', 'labels', 'position_ids', 'rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'overflow'}
+                    long_tensor_fields = {'input_ids', 'attention_mask', 'labels', 'position_ids'}
+                    float_tensor_fields = {'rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'overflow'}
                     batch = {}
                     for k, v in batch_encoding.items():
                         if isinstance(v, torch.Tensor):
                             batch[k] = v.to(get_accelerator().device)
-                        elif k in tensor_fields and isinstance(v, list):
-                            # Convert lists back to tensors for known tensor fields
+                        elif k in long_tensor_fields and isinstance(v, list):
+                            # Convert lists to long tensors for integer fields
                             batch[k] = torch.tensor(v, dtype=torch.long).to(get_accelerator().device)
+                        elif k in float_tensor_fields and isinstance(v, list):
+                            # Convert lists to float tensors for floating point fields
+                            batch[k] = torch.tensor(v, dtype=torch.float).to(get_accelerator().device)
                         else:
                             batch[k] = v
                     
