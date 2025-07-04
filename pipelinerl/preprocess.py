@@ -575,8 +575,6 @@ def run_preprocessing_loop(
                             for worker_id in range(num_workers):
                                 logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, target is {target_samples_per_worker[worker_id]}")
                                 if cfg.finetune.seq_packing:
-                                    # if worker has enough samples, create a sentinel batch
-                                    #TODO: rm debug code
                                     if samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
                                         logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]}/{target_samples_per_worker[worker_id]} samples, creating sentinel batch")
                                         sentinel_batch = create_sentinel_batch(

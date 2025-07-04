@@ -197,10 +197,13 @@ def collate(
             logger.debug(f"Skipping key '{k}' - sequences contain str/dict items")
             continue
         else:
+            #TODO: finished key, n_predicted are weirdly padded
             # Handle sequence data: pad as usual
             padded_sequences = []
             pad_value = label_mask_value if k == "labels" else (0.0 if k in RL_DATA_COLUMNS else 0)
             for seq in seq_list:
+                if seq is None:
+                    continue  # Skip None sequences
                 if not isinstance(seq, list):
                     seq = [seq]
                 padding = [pad_value] * (seq_length - len(seq))

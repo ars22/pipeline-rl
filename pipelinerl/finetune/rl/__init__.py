@@ -158,7 +158,7 @@ def rl_step(
 
     # if we have position_ids, we are packing
     if batch.is_packed:
-        position_ids = batch.position_ids
+        position_ids = batch.position_ids[0]
         # sequence boundary computation
         sequence_starts = torch.where(position_ids == 0)[0]
         seq_boundaries = torch.cat(

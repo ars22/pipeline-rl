@@ -106,6 +106,7 @@ def run_data_loader(
 
                     # Convert to PipelineBatchEncoding and move to device
                     pipeline_batch = PipelineBatchEncoding(**batch_encoding)
+                    #TODO: put to deivce when taken out fo the queue
                     pipeline_batch = pipeline_batch.to_device(get_accelerator().device)
                     batch_queue.put(pipeline_batch)
                     logger.debug(f"Loaded batch, queue size is now {batch_queue.qsize()}")
