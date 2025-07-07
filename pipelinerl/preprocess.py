@@ -24,6 +24,7 @@ from typing import Literal
 
 from pipelinerl.finetune.logging_ import flatten_dict_config
 from pipelinerl.shared_memory_array import SharedMemoryArray, SharedMemoryQueue
+from pipelinerl.state import TrainerState
 from pipelinerl.utils import setup_logging, wait_for_inference_servers, init_wandb
 from pipelinerl.world import WorldMap
 
@@ -52,11 +53,6 @@ from pipelinerl.streams import (
 
 logger = logging.getLogger(__name__)
 
-
-class TrainerStatusMessage(BaseModel):
-    kind: Literal["trainer_status"] = "trainer_status"
-    samples_processed: int
-    timestamp: float = Field(default_factory=time.time)
 
 
 def _check_group_sizes(texts: list[dict], group_size: int) -> bool:
@@ -329,30 +325,6 @@ def filter_zero_advantage_groups(dataset: list[dict], epsilon: float = 1e-6) -> 
     return filtered_entries, num_filtered_out
 
 
-def load_preprocessor_state(state_path: Path) -> int:
-    """Load published samples count from preprocessor_state.json"""
-    if not state_path.exists():
-        return 0
-    
-    try:
-        with open(state_path) as f:
-            state = json.load(f)
-        return state.get("published_samples", 0)
-    except (json.JSONDecodeError, KeyError, FileNotFoundError):
-        logger.warning(f"Could not load preprocessor state from {state_path}, starting from 0")
-        return 0
-
-
-def save_preprocessor_state(state_path: Path, published_samples: int) -> None:
-    """Save published samples count to preprocessor_state.json"""
-    state = {"published_samples": published_samples}
-    try:
-        with open(state_path, "w") as f:
-            json.dump(state, f)
-    except Exception as e:
-        logger.error(f"Failed to save preprocessor state to {state_path}: {e}")
-
-
 def run_preprocessing_loop(
     cfg: DictConfig,
 ):
@@ -384,7 +356,6 @@ def run_preprocessing_loop(
         partition_range=(0, max(world_map.total_finetune_gpus, 1)),
     )
     stats_streams = SingleStreamSpec(exp_path=exp_root_dir, topic="preprocessor_stats")
-    trainer_status_stream = SingleStreamSpec(exp_path=exp_root_dir, topic="trainer_status")
     logger.info("Streams initialized")
 
     raw_chunk_queue = Queue(cfg.preprocess.raw_queue_size)
@@ -402,40 +373,11 @@ def run_preprocessing_loop(
     dataset_loader_thread = threading.Thread(target=dataset_loader_worker_fn)
     dataset_loader_thread.start()
     
-    # Global variable for latest trainer status
-    trainer_status_lock = threading.Lock()
-    global trainer_samples_processed
-    trainer_samples_processed = -1  # Initialize before thread function definition
-    
-    def read_trainer_status_worker():
-        """Worker thread to read trainer status messages without blocking main loop"""
-        global trainer_samples_processed
-        with read_stream(trainer_status_stream) as reader:
-            while True:
-                try:
-                    for status_msg in reader.read():
-                        if isinstance(status_msg, dict) and status_msg.get('kind') == 'trainer_status':
-                            samples_processed = status_msg.get('samples_processed', 0)
-                            with trainer_status_lock:
-                                trainer_samples_processed = max(trainer_samples_processed, samples_processed)
-                            logger.info(f"Trainer status received: {status_msg}")
-                except Exception as e:
-                    logger.error(f"Error reading trainer status: {e}")
-                    time.sleep(5)  # Wait before retrying
-    
-    # Start trainer status reader thread
-    trainer_status_thread = threading.Thread(target=read_trainer_status_worker, daemon=True)
-    trainer_status_thread.start()
+    # Initialize TrainerState
+    trainer_state = TrainerState(exp_root_dir)
+    trainer_state.start_listening()
 
     # Load published samples from state file
-    state_path = preprocess_dir / "preprocessor_state.json"
-    
-    # Handle force_restart flag
-    if cfg.force_restart and state_path.exists():
-        logger.info(f"force_restart=True, removing existing preprocessor state at {state_path}")
-        state_path.unlink()
-    published_samples = load_preprocessor_state(state_path)
-    logger.info(f"Loaded published samples count: {published_samples}")
     llms = [
         TrainableLLM(
             base_url=url,
@@ -452,6 +394,7 @@ def run_preprocessing_loop(
     next_llm_index = 0
     processed_entries_queue_popped_data = 0
     last_time_notice = 0
+    published_samples = None
 
     stats_aggregator = SlidingWindowAggregator(window_size=max(10, 1000 // cfg.preprocess.chunk_n_groups))
 
@@ -467,7 +410,6 @@ def run_preprocessing_loop(
     processed_entries_queue = deque(maxlen=max_queue_size)
     
     # Per-worker sample tracking (similar to finetune_loop.py)
-    samples_per_worker = [0] * num_workers  # Track samples written per worker
     total_filtered_out = 0  # Track total filtered samples across all batches
     with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
         with SharedMemoryManager() as smm:
@@ -558,16 +500,21 @@ def run_preprocessing_loop(
                         stats_aggregator.update([len(entry["input_ids"]) for entry in entries_processed])
                         max_model_version = max([entry["model_version"] for entry in entries_processed]) if entries_processed else 0
                     
-                    # Check if trainer is ready for more data by reading trainer status (non-blocking)
-                    with trainer_status_lock:
-                        last_trainer_samples_processed = trainer_samples_processed
-                    
-                    if last_trainer_samples_processed < 0:
-                        # did not receive any trainer status yet, skip this iteration
+                    # Check if trainer is ready for more data using TrainerState
+                    if trainer_state.processed_samples is None:
+                        # Trainer state not initialized yet, keep preprocessing data
                         continue
-
-                    target_published_samples = last_trainer_samples_processed + (batch_size * gradient_accumulation_passes_per_gpu * num_workers)
+                        
+                    if published_samples is None:
+                        # initialize published_samples from trainer state only at the first iteration
+                        published_samples = trainer_state.processed_samples
+                        samples_per_worker = [published_samples // num_workers] * num_workers
+                    
+                    #TODO: configure how many samples to publish per step
+                    MULTIPLIER = 1 
+                    target_published_samples = trainer_state.processed_samples + (batch_size * gradient_accumulation_passes_per_gpu * num_workers) * MULTIPLIER
                     target_samples_per_worker = [target_published_samples // num_workers] * num_workers
+
                     start_writing = time.time()
                     if len(processed_entries_queue) >= (samples_per_worker_per_step * num_workers):
                         # Per-worker sample tracking and batch creation (similar to finetune_loop.py)
@@ -628,7 +575,7 @@ def run_preprocessing_loop(
                             f"Not enough samples to write: {len(processed_entries_queue)} in queue, "
                             f"published_samples {published_samples}, target {target_published_samples}, "
                             f"Buffer size: {buffer.qsize()}, "
-                            f"last_trainer_samples_processed {last_trainer_samples_processed}"
+                            f"last_trainer_samples_processed {trainer_state.processed_samples}"
                         )
                         time.sleep(1)  # Sleep to avoid busy waiting
                         continue
@@ -654,8 +601,6 @@ def run_preprocessing_loop(
                         wandb_run.log(stats)
                     stats_writer.write(stats)
                     
-                    # Save preprocessor state after each iteration
-                    save_preprocessor_state(state_path, published_samples)
                     processing_took = time.time() - start_processing
                     logger.info(
                         f"Processed {len(entries_processed)} samples (filtered out {num_filtered_out}) in {processing_took:.3f}s"

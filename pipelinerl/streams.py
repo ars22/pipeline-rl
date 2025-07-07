@@ -11,6 +11,7 @@ from typing import Any, Iterator, Literal, Self, TextIO
 import redis
 from pydantic import BaseModel
 import redis.exceptions
+from pipelinerl.finetune.types import PipelineBatchEncoding
 
 
 logger = logging.getLogger(__name__)
@@ -264,7 +265,7 @@ class FileStreamWriter(StreamWriter):
                 elif hasattr(value, 'tolist'):
                     data_dict[key] = value.tolist()
             data = data_dict
-        elif hasattr(data, '__class__') and 'PipelineBatchEncoding' in str(type(data)):
+        elif isinstance(data, PipelineBatchEncoding):
             data = {k: v.tolist() if hasattr(v, 'tolist') else v for k, v in data.items()}
         self._file.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY).decode("utf-8"))
         self._file.write("\n")

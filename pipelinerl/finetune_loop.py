@@ -116,6 +116,7 @@ def run_data_loader(
                 break
 
 
+#TODO: should the topic be renamed to trainer_messages since it contains more than just weight updates?
 TRAINER_TOPIC = "weight_update_request"
 
 
@@ -143,14 +144,13 @@ class WeightBeingSavedToDisk(BaseModel):
     version: int
     timestamp: float = time.time()
 
-
-class TrainerStatusMessage(BaseModel):
-    kind: Literal["trainer_status"] = "trainer_status"
-    samples_processed: int
+    
+class OptimizerStepTrigger(BaseModel):
+    kind: Literal["optimizer_step_trigger"] = "optimizer_step_trigger"
+    version: int
     timestamp: float = time.time()
 
-
-TrainerMessage = WeightUpdateRequest | WeightUpdateSuccess | WeightBeingSavedToDisk
+TrainerMessage = WeightUpdateRequest | WeightUpdateSuccess | WeightBeingSavedToDisk | OptimizerStepTrigger
 
 
 class WeightUpdateManager:
@@ -326,9 +326,9 @@ def run_finetuning_loop(
     if args.force_restart and get_accelerator().is_main_process:
         remove_results(current_dir, intermediate_root_dir, training_state_dir, log_dir)
 
-    # Render-vous with inference servers
+    # Rendez-vous with inference servers
+    #TODO: rename the stream to be more general
     weight_update_stream = SingleStreamSpec(exp_path=exp_root_dir, topic="weight_update_request")
-    trainer_status_stream = SingleStreamSpec(exp_path=exp_root_dir, topic="trainer_status")
 
     # Logging
     if get_accelerator().is_main_process:
@@ -413,7 +413,7 @@ def run_finetuning_loop(
         logger.info("Actor process group initialized")
     else:
         actor_update_group = None
-        weight_update_stream = None
+        #weight_update_stream = None
     get_accelerator().wait_for_everyone()
 
     training_metrics = TrainingMetrics()
@@ -423,6 +423,12 @@ def run_finetuning_loop(
         training_metrics.lr = optimizer.param_groups[0]["lr"]
         logger.info("LR after loading training state: %.2E" % training_metrics.lr)
         dt = log_time(dt, time_stats, "finetune/training_state_load")
+
+    if get_accelerator().is_main_process:
+        trigger_message = OptimizerStepTrigger(version=training_metrics.samples)
+        with write_to_streams(weight_update_stream) as writer:
+            writer.write(trigger_message)
+        
 
     if args.send_weight_updates:
         llm_urls = cfg.me.llm_urls.split("+")
@@ -454,13 +460,6 @@ def run_finetuning_loop(
 
     try:
         logger.info("Start training")
-        
-        # Send initial trainer status to preprocessor
-        if get_accelerator().is_main_process:
-            with write_to_streams(trainer_status_stream) as writer:
-                writer.write(TrainerStatusMessage(samples_processed=training_metrics.samples))
-            logger.info(f"Sent initial trainer status: {training_metrics.samples} samples processed")
-        
         rl_finetuning_worker(
             args,
             model,
@@ -470,7 +469,7 @@ def run_finetuning_loop(
             tokenizer,
             training_metrics,
             batch_queue,
-            trainer_status_stream,
+            weight_update_stream,
         )
     finally:
         if actor_update_group:
@@ -487,7 +486,7 @@ def rl_finetuning_worker(
     tokenizer: PreTrainedTokenizerFast,
     training_metrics: TrainingMetrics,
     batch_queue: Queue[PipelineBatchEncoding | Exception],
-    trainer_status_stream: Any,
+    weight_update_stream: SingleStreamSpec | None = None,
 ):
     local_samples = torch.tensor([0], device=get_accelerator().device)
     # Create a list of tensors with matching dtype (int64)
@@ -675,14 +674,6 @@ def rl_finetuning_worker(
         this_worker_tokens = sum(tokens_processed)
         training_metrics.tokens += this_worker_tokens * get_accelerator().state.num_processes
         
-        # Send trainer status to preprocessor
-        if get_accelerator().is_main_process:
-            try:
-                with write_to_streams(trainer_status_stream) as writer:
-                    writer.write(TrainerStatusMessage(samples_processed=training_metrics.samples))
-            except Exception as e:
-                logger.warning(f"Failed to send trainer status: {e}")
-                raise  # Re-raise to see the actual error
         try:
             # Synchronize workers before optimizer step
             logger.info("Waiting for all workers to synchronize...")
@@ -704,6 +695,13 @@ def rl_finetuning_worker(
         time_to_save = time_to_save and not time_to_stop
         assert sum(micro_batches_size) == samples_per_worker_per_step
         training_metrics.time_waiting_for_data += time_waiting_for_data
+        
+        # Send optimizer step trigger to inference servers
+        if get_accelerator().is_main_process:
+            trigger_message = OptimizerStepTrigger(version=training_metrics.samples)
+            with write_to_streams(weight_update_stream) as writer:
+                writer.write(trigger_message)
+        
         if time_to_log or time_to_save:
             dt = log_time(dt, time_stats, "finetune/interim_eval")
             metrics_dict.update(
