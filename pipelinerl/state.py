@@ -43,7 +43,7 @@ class TrainerState:
     
     def wait_for_processed_samples(self):
         while self.processed_samples is None:
-            logger.info("Waiting for the trainer to declare the processed samples")
+            logger.info("Waiting for the trainer to declare the number of processed samples")
             time.sleep(1)
         return self.processed_samples
 

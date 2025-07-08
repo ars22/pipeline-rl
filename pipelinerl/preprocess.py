@@ -495,7 +495,7 @@ def run_preprocessing_loop(
                                         logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
                                         last_time_notice = processed_entries_queue_popped_data // 100
                             entry = buffer.get_nowait()
-                            processed_entries_queue.append(entry)
+                            processed_entries_queue.append(entry) # drop from the left if full
                         except Empty:
                             break
 
