@@ -261,8 +261,6 @@ class FileStreamWriter(StreamWriter):
             for key, value in data_dict.items():
                 if hasattr(value, 'numpy'):
                     data_dict[key] = value.numpy()
-                #elif hasattr(value, 'tolist'):
-                #    data_dict[key] = value.tolist()
             data = data_dict
         self._file.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY).decode("utf-8"))
         self._file.write("\n")
