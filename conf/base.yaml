@@ -61,6 +61,7 @@ preprocess:
   pop_old_data: ${..pop_old_data} 
   buffer_size: 0
   shared_memory_entry_size: 100000000
+  max_unconsumed_samples: batch
 llm:
   parameters:
     # changed

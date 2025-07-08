@@ -568,7 +568,7 @@ def run_preprocessing_loop(
                                     writer.write(batch_encoding)
                                     published_samples += len(current_batch)
                                     samples_per_trainer[trainer_id] += len(current_batch)
-                                    logger.info(f"[inner loop] Packed microbatch with {len(current_batch)} samples for trainer {trainer_id}")
+                                    logger.debug(f"[inner loop] Packed microbatch with {len(current_batch)} samples for trainer {trainer_id}")
                         else:
                             batch_entries = []
                             for _ in range(cfg.finetune.train_batch_size ):
@@ -577,13 +577,13 @@ def run_preprocessing_loop(
                             writer.write(batch_encoding)
                             published_samples += len(batch_entries)
                             samples_per_trainer[trainer_id] += len(batch_entries)
-                            logger.info(f"[inner loop] Packed microbatch with {len(batch_entries)} samples for trainer {trainer_id}")
+                            logger.debug(f"[inner loop] Packed microbatch with {len(batch_entries)} samples for trainer {trainer_id}")
 
                         trainer_id = (trainer_id + 1) % num_trainers
                         batch_done = published_samples == batch_boundary and trainer_id == 0
                         if batch_done:
                             batch_boundary += train_batch_size
-                        logger.info(
+                        logger.debug(
                             f"[inner loop] wrote {published_samples} samples, "
                             f"trainer {trainer_id} is at {samples_per_trainer[trainer_id]} samples, "
                             f"batch done: {batch_done}"
