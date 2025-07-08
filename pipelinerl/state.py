@@ -10,7 +10,7 @@ from pipelinerl.finetune_loop import (
     TrainerMessage,
     WeightBeingSavedToDisk,
     WeightUpdateSuccess,
-    OptimizerStepTrigger,
+    SamplesProcessed,
 )
 from pipelinerl.streams import SingleStreamSpec, read_stream
 
@@ -22,7 +22,7 @@ class TrainerState:
         self.exp_path = exp_path
         self.propagated_weight_version: int | None = None
         self.version_weight_last_save: int | None = None
-        self.processed_samples: int | None = None
+        self.samples_processed: int | None = None
 
     def start_listening(self):
         stream = SingleStreamSpec(exp_path=self.exp_path, topic=TRAINER_TOPIC)
@@ -35,8 +35,8 @@ class TrainerState:
                         self.propagated_weight_version = message.version
                     if isinstance(message, WeightBeingSavedToDisk):
                         self.version_weight_last_save = message.version
-                    if isinstance(message, OptimizerStepTrigger):
-                        self.processed_samples = message.version
+                    if isinstance(message, SamplesProcessed):
+                        self.samples_processed = message.samples_processed
 
         self._thread = threading.Thread(target=listen)
         self._thread.start()

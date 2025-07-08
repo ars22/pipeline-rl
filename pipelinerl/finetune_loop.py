@@ -145,12 +145,12 @@ class WeightBeingSavedToDisk(BaseModel):
     timestamp: float = time.time()
 
     
-class OptimizerStepTrigger(BaseModel):
-    kind: Literal["optimizer_step_trigger"] = "optimizer_step_trigger"
-    version: int
+class SamplesProcessed(BaseModel):
+    kind: Literal["samples_processed"] = "samples_processed"
+    samples_processed: int
     timestamp: float = time.time()
 
-TrainerMessage = WeightUpdateRequest | WeightUpdateSuccess | WeightBeingSavedToDisk | OptimizerStepTrigger
+TrainerMessage = WeightUpdateRequest | WeightUpdateSuccess | WeightBeingSavedToDisk | SamplesProcessed
 
 
 class WeightUpdateManager:
@@ -425,7 +425,7 @@ def run_finetuning_loop(
         dt = log_time(dt, time_stats, "finetune/training_state_load")
 
     if get_accelerator().is_main_process:
-        trigger_message = OptimizerStepTrigger(version=training_metrics.samples)
+        trigger_message = SamplesProcessed(samples_processed=training_metrics.samples)
         with write_to_streams(weight_update_stream) as writer:
             writer.write(trigger_message)
         
@@ -658,6 +658,12 @@ def rl_finetuning_worker(
             passes_took.append(time.time() - time_before_pass)
 
         logger.debug(f"Did a pass, version was {batch.model_version}")
+
+        if get_accelerator().is_main_process:
+            trigger_message = SamplesProcessed(samples_processed=start_samples + total_samples)
+            with write_to_streams(weight_update_stream) as writer:
+                writer.write(trigger_message)
+
         if not do_optimizer_step:
             continue
 
@@ -696,11 +702,6 @@ def rl_finetuning_worker(
         assert sum(micro_batches_size) == samples_per_worker_per_step
         training_metrics.time_waiting_for_data += time_waiting_for_data
         
-        # Send optimizer step trigger to inference servers
-        if get_accelerator().is_main_process:
-            trigger_message = OptimizerStepTrigger(version=training_metrics.samples)
-            with write_to_streams(weight_update_stream) as writer:
-                writer.write(trigger_message)
         
         if time_to_log or time_to_save:
             dt = log_time(dt, time_stats, "finetune/interim_eval")
