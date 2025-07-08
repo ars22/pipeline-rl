@@ -536,7 +536,7 @@ def run_preprocessing_loop(
                         logger.debug(f"[inner loop] trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_trainer}")
                         if cfg.finetune.seq_packing:
                             if samples_per_trainer[trainer_id] == target_samples_per_trainer:
-                                logger.info(f"[inner loop] trainer {trainer_id} has all {target_samples_per_trainer} samples, creating sentinel batch")
+                                logger.debug(f"[inner loop] trainer {trainer_id} has all {target_samples_per_trainer} samples, creating sentinel batch")
                                 sentinel_batch = create_sentinel_batch(
                                     device=None,
                                     tokenizer=tokenizer,
