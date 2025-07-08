@@ -42,10 +42,10 @@ class TrainerState:
         self._thread.start()
     
     def wait_for_processed_samples(self):
-        while self.processed_samples is None:
+        while self.samples_processed is None:
             logger.info("Waiting for the trainer to declare the number of processed samples")
             time.sleep(1)
-        return self.processed_samples
+        return self.samples_processed
 
     def wait_for_model_version(self):
         while self.propagated_weight_version is None:

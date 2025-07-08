@@ -395,7 +395,9 @@ def run_preprocessing_loop(
     next_llm_index = 0
     processed_entries_queue_popped_data = 0
     last_time_notice = 0
-    worker_id = 0
+    writing_took = 0
+    trainer_id = 0
+    can_publish_stats = False
     published_samples = None
     batch_done = False
 
@@ -405,13 +407,16 @@ def run_preprocessing_loop(
     # Queue for holding processed entries, with size based on batch_size * accumulation_steps
     
     # Sequence packing configuration
-    num_workers = world_map.total_finetune_gpus
-    gradient_accumulation_passes_per_gpu = cfg.finetune.gradient_accumulation_passes // num_workers
-    samples_per_worker_per_step =  cfg.finetune.train_batch_size * gradient_accumulation_passes_per_gpu
-    train_batch_size = samples_per_worker_per_step * num_workers
+    num_trainers = world_map.total_finetune_gpus
+    gradient_accumulation_passes_per_gpu = cfg.finetune.gradient_accumulation_passes // num_trainers
+    samples_per_trainer_per_step = cfg.finetune.train_batch_size * gradient_accumulation_passes_per_gpu
+    train_batch_size = samples_per_trainer_per_step * num_trainers
     processed_entries_queue = deque(maxlen=train_batch_size)
+    published_samples = trainer_state.wait_for_processed_samples()
+    start_samples = published_samples
+    samples_per_trainer = [published_samples // num_trainers] * num_trainers
     
-    # Per-worker sample tracking (similar to finetune_loop.py)
+    # Per-trainer sample tracking (similar to finetune_loop.py)
     total_filtered_out = 0  # Track total filtered samples across all batches
     with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
         with SharedMemoryManager() as smm:
@@ -442,6 +447,9 @@ def run_preprocessing_loop(
                 workers.append(worker)
             
             try:
+                start_processing = time.time()
+                writing_took = 0
+                num_filtered_out = 0
                 while True:
                     llm = llms[next_llm_index] if llms else None
                     if not input_queue.full():
@@ -457,11 +465,17 @@ def run_preprocessing_loop(
                         except Empty:
                             pass
 
-                    start_processing = time.time()
                     dataset = None
                     try:
                         # Try to write the next dataset to the output stream, if it is ready
                         dataset = output_queue.get(timeout=0.001)
+                        if isinstance(dataset, Exception):
+                            raise dataset
+                        if rl_config.filter_zero_advantage_groups:
+                            dataset, num_filtered_out = filter_zero_advantage_groups(dataset)
+                            total_filtered_out += num_filtered_out
+                            if num_filtered_out > 0:
+                                logger.info(f"Filtered out {num_filtered_out} samples from groups with zero advantage.")
                         fetching_took = time.time() - start_processing
                     except Empty:
                         pass
@@ -481,10 +495,12 @@ def run_preprocessing_loop(
                             logger.info(f"Buffer is full with {buffer.qsize()} samples, start writing")
 
                     # Process entries directly from the queue
-                    num_filtered_out = 0
-                    entries_processed = []
                     # print how many entries in buffer
+
+
+
                     while not buffer.empty():
+                        can_publish_stats = True
                         try:
                             if len(processed_entries_queue) == processed_entries_queue.maxlen:
                                 if not pop_old_data:
@@ -499,37 +515,24 @@ def run_preprocessing_loop(
                         except Empty:
                             break
 
-                        stats_aggregator.update([len(entry["input_ids"]) for entry in entries_processed])
-                        max_model_version = max([entry["model_version"] for entry in entries_processed]) if entries_processed else 0
+                        stats_aggregator.update([len(entry["input_ids"]) for entry in processed_entries_queue])
+                        max_model_version = max([entry["model_version"] for entry in processed_entries_queue]) if processed_entries_queue else 0
                     
-                    # Check if trainer is ready for more data using TrainerState
-                    if trainer_state.samples_processed is None:
-                        # Trainer state not initialized yet, keep preprocessing data
-                        continue
-                        
-                    if published_samples is None:
-                        # initialize published_samples from trainer state only at the first iteration
-                        published_samples = trainer_state.samples_processed
-                        samples_per_worker = [published_samples // num_workers] * num_workers
-                    
-                    
-                    #TODO: cfg
-                    EXTRA_BATCHES = 1
-                    target_number_of_batches = math.ceil(trainer_state.samples_processed / train_batch_size) + EXTRA_BATCHES
-                    target_published_samples = target_number_of_batches * train_batch_size
-                    target_samples_per_worker = [target_published_samples // num_workers] * num_workers
+                    next_batch_number = math.ceil(trainer_state.samples_processed / train_batch_size) + 1
+                    batch_boundary = next_batch_number * train_batch_size
+                    target_samples_per_trainer = batch_boundary // num_trainers
 
-                    start_writing = time.time()
-                    if published_samples == target_published_samples and batch_done:
+                    if published_samples == batch_boundary and batch_done:
                         # wait for the finetune loop to finish processing data
                         continue
 
                     batch_done = False
+                    start_writing = time.time()
                     while len(processed_entries_queue) > 0 and not batch_done:
-                        logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]} samples, target is {target_samples_per_worker[worker_id]}")
+                        logger.info(f"trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_trainer}")
                         if cfg.finetune.seq_packing:
-                            if samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
-                                logger.info(f"Worker {worker_id} has {samples_per_worker[worker_id]}/{target_samples_per_worker[worker_id]} samples, creating sentinel batch")
+                            if samples_per_trainer[trainer_id] == target_samples_per_trainer:
+                                logger.info(f"trainer {trainer_id} has {samples_per_trainer[trainer_id]}/{target_samples_per_trainer} samples, creating sentinel batch")
                                 sentinel_batch = create_sentinel_batch(
                                     device=None,
                                     tokenizer=tokenizer,
@@ -545,22 +548,22 @@ def run_preprocessing_loop(
                                     sample_length = len(entry["input_ids"])
 
                                     if current_length + sample_length > cfg.finetune.seq_length:
-                                        break  # Current batch is full
+                                        break  # Current micro batch is full
                                     
-                                    # Add sample to current batch
+                                    # Add sample to current micro batch
                                     current_batch.append(processed_entries_queue.popleft())
                                     current_length += sample_length
                                     
                                     # Check if we've reached the sample limit per step
-                                    if len(current_batch) + samples_per_worker[worker_id] == target_samples_per_worker[worker_id]:
+                                    if len(current_batch) + samples_per_trainer[trainer_id] == target_samples_per_trainer:
                                         break
                             
                                 if current_batch:
                                     batch_encoding = collate_packed(current_batch, tokenizer=tokenizer)
                                     writer.write(batch_encoding)
                                     published_samples += len(current_batch)
-                                    samples_per_worker[worker_id] += len(current_batch)
-                                    logger.info(f"Packed batch with {len(current_batch)} samples for worker {worker_id}")
+                                    samples_per_trainer[trainer_id] += len(current_batch)
+                                    logger.info(f"Packed batch with {len(current_batch)} samples for trainer {trainer_id}")
                         else:
                             batch_entries = []
                             for _ in range(cfg.finetune.train_batch_size ):
@@ -568,19 +571,19 @@ def run_preprocessing_loop(
                             batch_encoding = collate(batch_entries, tokenizer=tokenizer)
                             writer.write(batch_encoding)
                             published_samples += len(batch_entries)
-                            samples_per_worker[worker_id] += len(batch_entries)
-                            logger.info(f"Created batch with {len(batch_entries)} samples for worker {worker_id}")
+                            samples_per_trainer[trainer_id] += len(batch_entries)
+                            logger.info(f"Created batch with {len(batch_entries)} samples for trainer {trainer_id}")
 
-                        worker_id = (worker_id + 1) % num_workers
-                        batch_done = (published_samples % train_batch_size == 0) and worker_id == 0
+                        trainer_id = (trainer_id + 1) % num_trainers
+                        batch_done = published_samples == batch_boundary and trainer_id == 0
                         logger.info(
                             f"Published {published_samples} samples, "
-                            f"worker {worker_id} processed {samples_per_worker[worker_id]} samples, "
+                            f"trainer {trainer_id} processed {samples_per_trainer[trainer_id]} samples, "
                             f"batch done: {batch_done}"
                         )
+                    writing_took += time.time() - start_writing
                             
-                    writing_took = time.time() - start_writing
-                    if batch_done: 
+                    if (batch_done or cfg.debug.mode) and can_publish_stats: 
                         samples_in_output_queue = output_queue.qsize() * cfg.preprocess.chunk_n_groups * cfg.attempts
                         stats = {
                             "preprocessor/published_samples": published_samples,
@@ -591,9 +594,6 @@ def run_preprocessing_loop(
                             "preprocessor/queue/output": output_queue.qsize(),
                             "preprocessor/filtered_out_samples": num_filtered_out,
                             "preprocessor/total_filtered_out_samples": total_filtered_out,
-                            "preprocessor/total_samples_per_worker": sum(samples_per_worker),
-                            "preprocessor/min_samples_per_worker": min(samples_per_worker) if samples_per_worker else 0,
-                            "preprocessor/max_samples_per_worker": max(samples_per_worker) if samples_per_worker else 0,
                         }
                         if stats_aggregator.has_enough_data():
                             stats.update({"preprocessor/" + k: v for k, v in stats_aggregator.get_stats().items()})
@@ -602,12 +602,17 @@ def run_preprocessing_loop(
                         stats_writer.write(stats)
                         
                         processing_took = time.time() - start_processing
+                        processed_samples = published_samples - start_samples
                         logger.info(
-                            f"Processed {len(entries_processed)} samples (filtered out {num_filtered_out}) in {processing_took:.3f}s"
-                            f" (last fetching took {fetching_took:.3f}, all writing took {writing_took:.3f})"
+                            f"Processed {processed_samples} samples (filtered out {num_filtered_out}) in {processing_took:.3f}s"
+                            f" (fetching took {fetching_took:.3f} and writing took {writing_took:.3f})"
                             f" and wrote to {output_stream}, total {published_samples} samples so far,"
                             f" {samples_in_output_queue} samples in output queue, max output queue entry size {output_queue.max_actual_entry_size()} bytes"
                         )
+                        start_processing = time.time()
+                        start_samples = published_samples
+                        writing_took = 0
+                        num_filtered_out = 0
             finally:
                 # Clean up worker processes
                 for worker in workers:
