@@ -499,11 +499,6 @@ def run_preprocessing_loop(
                             # If buffer size is not set, no point in logging
                             logger.info(f"Buffer is full with {buffer.qsize()} samples, start writing")
 
-                    # Process entries directly from the queue
-                    # print how many entries in buffer
-
-
-
                     while not buffer.empty():
                         try:
                             if len(processed_entries_queue) == processed_entries_queue.maxlen:
