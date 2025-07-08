@@ -138,19 +138,13 @@ class WeightUpdateSuccess(BaseModel):
     version: int
     timestamp: float = time.time()
 
-
-class WeightBeingSavedToDisk(BaseModel):
-    kind: Literal["weight_being_saved_to_disk"] = "weight_being_saved_to_disk"
-    version: int
-    timestamp: float = time.time()
-
-    
+ 
 class SamplesProcessed(BaseModel):
     kind: Literal["samples_processed"] = "samples_processed"
     samples_processed: int
     timestamp: float = time.time()
 
-TrainerMessage = WeightUpdateRequest | WeightUpdateSuccess | WeightBeingSavedToDisk | SamplesProcessed
+TrainerMessage = WeightUpdateRequest | WeightUpdateSuccess | SamplesProcessed
 
 
 class WeightUpdateManager:

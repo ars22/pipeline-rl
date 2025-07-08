@@ -376,7 +376,11 @@ def run_preprocessing_loop(
     
     # Initialize TrainerState
     trainer_state = TrainerState(exp_root_dir)
-    trainer_state.start_listening()
+    if cfg.debug.mode:
+        trainer_state.debug_mode_init()
+    else:
+        trainer_state.start_listening()
+        trainer_state.wait_for_model_version()
 
     # Load published samples from state file
     llms = [
@@ -415,6 +419,7 @@ def run_preprocessing_loop(
     published_samples = trainer_state.wait_for_processed_samples()
     start_samples = published_samples
     samples_per_trainer = [published_samples // num_trainers] * num_trainers
+    max_model_version = None
     
     # Per-trainer sample tracking (similar to finetune_loop.py)
     total_filtered_out = 0  # Track total filtered samples across all batches
@@ -500,7 +505,6 @@ def run_preprocessing_loop(
 
 
                     while not buffer.empty():
-                        can_publish_stats = True
                         try:
                             if len(processed_entries_queue) == processed_entries_queue.maxlen:
                                 if not pop_old_data:
@@ -583,7 +587,7 @@ def run_preprocessing_loop(
                         )
                     writing_took += time.time() - start_writing
                             
-                    if (batch_done or cfg.debug.mode) and can_publish_stats: 
+                    if (batch_done or cfg.debug.mode) and published_samples > start_samples:
                         samples_in_output_queue = output_queue.qsize() * cfg.preprocess.chunk_n_groups * cfg.attempts
                         stats = {
                             "preprocessor/published_samples": published_samples,
