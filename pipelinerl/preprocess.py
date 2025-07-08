@@ -399,7 +399,6 @@ def run_preprocessing_loop(
     next_llm_index = 0
     processed_entries_queue_popped_data = 0
     last_time_notice = 0
-    writing_took = 0
     trainer_id = 0
     published_samples = None
     batch_done = False
@@ -414,16 +413,16 @@ def run_preprocessing_loop(
     gradient_accumulation_passes_per_gpu = cfg.finetune.gradient_accumulation_passes // num_trainers
     samples_per_trainer_per_step = cfg.finetune.train_batch_size * gradient_accumulation_passes_per_gpu
     train_batch_size = samples_per_trainer_per_step * num_trainers
-    processed_entries_queue = deque(maxlen=train_batch_size)
+    processed_entries_queue = deque(maxlen=cfg.preprocess.ring_buffer_size)
     published_samples = trainer_state.wait_for_processed_samples()
-    start_samples = published_samples
+    last_published_samples = published_samples
     samples_per_trainer = [published_samples // num_trainers] * num_trainers
     max_model_version = None
-    batch_boundary = start_samples + train_batch_size
+    batch_boundary = published_samples + train_batch_size
     
     # Per-trainer sample tracking (similar to finetune_loop.py)
     total_filtered_out = 0  # Track total filtered samples across all batches
-    with write_to_streams(output_stream) as writer, write_to_streams(stats_streams) as stats_writer:
+    with write_to_streams(output_stream) as data_writer, write_to_streams(stats_streams) as stats_writer:
         with SharedMemoryManager() as smm:
             # Create shared memory queues without the manager parameter
             input_queue = SharedMemoryQueue(smm, cfg.preprocess.input_queue_size, cfg.preprocess.shared_memory_entry_size)
@@ -453,11 +452,10 @@ def run_preprocessing_loop(
             
             try:
                 start_processing = time.time()
+                fetching_took = 0
                 writing_took = 0
                 num_filtered_out = 0
                 while True:
-                    loop_start_samples = published_samples
-
                     llm = llms[next_llm_index] if llms else None
                     if not input_queue.full():
                         try:
@@ -475,6 +473,7 @@ def run_preprocessing_loop(
                     dataset = None
                     try:
                         # Try to write the next dataset to the output stream, if it is ready
+                        start_fetching = time.time()
                         dataset = output_queue.get(timeout=0.001)
                         if isinstance(dataset, Exception):
                             raise dataset
@@ -483,7 +482,7 @@ def run_preprocessing_loop(
                             total_filtered_out += num_filtered_out
                             if num_filtered_out > 0:
                                 logger.info(f"Filtered out {num_filtered_out} samples from groups with zero advantage.")
-                        fetching_took = time.time() - start_processing
+                        fetching_took += time.time() - start_fetching
                     except Empty:
                         pass
                     
@@ -524,7 +523,7 @@ def run_preprocessing_loop(
                     max_unconsumed_samples = (
                         train_batch_size 
                         if cfg.preprocess.max_unconsumed_samples == 'batch' 
-                        else cfg.preprocess.max_unconsumed_samples
+                        else cfg.preprocess.max_unconsumed_samples * num_trainers
                     )
                     assert isinstance(trainer_state.samples_processed, int)
                     if published_samples - trainer_state.samples_processed > max_unconsumed_samples:
@@ -534,7 +533,7 @@ def run_preprocessing_loop(
                     batch_done = False
                     start_writing = time.time()
                     while len(processed_entries_queue) > 0 and not batch_done:
-                        logger.info(f"trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_trainer}")
+                        logger.debug(f"[inner loop] trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_trainer}")
                         if cfg.finetune.seq_packing:
                             if samples_per_trainer[trainer_id] == target_samples_per_trainer:
                                 logger.info(f"[inner loop] trainer {trainer_id} has all {target_samples_per_trainer} samples, creating sentinel batch")
@@ -543,7 +542,7 @@ def run_preprocessing_loop(
                                     tokenizer=tokenizer,
                                     model_version=max_model_version
                                 )
-                                writer.write(sentinel_batch)
+                                data_writer.write(sentinel_batch, trainer_id)
                             else:
                                 current_batch = []
                                 current_length = 0
@@ -565,7 +564,7 @@ def run_preprocessing_loop(
                             
                                 if current_batch:
                                     batch_encoding = collate_packed(current_batch, tokenizer=tokenizer)
-                                    writer.write(batch_encoding)
+                                    data_writer.write(batch_encoding, trainer_id)
                                     published_samples += len(current_batch)
                                     samples_per_trainer[trainer_id] += len(current_batch)
                                     logger.debug(f"[inner loop] Packed microbatch with {len(current_batch)} samples for trainer {trainer_id}")
@@ -574,7 +573,7 @@ def run_preprocessing_loop(
                             for _ in range(cfg.finetune.train_batch_size ):
                                 batch_entries.append(processed_entries_queue.popleft())
                             batch_encoding = collate(batch_entries, tokenizer=tokenizer)
-                            writer.write(batch_encoding)
+                            data_writer.write(batch_encoding, trainer_id)
                             published_samples += len(batch_entries)
                             samples_per_trainer[trainer_id] += len(batch_entries)
                             logger.debug(f"[inner loop] Packed microbatch with {len(batch_entries)} samples for trainer {trainer_id}")
@@ -590,7 +589,7 @@ def run_preprocessing_loop(
                         )
                     writing_took += time.time() - start_writing
                             
-                    if (batch_done or cfg.debug.mode) and published_samples > loop_start_samples:
+                    if (published_samples > last_published_samples and (cfg.debug.mode or batch_done or (published_samples - last_published_samples > 128))):
                         samples_in_output_queue = output_queue.qsize() * cfg.preprocess.chunk_n_groups * cfg.attempts
                         stats = {
                             "preprocessor/published_samples": published_samples,
@@ -609,7 +608,8 @@ def run_preprocessing_loop(
                         stats_writer.write(stats)
                         
                         processing_took = time.time() - start_processing
-                        processed_samples = published_samples - loop_start_samples
+                        processed_samples = published_samples - last_published_samples
+                        last_published_samples = published_samples
                         logger.info(
                             f"Processed {processed_samples} samples (filtered out {num_filtered_out}) in {processing_took:.3f}s"
                             f" (fetching took {fetching_took:.3f} and writing took {writing_took:.3f})"
@@ -617,6 +617,7 @@ def run_preprocessing_loop(
                             f" {samples_in_output_queue} samples in output queue, max output queue entry size {output_queue.max_actual_entry_size()} bytes"
                         )
                         start_processing = time.time()
+                        fetching_took = 0
                         writing_took = 0
                         num_filtered_out = 0
             finally:

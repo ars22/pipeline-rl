@@ -82,7 +82,7 @@ class StreamWriter(ABC):
         pass
 
     @abstractmethod
-    def write(self, data: Any):
+    def write(self, data: Any, partition: int | None = None):
         pass
 
 
@@ -149,7 +149,9 @@ class RedisStreamWriter(StreamWriter):
     def __exit__(self, exc_type, exc_value, traceback):
         self._redis.close()
 
-    def write(self, data):
+    def write(self, data, partition: int | None = None):
+        if partition is not None:
+            raise ValueError()
         if isinstance(data, BaseModel):
             data = data.model_dump()
         data = pickle.dumps(data)
@@ -218,9 +220,16 @@ class RoundRobinRedisStreamWriter(StreamWriter):
         for writer in self._writers:
             writer.__exit__(exc_type, exc_value, traceback)
 
-    def write(self, data):
-        self._writers[self._next_stream].write(data)
-        self._next_stream = (self._next_stream + 1) % len(self._writers)
+    def write(self, data, partition: int | None = None):
+        if partition is not None:
+            # Write to specific partition
+            if partition < 0 or partition >= len(self._writers):
+                raise ValueError(f"Invalid partition {partition}. Must be between 0 and {len(self._writers) - 1}")
+            self._writers[partition].write(data)
+        else:
+            # Use round-robin
+            self._writers[self._next_stream].write(data)
+            self._next_stream = (self._next_stream + 1) % len(self._writers)
 
 
 # File-based streaming
@@ -253,7 +262,9 @@ class FileStreamWriter(StreamWriter):
     def __exit__(self, exc_type, exc_value, traceback):
         self._file.close()
 
-    def write(self, data):
+    def write(self, data, partition: int | None = None):
+        if partition is not None:
+            raise ValueError()
         # Textual streams are so useful, that we try hard to jsonify the given object.
         if isinstance(data, BaseModel):
             data_dict = data.model_dump()
@@ -361,9 +372,16 @@ class RoundRobinFileStreamWriter(StreamWriter):
         for writer in self._writers:
             writer.__exit__(exc_type, exc_value, traceback)
 
-    def write(self, data):
-        self._writers[self._next_stream].write(data)
-        self._next_stream = (self._next_stream + 1) % len(self._writers)
+    def write(self, data, partition: int | None = None):
+        if partition is not None:
+            # Write to specific partition
+            if partition < 0 or partition >= len(self._writers):
+                raise ValueError(f"Invalid partition {partition}. Must be between 0 and {len(self._writers) - 1}")
+            self._writers[partition].write(data)
+        else:
+            # Use round-robin
+            self._writers[self._next_stream].write(data)
+            self._next_stream = (self._next_stream + 1) % len(self._writers)
 
 
 # Below are the public stream APIs. Easy to replace files with Redis or another pubsub system.

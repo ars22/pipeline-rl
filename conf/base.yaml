@@ -56,12 +56,13 @@ preprocess:
   raw_queue_size: 8
   input_queue_size: 32
   output_queue_size: 32
+  ring_buffer_size: 128
+  max_unconsumed_samples: 64
   chunk_n_groups: 2
   submit_delay: 0.
   pop_old_data: ${..pop_old_data} 
   buffer_size: 0
   shared_memory_entry_size: 100000000
-  max_unconsumed_samples: batch
 llm:
   parameters:
     # changed
