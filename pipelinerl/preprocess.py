@@ -563,7 +563,7 @@ def run_preprocessing_loop(
                                     logger.info(f"Packed batch with {len(current_batch)} samples for worker {worker_id}")
                         else:
                             batch_entries = []
-                            for _ in range(batch_size):
+                            for _ in range(cfg.finetune.train_batch_size ):
                                 batch_entries.append(processed_entries_queue.popleft())
                             batch_encoding = collate(batch_entries, tokenizer=tokenizer)
                             writer.write(batch_encoding)

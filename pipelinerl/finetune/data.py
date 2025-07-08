@@ -166,7 +166,6 @@ def collate(
     pad_to_multiple_of: int = 16,
 ) -> PipelineBatchEncoding:
     # turn list of dicts with the same keys into a dict of lists
-    model_versions = [example.get("model_version", 0) for example in examples]
     example_dict = {key: [example[key] for example in examples] for key in examples[0].keys()}
     seq_length = max(len(i) for i in example_dict["input_ids"])
     if seq_length % pad_to_multiple_of:
@@ -185,9 +184,7 @@ def collate(
                 result[k] = torch.stack(valid_tensors)
     
     for k, seq_list in example_dict.items():
-        # Handle model_version specially - it should remain as a list of integers
         if k == "model_version":
-            result[k] = seq_list  # Keep as list of ints, one per example
             continue
         if any(isinstance(seq, (str, dict)) for seq in seq_list):
             logger.debug(f"Skipping key '{k}' - contains str/dict sequences")
@@ -197,20 +194,19 @@ def collate(
             logger.debug(f"Skipping key '{k}' - sequences contain str/dict items")
             continue
         else:
-            #TODO: finished key, n_predicted are weirdly padded
             # Handle sequence data: pad as usual
             padded_sequences = []
             pad_value = label_mask_value if k == "labels" else (0.0 if k in RL_DATA_COLUMNS else 0)
             for seq in seq_list:
                 if seq is None:
-                    continue  # Skip None sequences
+                    continue  # Skip None sequences, e.g. visual features when absent
                 if not isinstance(seq, list):
                     seq = [seq]
                 padding = [pad_value] * (seq_length - len(seq))
                 padded = (seq + padding) if tokenizer.padding_side == "right" else (padding + seq)
                 padded_sequences.append(padded)
             result[k] = torch.tensor(padded_sequences)
-    result["model_version"] = min(model_versions)
+    result["model_version"] = min([example.get("model_version", 0) for example in examples])
     result["is_packed"] = False 
     return PipelineBatchEncoding(**result)
 
@@ -220,7 +216,6 @@ def collate_packed(
     tokenizer: transformers.PreTrainedTokenizerBase,
     label_pad_value: int = MASKED_TOKEN_ID,
 ) -> PipelineBatchEncoding:
-    model_versions = [example.get("model_version", 0) for example in examples]
     
     # pre-compute total length and create tensors in one go
     total_length = sum(len(example["input_ids"]) for example in examples)
@@ -268,7 +263,7 @@ def collate_packed(
     extra_tensors = default_data_collator([{k: extra_lists[k] for k in extra_keys}], return_tensors="pt")
 
     result = {**base_tensors, **extra_tensors}
-    result["model_version"] = min(model_versions)
+    result["model_version"] = min([example.get("model_version", 0) for example in examples])
     result["is_packed"] = True 
     return PipelineBatchEncoding(**result)
 

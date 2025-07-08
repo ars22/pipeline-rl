@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 from typing import Any, Iterator, Literal, Self, TextIO
 import redis
+import torch
 from pydantic import BaseModel
 import redis.exceptions
 
@@ -255,11 +256,9 @@ class FileStreamWriter(StreamWriter):
     def write(self, data):
         # Textual streams are so useful, that we try hard to jsonify the given object.
         if isinstance(data, BaseModel):
-            # Convert Pydantic model to dict, handling tensors
             data_dict = data.model_dump()
-            # Convert any torch.tensors to numpy arrays for JSON serialization
             for key, value in data_dict.items():
-                if hasattr(value, 'numpy'):
+                if isinstance(value, torch.Tensor):
                     data_dict[key] = value.numpy()
             data = data_dict
         self._file.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY).decode("utf-8"))

@@ -71,18 +71,22 @@ class PipelineBatchEncoding(BaseModel):
     
     @field_validator('input_ids', 'attention_mask', 'labels', 'position_ids', mode='before')
     @classmethod
-    def convert_to_long_tensor(cls, v: List[int] | None) -> torch.LongTensor | None:
+    def convert_to_long_tensor(cls, v: List[int] | torch.Tensor | None) -> torch.LongTensor | None:
         """Convert lists to long tensors."""
         if v is None:
             return None
+        if isinstance(v, torch.Tensor):
+            return v.long()
         return torch.tensor(v, dtype=torch.long)
     
     @field_validator('rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'overflow', 'pixel_values', mode='before')
     @classmethod
-    def convert_to_float_tensor(cls, v: List[float] | None) -> torch.FloatTensor | None:
+    def convert_to_float_tensor(cls, v: List[float] | torch.Tensor | None) -> torch.FloatTensor | None:
         """Convert lists to float tensors."""
         if v is None:
             return None
+        if isinstance(v, torch.Tensor):
+            return v.float()
         return torch.tensor(v, dtype=torch.float)
     
     def to_device(self, device: Union[str, torch.device]) -> 'PipelineBatchEncoding':
