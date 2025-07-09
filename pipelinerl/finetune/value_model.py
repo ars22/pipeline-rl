@@ -178,15 +178,12 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
                 new_key = key[len("pretrained_model."):]
                 pretrained_model_state_dict[new_key] = value
             else:
-                # Handle keys that don't have expected prefixes
-                logger.warning(f"Unexpected key in state dict: {key}")
-                # Try to determine where it belongs based on the model structure
-                if hasattr(self.value_head, key.split('.')[0]):
-                    value_head_state_dict[key] = value
-                else:
-                    pretrained_model_state_dict[key] = value
+                raise ValueError(
+                    f"Unexpected key in state dict: {key}. "
+                    "Expected keys should start with 'value_head.' or 'pretrained_model.'."
+                )
         
-        # Save the pretrained model
+        # Save the pretrained model which can be easily loaded by vllm, etc.
         self.pretrained_model.save_pretrained(
             save_directory,
             is_main_process=is_main_process,
@@ -223,10 +220,6 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
             model.value_head.load_state_dict(value_head_state_dict)
 
         return model
-
-    def resize_token_embeddings(self, *args, **kwargs):
-        """Resize token embeddings."""
-        return self.pretrained_model.resize_token_embeddings(*args, **kwargs)
 
     @property
     def device(self):
