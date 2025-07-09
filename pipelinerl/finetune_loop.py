@@ -289,14 +289,13 @@ class WeightUpdateManager:
         ):
             module = self.accelerated_model.module
             logger.info("Start gathering and sending ZeRO Stage 3 weights")
-            
+
             # Filter out value head parameters and get only the pretrained model parameters
             named_parameters = {
                 name.replace('pretrained_model.', ''): param 
                 for name, param in module.named_parameters() 
                 if name.startswith('pretrained_model.') and not name.startswith('pretrained_model.value_head.')
-            }
-            
+            } 
             if get_accelerator().is_main_process:
                 parameters_info = [
                     # assume DeepSpeed Stage 3

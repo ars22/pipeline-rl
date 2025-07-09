@@ -128,24 +128,6 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
             gradient_checkpointing_kwargs
         )
     
-    def save_checkpoint(self, save_dir, tag=None, client_state={}):
-        """Save checkpoint compatible with DeepSpeed.
-        
-        This method is called by DeepSpeed during checkpointing.
-        """
-        import os
-        logger.info(f"Saving DeepSpeed checkpoint to {save_dir}")
-        
-        # For DeepSpeed compatibility, we need to return success
-        # The actual model saving is handled by DeepSpeed's internal mechanisms
-        # We just need to save our custom value head separately
-        if hasattr(self, '_deepspeed_engine'):
-            # If we're wrapped by DeepSpeed, delegate to it
-            return self._deepspeed_engine.save_checkpoint(save_dir, tag=tag, client_state=client_state)
-        
-        # Otherwise, save manually (this shouldn't happen in DeepSpeed mode)
-        return True
-    
     def save_pretrained(
         self,
         save_directory: Union[str, os.PathLike],
@@ -155,10 +137,7 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
         safe_serialization: bool = False,
         **kwargs,
     ):
-        """Save model with value head.
-        
-        This saves both the pretrained model and the value head weights separately.
-        """
+        """Save model and value head separately."""
         import os
         
         if state_dict is None:

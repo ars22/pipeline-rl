@@ -58,11 +58,8 @@ def validate_config(cfg: DictConfig):
     
     # Check for value loss coefficient constraints
     if cfg.finetune.model_class == "causal-language-modeling-with-value-head":
-        if cfg.finetune.rl.value_loss_coef <= 0.0:
+        if not hasattr(cfg.finetune.rl, "value_loss_coef") or cfg.finetune.rl.value_loss_coef <= 0.0:
             raise ValueError("value_loss_coef must be greater than 0 when using causal-language-modeling-with-value-head")
-    else:
-        if cfg.finetune.rl.value_loss_coef != 0.0:
-            raise ValueError("value_loss_coef must be 0 when not using causal-language-modeling-with-value-head")
 
 
 def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path):

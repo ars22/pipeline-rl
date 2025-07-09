@@ -92,12 +92,8 @@ class RLConfig(BaseModel):
         description="Filter out groups where all advantages are zero during preprocessing",
     )
     value_loss_coef: float = Field(
-        default=0.1,
+        default=0.0,
         description="Coefficient for the value loss in the final loss",
-    )
-    clip_eps: float = Field(
-        default=0.2,
-        description="Value function clipping parameter",
     )
 
 
