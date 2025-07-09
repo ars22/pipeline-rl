@@ -24,6 +24,8 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import MixedPrecision
 from transformers import PreTrainedTokenizerFast, get_scheduler, set_seed
 
+from ring_flash_attn import substitute_hf_flash_attn, update_ring_flash_attn_params
+
 import pipelinerl.torch_utils
 from pipelinerl.finetune.types import PipelineBatchEncoding
 from pipelinerl.finetune.checkpoints import (
@@ -452,6 +454,13 @@ def run_finetuning_loop(
     model.train()
     data_loader_thread.start()
 
+    seq_parallel_group = None
+    if cfg.finetune.seq_parallel > 1:
+        assert get_accelerator().state.num_processes % cfg.finetune.seq_parallel != 0
+        my_rank = get_accelerator().process_index
+        seq_parallel_group = dist.new_group(ranks=[my_rank + i for i in range(cfg.finetune.seq_parallel)], backend="nccl")
+        substitute_hf_flash_attn(seq_parallel_group, heads_k_stride=1)
+
     try:
         logger.info("Start training")
         rl_finetuning_worker(
@@ -464,6 +473,7 @@ def run_finetuning_loop(
             training_metrics,
             batch_queue,
             weight_update_stream,
+            seq_parallel_group
         )
     finally:
         if actor_update_group:
@@ -481,6 +491,7 @@ def rl_finetuning_worker(
     training_metrics: TrainingMetrics,
     batch_queue: Queue[PipelineBatchEncoding | Exception],
     weight_update_stream: SingleStreamSpec | None = None,
+    seq_parallel_group = None,
 ):
     local_samples = torch.tensor([0], device=get_accelerator().device)
     # Create a list of tensors with matching dtype (int64)
@@ -633,6 +644,8 @@ def rl_finetuning_worker(
 
         with toggle_sync(do_optimizer_step):
             # Choose RL step function based on seq_packing config
+            if seq_parallel_group is not None:
+                update_ring_flash_attn_params(batch["cu_seqlens"], seq_parallel_group)
             loss, this_step_rl_metrics = rl_step(
                 model, batch, training_metrics.completed_steps, final_train_steps, rl_config
             )

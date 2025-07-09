@@ -39,7 +39,7 @@ from pipelinerl.finetune.checkpoints import (
     load_tokenizer,
     load_training_checkpoint,
 )
-from pipelinerl.finetune.types import TrainingMetrics
+from pipelinerl.finetune.types import PipelineBatchEncoding, TrainingMetrics
 from pipelinerl.finetune.data import preprocess_fn, collate, collate_packed
 from pipelinerl.finetune.utils import create_sentinel_batch
 from pipelinerl.finetune.rl import RL_DATA_COLUMNS, RLConfig, populate_rl_data
@@ -47,6 +47,7 @@ import traceback
 from pipelinerl.streams import (
     SingleStreamSpec,
     StreamRangeSpec,
+    StreamWriter,
     read_stream,
     set_streams_backend,
     write_to_streams,
@@ -326,7 +327,22 @@ def filter_zero_advantage_groups(dataset: list[dict], epsilon: float = 1e-6) -> 
     return filtered_entries, num_filtered_out
 
 
+def write_micro_batch_slices(
+    lead_trainer_id: int,
+    data_writer: StreamWriter,
+    micro_batch: PipelineBatchEncoding,
+    seq_parallel: int
+):
+    if seq_parallel > 1:
+        # make micro batch slices and write each to the corresponding trainer
+        for index, micro_slice in enumerate(micro_batch.make_slices(seq_parallel)):
+            data_writer.write(micro_slice, lead_trainer_id + index)
+    else:
+        data_writer.write(micro_batch, lead_trainer_id)
+
+
 def run_preprocessing_loop(
+    
     cfg: DictConfig,
 ):
     set_streams_backend(**cfg.streams)
@@ -416,7 +432,9 @@ def run_preprocessing_loop(
     processed_entries_queue = deque(maxlen=cfg.preprocess.ring_buffer_size)
     published_samples = trainer_state.wait_for_processed_samples()
     last_published_samples = published_samples
-    samples_per_trainer = [published_samples // num_trainers] * num_trainers
+    assert published_samples % num_trainers == 0
+    # Only cou`nt samples for the lead trainer in each sequence parallel group
+    samples_per_trainer = {idx: published_samples // num_trainers for idx in range(num_trainers, cfg.finetune.seq_parallel)}
     max_model_version = None
     batch_boundary = published_samples + train_batch_size
     
@@ -564,7 +582,7 @@ def run_preprocessing_loop(
                             
                                 if current_batch:
                                     batch_encoding = collate_packed(current_batch, tokenizer=tokenizer)
-                                    data_writer.write(batch_encoding, trainer_id)
+                                    write_micro_batch_slices(trainer_id, data_writer, batch_encoding, cfg.finetune.seq_parallel)
                                     published_samples += len(current_batch)
                                     samples_per_trainer[trainer_id] += len(current_batch)
                                     logger.debug(f"[inner loop] Packed microbatch with {len(current_batch)} samples for trainer {trainer_id}")
@@ -573,12 +591,12 @@ def run_preprocessing_loop(
                             for _ in range(cfg.finetune.train_batch_size ):
                                 batch_entries.append(processed_entries_queue.popleft())
                             batch_encoding = collate(batch_entries, tokenizer=tokenizer)
-                            data_writer.write(batch_encoding, trainer_id)
+                            write_micro_batch_slices(trainer_id, data_writer, batch_encoding, cfg.finetune.seq_parallel)
                             published_samples += len(batch_entries)
                             samples_per_trainer[trainer_id] += len(batch_entries)
                             logger.debug(f"[inner loop] Packed microbatch with {len(batch_entries)} samples for trainer {trainer_id}")
 
-                        trainer_id = (trainer_id + 1) % num_trainers
+                        trainer_id = (trainer_id + cfg.finetune.seq_parallel) % num_trainers
                         batch_done = published_samples == batch_boundary and trainer_id == 0
                         if batch_done:
                             batch_boundary += train_batch_size
