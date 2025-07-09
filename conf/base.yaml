@@ -11,6 +11,7 @@ finetune:
   output_dir: ${..output_dir}/finetune
   seq_length: 12000
   seq_packing: true
+  seq_parallel: 1
   rl:
     algo: reinforce
     divide_advantage_by_std: false

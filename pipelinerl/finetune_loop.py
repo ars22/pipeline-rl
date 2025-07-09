@@ -456,9 +456,10 @@ def run_finetuning_loop(
 
     seq_parallel_group = None
     if cfg.finetune.seq_parallel > 1:
-        assert get_accelerator().state.num_processes % cfg.finetune.seq_parallel != 0
-        my_rank = get_accelerator().process_index
-        seq_parallel_group = dist.new_group(ranks=[my_rank + i for i in range(cfg.finetune.seq_parallel)], backend="nccl")
+        assert get_accelerator().state.num_processes % cfg.finetune.seq_parallel == 0
+        my_leader_rank = (get_accelerator().process_index // cfg.finetune.seq_parallel) * cfg.finetune.seq_parallel
+        logger.info(f"Creating sequence parallel group with {cfg.finetune.seq_parallel} ranks")
+        seq_parallel_group = dist.new_group(ranks=[my_leader_rank + i for i in range(cfg.finetune.seq_parallel)], backend="nccl")
         substitute_hf_flash_attn(seq_parallel_group, heads_k_stride=1)
 
     try:
@@ -645,7 +646,8 @@ def rl_finetuning_worker(
         with toggle_sync(do_optimizer_step):
             # Choose RL step function based on seq_packing config
             if seq_parallel_group is not None:
-                update_ring_flash_attn_params(batch["cu_seqlens"], seq_parallel_group)
+                assert batch.seq_boundaries is not None
+                update_ring_flash_attn_params(batch.seq_boundaries, seq_parallel_group)
             loss, this_step_rl_metrics = rl_step(
                 model, batch, training_metrics.completed_steps, final_train_steps, rl_config
             )

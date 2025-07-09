@@ -221,7 +221,7 @@ def collate_packed(
     total_length = sum(len(example["input_ids"]) for example in examples)
 
     # create a single tensor for sequence boundaries
-    seq_boundaries = torch.zeros(len(examples) + 1, dtype=torch.long)
+    seq_boundaries = torch.zeros(len(examples) + 1, dtype=torch.int)
     seq_boundaries[1:] = torch.tensor([len(example["input_ids"]) for example in examples]).cumsum(0)
 
     # preallocate all tensors at once
@@ -265,6 +265,7 @@ def collate_packed(
     result = {**base_tensors, **extra_tensors}
     result["model_version"] = min([example.get("model_version", 0) for example in examples])
     result["is_packed"] = True 
+    result["seq_boundaries"] = seq_boundaries
     return PipelineBatchEncoding(**result)
 
 

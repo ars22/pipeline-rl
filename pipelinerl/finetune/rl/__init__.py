@@ -358,6 +358,7 @@ def rl_step(
         "kl_coef": num_sequences * kl_coef,
         "entropy_bonus_coef": num_sequences * entropy_bonus_coef,
         "num_output_tokens_sum": masks_shifted.sum().item(),
+        "input_size": batch.input_ids.numel(), 
     }
     
     # Add value prediction stats if available

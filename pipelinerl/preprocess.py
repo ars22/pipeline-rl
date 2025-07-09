@@ -426,17 +426,21 @@ def run_preprocessing_loop(
     
     # Sequence packing configuration
     num_trainers = world_map.total_finetune_gpus
-    gradient_accumulation_passes_per_gpu = cfg.finetune.gradient_accumulation_passes // num_trainers
-    samples_per_trainer_per_step = cfg.finetune.train_batch_size * gradient_accumulation_passes_per_gpu
-    train_batch_size = samples_per_trainer_per_step * num_trainers
+    num_lead_trainers = world_map.total_finetune_gpus // cfg.finetune.seq_parallel
+    gradient_accumulation_passes_per_lead = cfg.finetune.gradient_accumulation_passes // num_lead_trainers
+    samples_per_lead_per_step = cfg.finetune.train_batch_size * gradient_accumulation_passes_per_lead
+    train_batch_size = samples_per_lead_per_step * num_lead_trainers
     processed_entries_queue = deque(maxlen=cfg.preprocess.ring_buffer_size)
     published_samples = trainer_state.wait_for_processed_samples()
     last_published_samples = published_samples
-    assert published_samples % num_trainers == 0
-    # Only cou`nt samples for the lead trainer in each sequence parallel group
-    samples_per_trainer = {idx: published_samples // num_trainers for idx in range(num_trainers, cfg.finetune.seq_parallel)}
+    assert published_samples % num_lead_trainers == 0
+    samples_per_trainer = {
+        idx: published_samples // num_trainers 
+        for idx in range(0, num_trainers, cfg.finetune.seq_parallel)
+    }
     max_model_version = None
     batch_boundary = published_samples + train_batch_size
+    target_samples_per_lead = samples_per_trainer[0] + samples_per_lead_per_step
     
     # Per-trainer sample tracking (similar to finetune_loop.py)
     total_filtered_out = 0  # Track total filtered samples across all batches
@@ -536,8 +540,6 @@ def run_preprocessing_loop(
                         stats_aggregator.update([len(entry["input_ids"]) for entry in processed_entries_queue])
                         max_model_version = max([entry["model_version"] for entry in processed_entries_queue]) if processed_entries_queue else 0
                     
-                    target_samples_per_trainer = batch_boundary // num_trainers
-
                     max_unconsumed_samples = (
                         train_batch_size 
                         if cfg.preprocess.max_unconsumed_samples == 'batch' 
@@ -551,16 +553,16 @@ def run_preprocessing_loop(
                     batch_done = False
                     start_writing = time.time()
                     while len(processed_entries_queue) > 0 and not batch_done:
-                        logger.debug(f"[inner loop] trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_trainer}")
+                        logger.debug(f"[inner loop] trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_lead}")
                         if cfg.finetune.seq_packing:
-                            if samples_per_trainer[trainer_id] == target_samples_per_trainer:
-                                logger.debug(f"[inner loop] trainer {trainer_id} has all {target_samples_per_trainer} samples, creating sentinel batch")
+                            if samples_per_trainer[trainer_id] == target_samples_per_lead:
+                                logger.debug(f"[inner loop] trainer {trainer_id} has all {target_samples_per_lead} samples, creating sentinel batch")
                                 sentinel_batch = create_sentinel_batch(
                                     device=None,
                                     tokenizer=tokenizer,
                                     model_version=max_model_version
                                 )
-                                data_writer.write(sentinel_batch, trainer_id)
+                                write_micro_batch_slices(trainer_id, data_writer, sentinel_batch, cfg.finetune.seq_parallel)
                             else:
                                 current_batch = []
                                 current_length = 0
@@ -577,7 +579,7 @@ def run_preprocessing_loop(
                                     current_length += sample_length
                                     
                                     # Check if we've reached the sample limit per step
-                                    if len(current_batch) + samples_per_trainer[trainer_id] == target_samples_per_trainer:
+                                    if len(current_batch) + samples_per_trainer[trainer_id] == target_samples_per_lead:
                                         break
                             
                                 if current_batch:
@@ -600,6 +602,7 @@ def run_preprocessing_loop(
                         batch_done = published_samples == batch_boundary and trainer_id == 0
                         if batch_done:
                             batch_boundary += train_batch_size
+                            target_samples_per_lead += samples_per_lead_per_step
                         logger.debug(
                             f"[inner loop] wrote {published_samples} samples, "
                             f"trainer {trainer_id} is at {samples_per_trainer[trainer_id]} samples, "

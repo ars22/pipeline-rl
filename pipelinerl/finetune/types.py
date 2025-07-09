@@ -38,8 +38,6 @@ class TrainingMetrics:
     best_eval_loss: float = 1e9
     best_completed_steps: int = 0
     lr: float = 0.0
-    max_batch_len: int = 0
-    min_batch_len: int = int(1e9)
     time_waiting_for_data: float = 0.0
 
 
@@ -64,21 +62,34 @@ class PipelineBatchEncoding(BaseModel):
     model_version: int
     sentinel: bool = False
     is_packed: bool = False 
+    seq_boundaries: torch.IntTensor | None = None  # Required when seq_packing=True
     
     # Visual feature fields (optional, for multimodal models)
     pixel_values: torch.FloatTensor | None = None
     image_grid_thw: List[List[int]] | None = None
     
-    @field_validator('input_ids', 'attention_mask', 'labels', 'position_ids', mode='before')
+    # TODO: am i needed?
+    @field_validator('input_ids', 'attention_mask', 'labels', 'position_ids',  mode='before')
     @classmethod
     def convert_to_long_tensor(cls, v: List[int] | torch.Tensor | None) -> torch.LongTensor | None:
         """Convert lists to long tensors."""
         if v is None:
             return None
         if isinstance(v, torch.Tensor):
-            return v.long()
+            return v.long() # type: ignore
         return torch.tensor(v, dtype=torch.long)
     
+    @field_validator('seq_boundaries', mode='before')
+    @classmethod
+    def convert_to_int_tensor(cls, v: List[int] | torch.Tensor | None) -> torch.IntTensor | None:
+        """Convert lists to int tensors."""
+        if v is None:
+            return None
+        if isinstance(v, torch.Tensor):
+            return v.int() # type: ignore
+        return torch.tensor(v, dtype=torch.int)
+    
+    # TODO: am i needed?
     @field_validator('rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'overflow', 'pixel_values', mode='before')
     @classmethod
     def convert_to_float_tensor(cls, v: List[float] | torch.Tensor | None) -> torch.FloatTensor | None:
@@ -121,3 +132,37 @@ class PipelineBatchEncoding(BaseModel):
             instance.model_extra[key] = value
             
         return instance
+
+    def make_slices(self, num_slices: int) -> list['PipelineBatchEncoding']:
+        # Compute slice boundaries
+        if self.position_ids is None or self.input_ids.shape[0] > 1:
+            raise ValueError("Cannot a batch that is not properly packed")
+        if self.input_ids.shape[1] < num_slices:
+            raise ValueError(f"Cannot slice batch of size {self.input_ids.shape[1]} into {num_slices} slices")
+        bs = [i * len(self.input_ids[0]) // num_slices for i in range(num_slices + 1)]
+        slices = []
+        for i in range(num_slices):
+            result = {
+                # [1, L] tensors
+                "input_ids": self.input_ids[:, bs[i]:bs[i + 1]],
+                "attention_mask": self.attention_mask[:, bs[i]:bs[i + 1]],
+                "labels": self.labels[:, bs[i]:bs[i + 1]],
+                "position_ids": self.position_ids[:, bs[i]:bs[i + 1]] if self.position_ids is not None else None,
+                "rewards": self.rewards[bs[i]:bs[i + 1]],
+                "advantages": self.advantages[bs[i]:bs[i + 1]],
+                "ref_logprobs": self.ref_logprobs[bs[i]:bs[i + 1]],
+                "old_logprobs": self.old_logprobs[bs[i]:bs[i + 1]],
+                "group_tokens": self.group_tokens[bs[i]:bs[i + 1]],
+                "overflow": self.overflow[bs[i]:bs[i + 1]],
+                # metadata
+                "model_version": self.model_version,
+                "sentinel": self.sentinel,
+                "is_packed": self.is_packed,
+                "seq_boundaries": self.seq_boundaries,
+                "pixel_values": self.pixel_values, 
+                "image_grid_thw": self.image_grid_thw
+            }
+            slices.append(PipelineBatchEncoding(**result))
+        return slices
+        
+
