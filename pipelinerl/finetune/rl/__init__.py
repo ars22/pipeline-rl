@@ -190,9 +190,6 @@ def rl_step(
         model_inputs["pixel_values"] = batch.pixel_values
     if hasattr(batch, 'image_grid_thw') and batch.image_grid_thw is not None:
         model_inputs["image_grid_thw"] = batch.image_grid_thw.reshape((1, 3))
-
-    # Check if model has value head
-    has_value_head = hasattr(model, 'value_head') or (hasattr(model, 'module') and hasattr(model.module, 'value_head'))
     
     outputs = model(**model_inputs)
 
@@ -211,7 +208,6 @@ def rl_step(
 
     # get shifted values and compute ratios
     rewards = batch.rewards[:, 1:]
-    advantages = batch.advantages[:, 1:]
     ref_logprobs = batch.ref_logprobs[:, 1:]
     old_logprobs = batch.old_logprobs[:, 1:]
     group_tokens = batch.group_tokens[:, 1:]
@@ -243,7 +239,7 @@ def rl_step(
         # where MC_return is the Monte Carlo return (rewards) and V(s) is the value prediction
         advantages = rewards - value_predictions
     else:
-        advantages = batch.pop("advantages")[:, 1:]
+        advantages = batch.advantages[:, 1:]
 
     log_p_weights = advantages.detach() if config.use_advantages else rewards
     if config.relu_log_p_weights:
