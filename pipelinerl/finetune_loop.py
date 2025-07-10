@@ -99,18 +99,20 @@ def run_data_loader(
 ):
     """Load BatchEncoding objects directly from preprocessor."""
     with read_stream(data_stream) as stream_reader:
+        logger.info(f"Starting data loader for stream {data_stream.topic} on partition {data_stream.partition}")
         while True:
             try:
                 for batch_encoding in stream_reader.read():
                     if isinstance(batch_encoding, Exception):
                         batch_queue.put(batch_encoding)
+                        logger.info(f"Received exception from stream: {batch_encoding}")
                         break
 
                     # Convert to PipelineBatchEncoding and move to device
                     pipeline_batch = PipelineBatchEncoding(**batch_encoding)
                     pipeline_batch = pipeline_batch.to_device(get_accelerator().device)
                     batch_queue.put(pipeline_batch)
-                    logger.debug(f"Loaded batch, queue size is now {batch_queue.qsize()}")
+                    logger.info(f"Loaded batch, queue size is now {batch_queue.qsize()}")
 
             except Exception as e:
                 logger.error(f"Error in stream reader: {e}")
@@ -458,8 +460,9 @@ def run_finetuning_loop(
     if cfg.finetune.seq_parallel > 1:
         assert get_accelerator().state.num_processes % cfg.finetune.seq_parallel == 0
         my_leader_rank = (get_accelerator().process_index // cfg.finetune.seq_parallel) * cfg.finetune.seq_parallel
-        logger.info(f"Creating sequence parallel group with {cfg.finetune.seq_parallel} ranks")
-        seq_parallel_group = dist.new_group(ranks=[my_leader_rank + i for i in range(cfg.finetune.seq_parallel)], backend="nccl")
+        my_group_ranks = [my_leader_rank + i for i in range(cfg.finetune.seq_parallel)]
+        logger.info(f"Creating sequence parallel group with ranks: {my_group_ranks}")
+        seq_parallel_group = dist.new_group(my_group_ranks, backend="nccl")
         assert seq_parallel_group is not None
         substitute_hf_flash_attn(seq_parallel_group, heads_k_stride=1)
 
@@ -499,7 +502,7 @@ def rl_finetuning_worker(
     # Create a list of tensors with matching dtype (int64)
     all_samples = [
         torch.zeros(1, dtype=torch.int64, device=get_accelerator().device)
-        for _ in range(get_accelerator().state.num_processes // args.seq_parallel)  
+        for _ in range(get_accelerator().state.num_processes)  
     ]
     total_samples = 0
 
@@ -614,9 +617,10 @@ def rl_finetuning_worker(
             torch.cuda.empty_cache()
 
         dist.all_gather(all_samples, local_samples)
+        print(all_samples)
         total_samples_overcounted = sum(int(tensor.item()) for tensor in all_samples)
-        assert total_samples_overcounted % num_lead_trainers == 0
-        total_samples = total_samples_overcounted // num_lead_trainers
+        assert total_samples_overcounted % args.seq_parallel == 0
+        total_samples = total_samples_overcounted // args.seq_parallel
         # print(f"local_samples[0]={local_samples[0]}"
         #       f" total_samples={total_samples}"
         #       f" target_samples_per_lead={target_samples_per_lead}"
@@ -685,7 +689,7 @@ def rl_finetuning_worker(
         if not is_sentinel_batch:
             passes_took.append(time.time() - time_before_pass)
 
-        logger.debug(f"Did a pass, version was {batch.model_version}")
+        logger.info(f"Did a pass, version was {batch.model_version}")
 
         if get_accelerator().is_main_process:
             trigger_message = SamplesProcessed(samples_processed=start_samples + total_samples)
