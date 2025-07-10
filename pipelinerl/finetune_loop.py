@@ -216,6 +216,11 @@ class WeightUpdateManager:
                 with write_to_streams(self.update_stream) as writer:
                     writer.write(WeightUpdateSuccess(version=version))
         else:
+            if isinstance(self.accelerated_model, AutoModelForCausalLMWithValueHead):
+                raise ValueError(
+                    "AutoModelForCausalLMWithValueHead is not supported with non-Deepspeed training. "
+                    "Please use Deepspeed Stage 3 for weight updates."
+                )
             logger.info("Gather all weights at rank 0")
             if isinstance(self.accelerated_model, FSDP):
                 full_state_dict_config = FullStateDictConfig(offload_to_cpu=False, rank0_only=True)
@@ -229,9 +234,7 @@ class WeightUpdateManager:
                     del named_parameters["lm_head.weight"]
             else:
                 unwrapped = get_accelerator().unwrap_model(self.accelerated_model)
-                # Filter out value head parameters
-                named_parameters = {name: param for name, param in unwrapped.named_parameters() 
-                                  if not name.startswith('value_head.')}
+                named_parameters = dict(unwrapped.named_parameters())
             if get_accelerator().is_main_process:
                 assert self.update_stream is not None
                 parameters_info = [
