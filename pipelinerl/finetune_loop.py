@@ -8,6 +8,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from functools import partial
+import numpy as np
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Dict, List, Literal
@@ -73,17 +74,15 @@ def gather_rl_metrics(rl_metrics: Dict[str, List]) -> Dict[str, List]:
     dist.all_gather_object(all_metrics, rl_metrics)
     
     # Now aggregate the gathered metrics
-    aggregated_metrics = {}
+    aggregated_metrics = defaultdict(list)
     
     # Process each gathered dictionary
     for process_metrics in all_metrics:
-        if process_metrics is None:
-            continue
+        #if process_metrics is None:
+        #    continue
         for key, values in process_metrics.items():
             if values:
-                if key not in aggregated_metrics:
-                    aggregated_metrics[key] = []
-                aggregated_metrics[key].extend(values)
+                aggregated_metrics[key].extend([v for v in values if np.isfinite(v)])
     
     return aggregated_metrics
 
