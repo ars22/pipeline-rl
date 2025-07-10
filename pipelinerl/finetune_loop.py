@@ -68,27 +68,24 @@ def gather_rl_metrics(rl_metrics: Dict[str, List]) -> Dict[str, List]:
     Returns:
         Dictionary with gathered metrics from all processes
     """
-    # Initialize the result dictionary
-    gathered_rl_metrics = {}
-
-    # Process each metric separately
-    for key, values in rl_metrics.items():
-        if values:
-            # Initialize a list to gather the results from all processes
-            gathered_values = [None] * dist.get_world_size()
-
-            # Gather the values from all processes
-            dist.all_gather_object(gathered_values, values)
-
-            # Flatten the list of lists into a single list
-            combined_values = []
-            for process_values in gathered_values:
-                combined_values.extend(process_values)
-
-            # Store the combined values
-            gathered_rl_metrics[key] = combined_values
-
-    return gathered_rl_metrics
+    # First, gather all metrics dictionaries from all processes
+    all_metrics = [None] * dist.get_world_size()
+    dist.all_gather_object(all_metrics, rl_metrics)
+    
+    # Now aggregate the gathered metrics
+    aggregated_metrics = {}
+    
+    # Process each gathered dictionary
+    for process_metrics in all_metrics:
+        if process_metrics is None:
+            continue
+        for key, values in process_metrics.items():
+            if values:
+                if key not in aggregated_metrics:
+                    aggregated_metrics[key] = []
+                aggregated_metrics[key].extend(values)
+    
+    return aggregated_metrics
 
 
 
