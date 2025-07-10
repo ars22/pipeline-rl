@@ -9,6 +9,17 @@ optim: adamw_torch
 load_as_bf16: True
 use_flash_attention: true
 auto_device_map: False
+#LoRA adapter tuning config
+lora:
+  enabled: False
+  task_type: CAUSAL_LM # supported: CAUSAL_LM, SEQ_2_SEQ_LM
+  base_model_8bit: False # format used for storing base mode weights during forward
+  base_model_4bit: False
+  r: 16 # Lora attention dimension.
+  alpha: 16 # the alpha parameter for Lora scaling.
+  dropout: 0.05 # the dropout probability for Lora layers.
+  bias: "none" # Bias type for Lora. Can be 'none', 'all' or 'lora_only'
+  target_modules: [] # the names of the modules to apply Lora to.
 # Overwrite existing model checkpoints. If False, resume training from existing checkpoint if exists
 force_restart: False
 # Rewind dataloder to the last used position if training resumed from existing checkpoint
