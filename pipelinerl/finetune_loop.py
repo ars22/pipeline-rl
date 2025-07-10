@@ -616,7 +616,6 @@ def rl_finetuning_worker(
             torch.cuda.empty_cache()
 
         dist.all_gather(all_samples, local_samples)
-        print(all_samples)
         total_samples_overcounted = sum(int(tensor.item()) for tensor in all_samples)
         assert total_samples_overcounted % args.seq_parallel == 0
         total_samples = total_samples_overcounted // args.seq_parallel
