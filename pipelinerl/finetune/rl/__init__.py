@@ -318,6 +318,12 @@ def rl_step(
     # ensure loss is valid
     assert torch.isfinite(final_loss), f"Non-finite loss detected: {final_loss}"
 
+    if int(masks_shifted.sum().item()) == 0:
+        stats_no_labels = {
+            "input_size": float(batch.input_ids.numel()),
+        }
+        return final_loss, stats_no_labels
+
     # All the stats are average then summed. They will be normalized by the number of sequences at the end of the step
     stats = {
         "loss": final_loss.item(),
