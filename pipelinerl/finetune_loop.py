@@ -23,9 +23,9 @@ from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import MixedPrecision
 from transformers import PreTrainedTokenizerFast, get_scheduler, set_seed
-
 from ring_flash_attn import substitute_hf_flash_attn, update_ring_flash_attn_params
 
+from pipelinerl.finetune.value_model import AutoModelForCausalLMWithValueHead
 import pipelinerl.torch_utils
 from pipelinerl.finetune.types import PipelineBatchEncoding
 from pipelinerl.finetune.checkpoints import (
@@ -188,11 +188,11 @@ class WeightUpdateManager:
             logger.info("Start gathering and sending ZeRO Stage 3 weights")
             
             # Filter out value head parameters and get only the pretrained model parameters
-            named_parameters = {
-                name.replace('pretrained_model.', ''): param 
-                for name, param in module.named_parameters() 
-                if name.startswith('pretrained_model.') and not name.startswith('pretrained_model.value_head.')
-            }
+            named_parameters = (
+                dict(module.pretrained_model.named_parameters())
+                if isinstance(module, AutoModelForCausalLMWithValueHead)
+                else dict(module.named_parameters())
+            )
             
             if get_accelerator().is_main_process:
                 parameters_info = [
