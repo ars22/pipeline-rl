@@ -183,7 +183,7 @@ class WeightUpdateManager:
         ):
             module = self.accelerated_model.module
             logger.info("Start gathering and sending ZeRO Stage 3 weights")
-            
+
             # Filter out value head parameters and get only the pretrained model parameters
             named_parameters = (
                 dict(module.pretrained_model.named_parameters())
