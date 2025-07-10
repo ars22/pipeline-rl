@@ -47,6 +47,7 @@ def create_sentinel_batch(device, tokenizer=None, model_version=0) -> PipelineBa
         "old_logprobs": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "group_tokens": torch.tensor(ones, dtype=torch.float).reshape(1, -1),
         "overflow": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
+        "seq_boundaries": torch.tensor([0, 2], dtype=torch.int)
     }
 
     # Add model_version and sentinel flag to match the expected format

@@ -459,10 +459,12 @@ def run_finetuning_loop(
     seq_parallel_group = None
     if cfg.finetune.seq_parallel > 1:
         assert get_accelerator().state.num_processes % cfg.finetune.seq_parallel == 0
-        my_leader_rank = (get_accelerator().process_index // cfg.finetune.seq_parallel) * cfg.finetune.seq_parallel
-        my_group_ranks = [my_leader_rank + i for i in range(cfg.finetune.seq_parallel)]
-        logger.info(f"Creating sequence parallel group with ranks: {my_group_ranks}")
-        seq_parallel_group = dist.new_group(my_group_ranks, backend="nccl")
+        for leader_rank in range(0, get_accelerator().state.num_processes, cfg.finetune.seq_parallel):
+            group_ranks = [leader_rank + i for i in range(cfg.finetune.seq_parallel)]
+            logger.info(f"Creating sequence parallel group with ranks: {group_ranks}")
+            group = dist.new_group(group_ranks, backend="nccl")
+            if get_accelerator().process_index in group_ranks:
+                seq_parallel_group = group
         assert seq_parallel_group is not None
         substitute_hf_flash_attn(seq_parallel_group, heads_k_stride=1)
 
