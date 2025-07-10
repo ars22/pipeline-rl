@@ -21,8 +21,6 @@ class CausalLMOutputWithValue(ModelOutput):
             Prediction scores of the language modeling head.
         value (`torch.FloatTensor` of shape `(batch_size, sequence_length)`):
             Value predictions from the value head.
-        value_loss (`torch.FloatTensor` of shape `(1,)`, *optional*):
-            Value prediction loss.
         past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*):
             Contains cached key/value states.
         hidden_states (`tuple(torch.FloatTensor)`, *optional*):
@@ -34,7 +32,6 @@ class CausalLMOutputWithValue(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
     logits: torch.FloatTensor = None
     value: torch.FloatTensor = None
-    value_loss: Optional[torch.FloatTensor] = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
@@ -83,14 +80,9 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        value_labels: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithValue]:
         """
         Forward pass that computes both language modeling outputs and value predictions.
-
-        Args:
-            value_labels (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Labels for computing the value loss. These are the rewards to predict.
         """
 
         # Get outputs from the base model
