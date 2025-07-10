@@ -583,7 +583,7 @@ def run_preprocessing_loop(
                                         break
                             
                                 if current_batch:
-                                    batch_encoding = collate_packed(current_batch, tokenizer=tokenizer)
+                                    batch_encoding = collate_packed(current_batch, tokenizer, cfg.finetune.seq_parallel)
                                     write_micro_batch_slices(trainer_id, data_writer, batch_encoding, cfg.finetune.seq_parallel)
                                     published_samples += len(current_batch)
                                     samples_per_trainer[trainer_id] += len(current_batch)

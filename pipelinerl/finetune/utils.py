@@ -55,3 +55,21 @@ def create_sentinel_batch(device, tokenizer=None, model_version=0) -> PipelineBa
     sentinel_batch["is_packed"] = True 
 
     return PipelineBatchEncoding(**sentinel_batch)
+
+
+def create_sentinel_example(n_tokens: int, tokenizer=None, model_version=0) -> dict:
+    eos_token_id = tokenizer.eos_token_id # type: ignore
+    example = {
+        "input_ids": n_tokens * [eos_token_id],
+        "attention_mask": n_tokens * [1],
+        "labels": n_tokens * [-100],  # -100 for ignored labels in loss calculation
+        "position_ids": list(range(n_tokens)),
+        "rewards": n_tokens * [0.0],
+        "advantages": n_tokens * [0.0],
+        "ref_logprobs": n_tokens * [0.0],
+        "old_logprobs": n_tokens * [0.0],
+        "group_tokens": n_tokens * [1.0],
+        "overflow": n_tokens * [0.0],
+        "model_version": model_version,
+    }
+    return example

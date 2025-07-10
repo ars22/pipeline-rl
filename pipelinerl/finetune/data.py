@@ -13,6 +13,7 @@ from torch.utils.data.dataloader import DataLoader
 from transformers import default_data_collator
 import os
 
+from pipelinerl.finetune.utils import create_sentinel_example
 from pipelinerl.rollouts import TrainingText
 
 from .context import get_accelerator, logger
@@ -214,11 +215,19 @@ def collate(
 def collate_packed(
     examples: list[dict[str, list[int]]],
     tokenizer: transformers.PreTrainedTokenizerBase,
+    seq_parallel: int,
     label_pad_value: int = MASKED_TOKEN_ID,
 ) -> PipelineBatchEncoding:
-    
     # pre-compute total length and create tensors in one go
     total_length = sum(len(example["input_ids"]) for example in examples)
+    if total_length % seq_parallel != 0:
+        padding = seq_parallel - (total_length % seq_parallel)
+        sentinel_model_version = max(example["model_version"] for example in examples)
+        sentinel_example = create_sentinel_example(padding, tokenizer=tokenizer, model_version=sentinel_model_version)
+        examples = examples + [sentinel_example]
+        total_length = sum(len(example["input_ids"]) for example in examples)
+    else: 
+        padding = 0
 
     # create a single tensor for sequence boundaries
     seq_boundaries = torch.zeros(len(examples) + 1, dtype=torch.int)
@@ -266,6 +275,7 @@ def collate_packed(
     result["model_version"] = min([example.get("model_version", 0) for example in examples])
     result["is_packed"] = True 
     result["seq_boundaries"] = seq_boundaries
+    result["padding"] = padding
     return PipelineBatchEncoding(**result)
 
 

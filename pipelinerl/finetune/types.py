@@ -61,6 +61,7 @@ class PipelineBatchEncoding(BaseModel):
     
     model_version: int
     sentinel: bool = False
+    padding: int = 0 # Padding to make the batch size divisible by seq_parallel
     is_packed: bool = False 
     seq_boundaries: torch.IntTensor | None = None  # Required when seq_packing=True
     
@@ -139,6 +140,8 @@ class PipelineBatchEncoding(BaseModel):
             raise ValueError("Cannot a batch that is not properly packed")
         if self.input_ids.shape[1] < num_slices:
             raise ValueError(f"Cannot slice batch of size {self.input_ids.shape[1]} into {num_slices} slices")
+        if self.input_ids.shape[1] % num_slices != 0:
+            raise ValueError(f"Sequence length {self.input_ids.shape[1]} is not divisible by number of slices {num_slices}")
         bs = [i * len(self.input_ids[0]) // num_slices for i in range(num_slices + 1)]
         slices = []
         for i in range(num_slices):
@@ -148,16 +151,17 @@ class PipelineBatchEncoding(BaseModel):
                 "attention_mask": self.attention_mask[:, bs[i]:bs[i + 1]],
                 "labels": self.labels[:, bs[i]:bs[i + 1]],
                 "position_ids": self.position_ids[:, bs[i]:bs[i + 1]] if self.position_ids is not None else None,
-                "rewards": self.rewards[bs[i]:bs[i + 1]],
-                "advantages": self.advantages[bs[i]:bs[i + 1]],
-                "ref_logprobs": self.ref_logprobs[bs[i]:bs[i + 1]],
-                "old_logprobs": self.old_logprobs[bs[i]:bs[i + 1]],
-                "group_tokens": self.group_tokens[bs[i]:bs[i + 1]],
-                "overflow": self.overflow[bs[i]:bs[i + 1]],
+                "rewards": self.rewards[:, bs[i]:bs[i + 1]],
+                "advantages": self.advantages[:, bs[i]:bs[i + 1]],
+                "ref_logprobs": self.ref_logprobs[:, bs[i]:bs[i + 1]],
+                "old_logprobs": self.old_logprobs[:, bs[i]:bs[i + 1]],
+                "group_tokens": self.group_tokens[:, bs[i]:bs[i + 1]],
+                "overflow": self.overflow[:, bs[i]:bs[i + 1]],
                 # metadata
                 "model_version": self.model_version,
                 "sentinel": self.sentinel,
                 "is_packed": self.is_packed,
+                "padding": self.padding,
                 "seq_boundaries": self.seq_boundaries,
                 "pixel_values": self.pixel_values, 
                 "image_grid_thw": self.image_grid_thw

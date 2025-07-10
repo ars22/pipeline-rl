@@ -25,7 +25,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 logger = logging.getLogger(__name__)
 
 RL_DATA_COLUMNS = [
-    "reward",
     "overflow",
     "group_tokens",
     "rewards",
@@ -159,8 +158,11 @@ def rl_step(
     # if we have position_ids, we are packing
     if batch.is_packed:
         position_ids = batch.position_ids[0]
-        # sequence boundary computation
-        sequence_starts = torch.where(position_ids == 0)[0]
+        is_sequence_start = position_ids == 0
+        # For computing the loss we will consider the first token the beginning of the sequence,
+        # even if currently we are in the middle of a sequence.
+        is_sequence_start[0] = True 
+        sequence_starts = torch.where(is_sequence_start)[0]
         seq_boundaries = torch.cat(
             [
                 sequence_starts,

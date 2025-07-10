@@ -263,14 +263,14 @@ def get_batch_token_count(batch):
     return attention_mask.sum().item()
 
 
-def get_batch_sequence_count(batch):
+def get_batch_sequence_count(batch: PipelineBatchEncoding):
     """Count actual sequences in a batch, accounting for sequence packing"""
     if batch.position_ids is not None:
-        # for packed sequences, count the number of actual sequences by looking at position_ids
-        position_ids = batch.position_ids[0]  # [1, seq_len]
-        # sequence boundary computation - each position with id 0 starts a new sequence
-        sequence_starts = torch.where(position_ids == 0)[0]
-        return len(sequence_starts)
+        assert batch.seq_boundaries is not None 
+        if batch.padding == 0:
+            return len(batch.seq_boundaries) - 1
+        else:
+            return len(batch.seq_boundaries) - 2
     else:
         # For unpacked sequences, each row is one sample
         return batch.input_ids.size(0)
@@ -303,7 +303,7 @@ def run_finetuning_loop(
 
     if not args.gradient_accumulation_passes % num_processes == 0:
         raise ValueError("gradient_accumulation_passes must be divisible by num_processes")
-    gradient_accumulation_passes_per_gpu = args.gradient_accumulation_passes // num_processes
+    gradient_accumulation_passes_per_gpu = args.seq_parallel * (args.gradient_accumulation_passes // num_processes)
     if (ds_plugin := get_accelerator().state.deepspeed_plugin) is not None:
         logger.info("Manual inform Deepspeed about micro batch size and gradient accumulation")
         ds_plugin.deepspeed_config["train_micro_batch_size_per_gpu"] = args.train_batch_size
@@ -460,6 +460,7 @@ def run_finetuning_loop(
         my_leader_rank = (get_accelerator().process_index // cfg.finetune.seq_parallel) * cfg.finetune.seq_parallel
         logger.info(f"Creating sequence parallel group with {cfg.finetune.seq_parallel} ranks")
         seq_parallel_group = dist.new_group(ranks=[my_leader_rank + i for i in range(cfg.finetune.seq_parallel)], backend="nccl")
+        assert seq_parallel_group is not None
         substitute_hf_flash_attn(seq_parallel_group, heads_k_stride=1)
 
     try:
@@ -474,7 +475,7 @@ def run_finetuning_loop(
             training_metrics,
             batch_queue,
             weight_update_stream,
-            seq_parallel_group
+            seq_parallel_group, 
         )
     finally:
         if actor_update_group:
@@ -498,7 +499,7 @@ def rl_finetuning_worker(
     # Create a list of tensors with matching dtype (int64)
     all_samples = [
         torch.zeros(1, dtype=torch.int64, device=get_accelerator().device)
-        for _ in range(get_accelerator().state.num_processes)
+        for _ in range(get_accelerator().state.num_processes // args.seq_parallel)  
     ]
     total_samples = 0
 
@@ -540,15 +541,22 @@ def rl_finetuning_worker(
 
     time_waiting_for_data = 0.0
 
-    gradient_accumulation_passes_per_gpu = args.gradient_accumulation_passes // get_accelerator().state.num_processes
-    samples_per_worker_per_step = gradient_accumulation_passes_per_gpu * args.train_batch_size
-    samples_per_step = samples_per_worker_per_step * get_accelerator().state.num_processes
+    num_trainers = get_accelerator().state.num_processes
+    num_lead_trainers = num_trainers // args.seq_parallel
+    gradient_accumulation_passes_per_lead = args.gradient_accumulation_passes // num_lead_trainers
+    samples_per_lead_per_step = gradient_accumulation_passes_per_lead * args.train_batch_size
+    samples_per_step = samples_per_lead_per_step * num_lead_trainers
     start_samples = training_metrics.samples
-    last_model_version = training_metrics.samples
+    logger.info(
+        f"Starting training with {start_samples} samples, "
+        f"{samples_per_lead_per_step} samples per lead trainer, "
+        f"{samples_per_step} samples per step, "
+        f"{gradient_accumulation_passes_per_lead} gradient accumulation passes per lead trainer"
+    )
     tokens_processed = []
     passes_took = []
     micro_batches_size = []
-    target_samples_per_worker = samples_per_worker_per_step
+    target_samples_per_lead = samples_per_lead_per_step
     target_samples = samples_per_step
     rl_config = RLConfig(**args.rl)
     # samples_per_step will be used to normalize the loss
@@ -562,11 +570,15 @@ def rl_finetuning_worker(
 
         before_getting_next_batch = time.time()
 
+        # if get_accelerator().is_main_process:
+        #     logger.info(f"local_samples[0]={local_samples[0]}"
+        #                 f" target_samples_per_lead={target_samples_per_lead}")
+        # TODO: delete
 
         batch = next(data_generator)
         is_sentinel_batch = batch.sentinel
         #TODO: rm debug code
-        if local_samples[0] == target_samples_per_worker:
+        if local_samples[0] == target_samples_per_lead:
             assert is_sentinel_batch, "We should get a sentinel batch"
             logger.info("next batch should be a sentinel batch")
 
@@ -583,7 +595,6 @@ def rl_finetuning_worker(
         lag_stats["max_version"] = max(
             lag_stats.get("max_version", batch.model_version), batch.model_version
         )
-        last_model_version = batch.model_version
 
         if not is_sentinel_batch:
             # We exclude time waiting for data from the pass time
@@ -603,7 +614,15 @@ def rl_finetuning_worker(
             torch.cuda.empty_cache()
 
         dist.all_gather(all_samples, local_samples)
-        total_samples = sum(int(tensor.item()) for tensor in all_samples)
+        total_samples_overcounted = sum(int(tensor.item()) for tensor in all_samples)
+        assert total_samples_overcounted % num_lead_trainers == 0
+        total_samples = total_samples_overcounted // num_lead_trainers
+        # print(f"local_samples[0]={local_samples[0]}"
+        #       f" total_samples={total_samples}"
+        #       f" target_samples_per_lead={target_samples_per_lead}"
+        #       f" target_samples={target_samples}")
+        # print(f"total_samples={total_samples}, target_samples={target_samples}")
+        # TODO: delete
         do_optimizer_step = total_samples == target_samples
         using_deepspeed = isinstance(model, deepspeed.DeepSpeedEngine)
 
@@ -674,9 +693,11 @@ def rl_finetuning_worker(
                 writer.write(trigger_message)
 
         if not do_optimizer_step:
+            # logger.info("don't optimize") # TODO delete
             continue
+        # logger.info("optimize") TODO: delete
 
-        target_samples_per_worker += samples_per_worker_per_step
+        target_samples_per_lead += samples_per_lead_per_step
         target_samples += samples_per_step
 
         logger.info(f"Stop step at {time.time()}")
@@ -708,7 +729,7 @@ def rl_finetuning_worker(
             len(args.also_save_steps) and training_metrics.completed_steps in args.also_save_steps
         )
         time_to_save = time_to_save and not time_to_stop
-        assert sum(micro_batches_size) == samples_per_worker_per_step
+        assert sum(micro_batches_size) == samples_per_lead_per_step
         training_metrics.time_waiting_for_data += time_waiting_for_data
         
         
@@ -753,8 +774,6 @@ def rl_finetuning_worker(
                     "throughput/sequences_per_micro_batch": sum(micro_batches_size) / len(micro_batches_size)
                     if micro_batches_size
                     else 0,
-                    "dataset_stats/max_batch_len": training_metrics.max_batch_len,
-                    "dataset_stats/min_batch_len": training_metrics.min_batch_len,
                 }
             )
 
