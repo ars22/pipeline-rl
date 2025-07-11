@@ -570,14 +570,8 @@ def rl_finetuning_worker(
 
         before_getting_next_batch = time.time()
 
-        # if get_accelerator().is_main_process:
-        #     logger.info(f"local_samples[0]={local_samples[0]}"
-        #                 f" target_samples_per_lead={target_samples_per_lead}")
-        # TODO: delete
-
         batch = next(data_generator)
         is_sentinel_batch = batch.sentinel
-        #TODO: rm debug code
         if local_samples[0] == target_samples_per_lead:
             assert is_sentinel_batch, "We should get a sentinel batch"
             logger.info("next batch should be a sentinel batch")
@@ -617,12 +611,6 @@ def rl_finetuning_worker(
         total_samples_overcounted = sum(int(tensor.item()) for tensor in all_samples)
         assert total_samples_overcounted % args.seq_parallel == 0
         total_samples = total_samples_overcounted // args.seq_parallel
-        # print(f"local_samples[0]={local_samples[0]}"
-        #       f" total_samples={total_samples}"
-        #       f" target_samples_per_lead={target_samples_per_lead}"
-        #       f" target_samples={target_samples}")
-        # print(f"total_samples={total_samples}, target_samples={target_samples}")
-        # TODO: delete
         do_optimizer_step = total_samples == target_samples
         using_deepspeed = isinstance(model, deepspeed.DeepSpeedEngine)
 
@@ -691,9 +679,7 @@ def rl_finetuning_worker(
                 writer.write(trigger_message)
 
         if not do_optimizer_step:
-            # logger.info("don't optimize") # TODO delete
             continue
-        # logger.info("optimize") TODO: delete
 
         target_samples_per_lead += samples_per_lead_per_step
         target_samples += samples_per_step
