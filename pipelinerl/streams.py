@@ -107,13 +107,13 @@ def connect_to_redis(config: RedisConfig):
     """Connect to the Redis server. Unlimited retries."""
     while True:
         try:
-            logger.info(f"Trying to connect to Redis server at {config.host}:{config.port}")
+            logger.debug(f"Trying to connect to Redis server at {config.host}:{config.port}")
             client = redis.Redis(host=config.host, port=config.port)
             client.ping()
-            logger.info(f"Connected to Redis server")
+            logger.debug(f"Connected to Redis server")
             return client
         except (redis.exceptions.TimeoutError, redis.ConnectionError) as e:
-            logger.info(f"Waiting for Redis server ({type(e)}). Retrying in 5 seconds.")
+            logger.warning(f"Waiting for Redis server ({type(e)}). Retrying in 5 seconds.")
             time.sleep(5)
 
 
