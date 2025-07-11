@@ -444,6 +444,12 @@ def run_preprocessing_loop(
     
     # Per-trainer sample tracking (similar to finetune_loop.py)
     total_filtered_out = 0  # Track total filtered samples across all batches
+    
+    # Per-trainer batch state for sequence packing
+    trainer_batch_state = {
+        idx: {"batch": [], "length": 0}
+        for idx in range(0, num_trainers, cfg.finetune.seq_parallel)
+    }
     with write_to_streams(output_stream) as data_writer, write_to_streams(stats_streams) as stats_writer:
         with SharedMemoryManager() as smm:
             # Create shared memory queues without the manager parameter
@@ -560,15 +566,19 @@ def run_preprocessing_loop(
                                     model_version=max_model_version
                                 )
                                 write_micro_batch_slices(trainer_id, data_writer, sentinel_batch, cfg.finetune.seq_parallel)
+                                trainer_id = (trainer_id + cfg.finetune.seq_parallel) % num_trainers
                             else:
-                                current_batch = []
-                                current_length = 0
+                                # Get current batch state for this trainer
+                                current_batch = trainer_batch_state[trainer_id]["batch"]
+                                current_length = trainer_batch_state[trainer_id]["length"]
+                                time_to_write = False
                                 
                                 while len(processed_entries_queue) > 0:
                                     entry = processed_entries_queue[0]  # Peek at next entry
                                     sample_length = len(entry["input_ids"])
 
                                     if current_length + sample_length > cfg.finetune.seq_length:
+                                        time_to_write = True
                                         break  # Current micro batch is full
                                     
                                     # Add sample to current micro batch
@@ -577,15 +587,23 @@ def run_preprocessing_loop(
                                     
                                     # Check if we've reached the sample limit per step
                                     if len(current_batch) + samples_per_trainer[trainer_id] == target_samples_per_lead:
+                                        time_to_write = True
                                         break
                             
-                                if current_batch:
+                                if time_to_write and len(current_batch) > 0:
                                     batch_encoding = collate_packed(current_batch, tokenizer, cfg.finetune.seq_parallel)
-                                    #FIXME: too greedy
                                     write_micro_batch_slices(trainer_id, data_writer, batch_encoding, cfg.finetune.seq_parallel)
                                     published_samples += len(current_batch)
                                     samples_per_trainer[trainer_id] += len(current_batch)
+                                    # Reset batch state for this trainer
+                                    trainer_batch_state[trainer_id]["batch"] = []
+                                    trainer_batch_state[trainer_id]["length"] = 0
+                                    trainer_id = (trainer_id + cfg.finetune.seq_parallel) % num_trainers
                                     logger.debug(f"[inner loop] Packed microbatch with {len(current_batch)} samples for trainer {trainer_id}")
+                                else:
+                                    # Update batch state for this trainer if not written
+                                    trainer_batch_state[trainer_id]["batch"] = current_batch
+                                    trainer_batch_state[trainer_id]["length"] = current_length
                         else:
                             batch_entries = []
                             for _ in range(cfg.finetune.train_batch_size ):
@@ -595,8 +613,8 @@ def run_preprocessing_loop(
                             published_samples += len(batch_entries)
                             samples_per_trainer[trainer_id] += len(batch_entries)
                             logger.debug(f"[inner loop] Packed microbatch with {len(batch_entries)} samples for trainer {trainer_id}")
+                            trainer_id = (trainer_id + cfg.finetune.seq_parallel) % num_trainers
 
-                        trainer_id = (trainer_id + cfg.finetune.seq_parallel) % num_trainers
                         batch_done = published_samples == batch_boundary and trainer_id == 0
                         if batch_done:
                             batch_boundary += train_batch_size
