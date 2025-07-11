@@ -91,7 +91,7 @@ rl:
   algo: reinforce
   divide_advantage_by_std: false
   kl_coef: 0.0
-  final_kl_coef: 0.0
+  final_kl_coef: ${..rl.kl_coef} 
   entropy_bonus: 0.0
   reward_minus_kl_coef: 0.0
   epsilon: 4

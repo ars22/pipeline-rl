@@ -67,9 +67,9 @@ class PipelineBatchEncoding(BaseModel):
     
     # Visual feature fields (optional, for multimodal models)
     pixel_values: torch.FloatTensor | None = None
-    image_grid_thw: List[List[int]] | None = None
+    image_grid_thw: torch.LongTensor | None = None
     
-    @field_validator('input_ids', 'attention_mask', 'labels', 'position_ids', mode='before')
+    @field_validator('input_ids', 'attention_mask', 'labels', 'position_ids', 'image_grid_thw', mode='before')
     @classmethod
     def convert_to_long_tensor(cls, v: List[int] | torch.Tensor | None) -> torch.LongTensor | None:
         """Handle initialization of long tensors from different types."""

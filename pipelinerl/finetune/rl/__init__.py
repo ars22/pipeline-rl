@@ -189,7 +189,7 @@ def rl_step(
     if hasattr(batch, 'pixel_values') and batch.pixel_values is not None:
         model_inputs["pixel_values"] = batch.pixel_values
     if hasattr(batch, 'image_grid_thw') and batch.image_grid_thw is not None:
-        model_inputs["image_grid_thw"] = batch.image_grid_thw.reshape((1, 3))
+        model_inputs["image_grid_thw"] = batch.image_grid_thw #torch.tensor(.reshape((1, 3))
     
     outputs = model(**model_inputs)
 
