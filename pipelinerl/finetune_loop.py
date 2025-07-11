@@ -24,9 +24,9 @@ from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import MixedPrecision
 from transformers import PreTrainedTokenizerFast, get_scheduler, set_seed
-
 from ring_flash_attn import substitute_hf_flash_attn, update_ring_flash_attn_params
 
+from pipelinerl.finetune.value_model import AutoModelForCausalLMWithValueHead
 import pipelinerl.torch_utils
 from pipelinerl.finetune.types import PipelineBatchEncoding
 from pipelinerl.finetune.checkpoints import (
@@ -108,7 +108,6 @@ def run_data_loader(
                     pipeline_batch = PipelineBatchEncoding(**batch_encoding)
                     pipeline_batch = pipeline_batch.to_device(get_accelerator().device)
                     batch_queue.put(pipeline_batch)
-                    logger.info(f"Loaded batch, queue size is now {batch_queue.qsize()}")
 
             except Exception as e:
                 logger.error(f"Error in stream reader: {e}")
@@ -182,13 +181,13 @@ class WeightUpdateManager:
         ):
             module = self.accelerated_model.module
             logger.info("Start gathering and sending ZeRO Stage 3 weights")
-            
+
             # Filter out value head parameters and get only the pretrained model parameters
-            named_parameters = {
-                name.replace('pretrained_model.', ''): param 
-                for name, param in module.named_parameters() 
-                if name.startswith('pretrained_model.') and not name.startswith('pretrained_model.value_head.')
-            }
+            named_parameters = (
+                dict(module.pretrained_model.named_parameters())
+                if isinstance(module, AutoModelForCausalLMWithValueHead)
+                else dict(module.named_parameters())
+            )
             
             if get_accelerator().is_main_process:
                 parameters_info = [
@@ -215,6 +214,11 @@ class WeightUpdateManager:
                 with write_to_streams(self.update_stream) as writer:
                     writer.write(WeightUpdateSuccess(version=version))
         else:
+            if isinstance(self.accelerated_model, AutoModelForCausalLMWithValueHead):
+                raise ValueError(
+                    "AutoModelForCausalLMWithValueHead is not supported with non-Deepspeed training. "
+                    "Please use Deepspeed Stage 3 for weight updates."
+                )
             logger.info("Gather all weights at rank 0")
             if isinstance(self.accelerated_model, FSDP):
                 full_state_dict_config = FullStateDictConfig(offload_to_cpu=False, rank0_only=True)
@@ -228,9 +232,7 @@ class WeightUpdateManager:
                     del named_parameters["lm_head.weight"]
             else:
                 unwrapped = get_accelerator().unwrap_model(self.accelerated_model)
-                # Filter out value head parameters
-                named_parameters = {name: param for name, param in unwrapped.named_parameters() 
-                                  if not name.startswith('value_head.')}
+                named_parameters = dict(unwrapped.named_parameters())
             if get_accelerator().is_main_process:
                 assert self.update_stream is not None
                 parameters_info = [
@@ -571,14 +573,8 @@ def rl_finetuning_worker(
 
         before_getting_next_batch = time.time()
 
-        # if get_accelerator().is_main_process:
-        #     logger.info(f"local_samples[0]={local_samples[0]}"
-        #                 f" target_samples_per_lead={target_samples_per_lead}")
-        # TODO: delete
-
         batch = next(data_generator)
         is_sentinel_batch = batch.sentinel
-        #TODO: rm debug code
         if local_samples[0] == target_samples_per_lead:
             assert is_sentinel_batch, "We should get a sentinel batch"
             logger.info("next batch should be a sentinel batch")
@@ -618,12 +614,6 @@ def rl_finetuning_worker(
         total_samples_overcounted = sum(int(tensor.item()) for tensor in all_samples)
         assert total_samples_overcounted % args.seq_parallel == 0
         total_samples = total_samples_overcounted // args.seq_parallel
-        # print(f"local_samples[0]={local_samples[0]}"
-        #       f" total_samples={total_samples}"
-        #       f" target_samples_per_lead={target_samples_per_lead}"
-        #       f" target_samples={target_samples}")
-        # print(f"total_samples={total_samples}, target_samples={target_samples}")
-        # TODO: delete
         do_optimizer_step = total_samples == target_samples
         using_deepspeed = isinstance(model, deepspeed.DeepSpeedEngine)
 
@@ -686,17 +676,13 @@ def rl_finetuning_worker(
         if not is_sentinel_batch:
             passes_took.append(time.time() - time_before_pass)
 
-        logger.info(f"Did a pass, version was {batch.model_version}")
-
         if get_accelerator().is_main_process:
             trigger_message = SamplesProcessed(samples_processed=start_samples + total_samples)
             with write_to_streams(weight_update_stream) as writer:
                 writer.write(trigger_message)
 
         if not do_optimizer_step:
-            # logger.info("don't optimize") # TODO delete
             continue
-        # logger.info("optimize") TODO: delete
 
         target_samples_per_lead += samples_per_lead_per_step
         target_samples += samples_per_step

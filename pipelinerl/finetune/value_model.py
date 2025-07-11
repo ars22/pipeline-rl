@@ -21,8 +21,6 @@ class CausalLMOutputWithValue(ModelOutput):
             Prediction scores of the language modeling head.
         value (`torch.FloatTensor` of shape `(batch_size, sequence_length)`):
             Value predictions from the value head.
-        value_loss (`torch.FloatTensor` of shape `(1,)`, *optional*):
-            Value prediction loss.
         past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*):
             Contains cached key/value states.
         hidden_states (`tuple(torch.FloatTensor)`, *optional*):
@@ -34,7 +32,6 @@ class CausalLMOutputWithValue(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
     logits: torch.FloatTensor = None
     value: torch.FloatTensor = None
-    value_loss: Optional[torch.FloatTensor] = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
@@ -83,14 +80,9 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        value_labels: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithValue]:
         """
         Forward pass that computes both language modeling outputs and value predictions.
-
-        Args:
-            value_labels (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Labels for computing the value loss. These are the rewards to predict.
         """
 
         # Get outputs from the base model
@@ -128,24 +120,6 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
             gradient_checkpointing_kwargs
         )
     
-    def save_checkpoint(self, save_dir, tag=None, client_state={}):
-        """Save checkpoint compatible with DeepSpeed.
-        
-        This method is called by DeepSpeed during checkpointing.
-        """
-        import os
-        logger.info(f"Saving DeepSpeed checkpoint to {save_dir}")
-        
-        # For DeepSpeed compatibility, we need to return success
-        # The actual model saving is handled by DeepSpeed's internal mechanisms
-        # We just need to save our custom value head separately
-        if hasattr(self, '_deepspeed_engine'):
-            # If we're wrapped by DeepSpeed, delegate to it
-            return self._deepspeed_engine.save_checkpoint(save_dir, tag=tag, client_state=client_state)
-        
-        # Otherwise, save manually (this shouldn't happen in DeepSpeed mode)
-        return True
-    
     def save_pretrained(
         self,
         save_directory: Union[str, os.PathLike],
@@ -155,10 +129,7 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
         safe_serialization: bool = False,
         **kwargs,
     ):
-        """Save model with value head.
-        
-        This saves both the pretrained model and the value head weights separately.
-        """
+        """Save model and value head separately."""
         import os
         
         if state_dict is None:
@@ -178,15 +149,12 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
                 new_key = key[len("pretrained_model."):]
                 pretrained_model_state_dict[new_key] = value
             else:
-                # Handle keys that don't have expected prefixes
-                logger.warning(f"Unexpected key in state dict: {key}")
-                # Try to determine where it belongs based on the model structure
-                if hasattr(self.value_head, key.split('.')[0]):
-                    value_head_state_dict[key] = value
-                else:
-                    pretrained_model_state_dict[key] = value
+                raise ValueError(
+                    f"Unexpected key in state dict: {key}. "
+                    "Expected keys should start with 'value_head.' or 'pretrained_model.'."
+                )
         
-        # Save the pretrained model
+        # Save the pretrained model which can be easily loaded by vllm, etc.
         self.pretrained_model.save_pretrained(
             save_directory,
             is_main_process=is_main_process,
@@ -223,10 +191,6 @@ class AutoModelForCausalLMWithValueHead(nn.Module):
             model.value_head.load_state_dict(value_head_state_dict)
 
         return model
-
-    def resize_token_embeddings(self, *args, **kwargs):
-        """Resize token embeddings."""
-        return self.pretrained_model.resize_token_embeddings(*args, **kwargs)
 
     @property
     def device(self):
