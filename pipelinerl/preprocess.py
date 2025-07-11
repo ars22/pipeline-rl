@@ -438,7 +438,10 @@ def run_preprocessing_loop(
         idx: published_samples // num_trainers 
         for idx in range(0, num_trainers, cfg.finetune.seq_parallel)
     }
+
     max_model_version = None
+    reset_buffer = True
+    time_to_write = False
     batch_boundary = published_samples + train_batch_size
     target_samples_per_lead = samples_per_trainer[0] + samples_per_lead_per_step
     
@@ -569,9 +572,11 @@ def run_preprocessing_loop(
                                 trainer_id = (trainer_id + cfg.finetune.seq_parallel) % num_trainers
                             else:
                                 # Get current batch state for this trainer
-                                current_batch = trainer_batch_state[trainer_id]["batch"]
-                                current_length = trainer_batch_state[trainer_id]["length"]
-                                time_to_write = False
+                                if reset_buffer:
+                                    current_batch = []
+                                    current_length = 0
+                                    reset_buffer = False
+
                                 
                                 while len(processed_entries_queue) > 0:
                                     entry = processed_entries_queue[0]  # Peek at next entry
@@ -596,14 +601,10 @@ def run_preprocessing_loop(
                                     published_samples += len(current_batch)
                                     samples_per_trainer[trainer_id] += len(current_batch)
                                     # Reset batch state for this trainer
-                                    trainer_batch_state[trainer_id]["batch"] = []
-                                    trainer_batch_state[trainer_id]["length"] = 0
                                     trainer_id = (trainer_id + cfg.finetune.seq_parallel) % num_trainers
+                                    reset_buffer = True
+                                    time_to_write = False
                                     logger.debug(f"[inner loop] Packed microbatch with {len(current_batch)} samples for trainer {trainer_id}")
-                                else:
-                                    # Update batch state for this trainer if not written
-                                    trainer_batch_state[trainer_id]["batch"] = current_batch
-                                    trainer_batch_state[trainer_id]["length"] = current_length
                         else:
                             batch_entries = []
                             for _ in range(cfg.finetune.train_batch_size ):
