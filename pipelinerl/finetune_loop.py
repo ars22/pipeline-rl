@@ -108,7 +108,6 @@ def run_data_loader(
                     pipeline_batch = PipelineBatchEncoding(**batch_encoding)
                     pipeline_batch = pipeline_batch.to_device(get_accelerator().device)
                     batch_queue.put(pipeline_batch)
-                    logger.info(f"Loaded batch, queue size is now {batch_queue.qsize()}")
 
             except Exception as e:
                 logger.error(f"Error in stream reader: {e}")
@@ -685,8 +684,6 @@ def rl_finetuning_worker(
 
         if not is_sentinel_batch:
             passes_took.append(time.time() - time_before_pass)
-
-        logger.info(f"Did a pass, version was {batch.model_version}")
 
         if get_accelerator().is_main_process:
             trigger_message = SamplesProcessed(samples_processed=start_samples + total_samples)

@@ -541,6 +541,7 @@ def run_preprocessing_loop(
                         max_model_version = max([entry["model_version"] for entry in processed_entries_queue]) if processed_entries_queue else 0
                     
                     max_unconsumed_samples = cfg.preprocess.max_ready_samples_per_lead * num_trainers
+
                     assert isinstance(trainer_state.samples_processed, int)
                     if published_samples - trainer_state.samples_processed > max_unconsumed_samples:
                         # wait for the finetune loop to finish processing data
@@ -606,7 +607,10 @@ def run_preprocessing_loop(
                         )
                     writing_took += time.time() - start_writing
                             
-                    if (published_samples > last_published_samples and (cfg.debug.mode or batch_done or (published_samples - last_published_samples > 128))):
+                    if (
+                        published_samples > last_published_samples 
+                        and (cfg.debug.mode or batch_done or (published_samples - last_published_samples > cfg.preprocess.log_every_n_samples))
+                    ):
                         samples_in_output_queue = output_queue.qsize() * cfg.preprocess.chunk_n_groups * cfg.attempts
                         stats = {
                             "preprocessor/published_samples": published_samples,
