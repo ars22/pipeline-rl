@@ -261,7 +261,7 @@ def rl_step(
 
     # compute algorithm-specific losses
     match config.algo:
-        case "grpo":
+        case "ppo":
             surr1 = ratio_new_old * log_p_weights
             clamped_ratio = torch.clamp(ratio_new_old, 1 - config.epsilon, 1 + config.epsilon)
             clamp_log_ratio_new_old_indicators = clamped_ratio != ratio_new_old
