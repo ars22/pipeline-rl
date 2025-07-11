@@ -46,6 +46,7 @@ def create_sentinel_batch(device, tokenizer=None, model_version=0) -> PipelineBa
         "ref_logprobs": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "old_logprobs": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "group_tokens": torch.tensor(ones, dtype=torch.float).reshape(1, -1),
+        "num_tokens_in_seq": torch.tensor(ones, dtype=torch.float).reshape(1, -1),
         "overflow": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "seq_boundaries": torch.tensor([0, 2], dtype=torch.int)
     }
@@ -70,6 +71,7 @@ def create_sentinel_example(n_tokens: int, tokenizer=None, model_version=0) -> d
         "ref_logprobs": n_tokens * [0.0],
         "old_logprobs": n_tokens * [0.0],
         "group_tokens": n_tokens * [1.0],
+        "num_tokens_in_seq": n_tokens * [1.0], 
         "overflow": n_tokens * [0.0],
         "model_version": model_version,
     }

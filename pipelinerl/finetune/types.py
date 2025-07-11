@@ -57,6 +57,7 @@ class PipelineBatchEncoding(BaseModel):
     ref_logprobs: torch.FloatTensor
     old_logprobs: torch.FloatTensor
     group_tokens: torch.FloatTensor
+    num_tokens_in_seq: torch.FloatTensor 
     overflow: torch.FloatTensor
     
     model_version: int
@@ -91,7 +92,7 @@ class PipelineBatchEncoding(BaseModel):
         return torch.tensor(v, dtype=torch.int)
     
     # TODO: am i needed?
-    @field_validator('rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'overflow', 'pixel_values', mode='before')
+    @field_validator('rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'num_tokens_in_seq', 'overflow', 'pixel_values', mode='before')
     @classmethod
     def convert_to_float_tensor(cls, v: List[float] | torch.Tensor | None) -> torch.FloatTensor | None:
         """Convert lists to float tensors."""
@@ -157,6 +158,7 @@ class PipelineBatchEncoding(BaseModel):
                 "old_logprobs": self.old_logprobs[:, bs[i]:bs[i + 1]],
                 "group_tokens": self.group_tokens[:, bs[i]:bs[i + 1]],
                 "overflow": self.overflow[:, bs[i]:bs[i + 1]],
+                "num_tokens_in_seq": self.num_tokens_in_seq[:, bs[i]:bs[i + 1]],
                 # metadata
                 "model_version": self.model_version,
                 "sentinel": self.sentinel,

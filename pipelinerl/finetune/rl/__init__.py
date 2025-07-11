@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 RL_DATA_COLUMNS = [
     "overflow",
     "group_tokens",
+    "num_tokens_in_seq",
     "rewards",
     "advantages",
     "old_logprobs",
@@ -224,8 +225,10 @@ def rl_step(
     ref_logprobs = batch.ref_logprobs[:, 1:]
     old_logprobs = batch.old_logprobs[:, 1:]
     group_tokens = batch.group_tokens[:, 1:]
+    num_tokens_in_seq = batch.num_tokens_in_seq[:, 1:]
     overflow = batch.overflow[:, 1:]
 
+    stats_denom = num_tokens_in_seq * config.batch_size 
     if config.group_normalization:
         # assert that group_tokens is not zero
         assert (group_tokens > 0).all(), "group_tokens must be greater than zero for group normalization"
@@ -330,37 +333,37 @@ def rl_step(
         "max_loss": final_loss.item(),
         "min_loss": final_loss.item(),
         "value_loss": value_loss.item() if torch.is_tensor(value_loss) else value_loss,
-        "reward": mean_sum(rewards, masks_shifted, segments).item(),
+        "reward": sum_sum(rewards / stats_denom, masks_shifted, segments).item(),
         "max_reward": rewards[masks_shifted].max().item(),
         "min_reward": rewards[masks_shifted].min().item(),
-        "entropy": mean_sum(entropy, masks_shifted, segments).item(),
-        "old_logprobs": mean_sum(old_logprobs, masks_shifted, segments).item(),
-        "new_logprobs": mean_sum(new_logprobs, masks_shifted, segments).item(),
-        "ref_logprobs": mean_sum(ref_logprobs, masks_shifted, segments).item(),
-        "advantage": mean_sum(advantages, masks_shifted, segments).item(),
+        "entropy": sum_sum(entropy / stats_denom, masks_shifted, segments).item(),
+        "old_logprobs": sum_sum(old_logprobs / stats_denom, masks_shifted, segments).item(),
+        "new_logprobs": sum_sum(new_logprobs / stats_denom, masks_shifted, segments).item(),
+        "ref_logprobs": sum_sum(ref_logprobs / stats_denom, masks_shifted, segments).item(),
+        "advantage": sum_sum(advantages / stats_denom, masks_shifted, segments).item(),
         "max_advantage": advantages[masks_shifted].max().item(),
         "min_advantage": advantages[masks_shifted].min().item(),
-        "kl": mean_sum(approx_kl, masks_shifted, segments).item(),
+        "kl": sum_sum(approx_kl / stats_denom, masks_shifted, segments).item(),
         "max_kl": approx_kl[masks_shifted].max().item(),
         "min_kl": approx_kl[masks_shifted].min().item(),
-        "policy_loss": mean_sum(policy_loss, masks_shifted, segments).item(),
-        "surr1": mean_sum(surr1, masks_shifted, segments).item(),
-        "surr2": mean_sum(surr2, masks_shifted, segments).item(),
-        "ratio_new_old": mean_sum(ratio_new_old, masks_shifted, segments).item(),
+        "policy_loss": sum_sum(policy_loss / stats_denom, masks_shifted, segments).item(),
+        "surr1": sum_sum(surr1 / stats_denom, masks_shifted, segments).item(),
+        "surr2": sum_sum(surr2 / stats_denom, masks_shifted, segments).item(),
+        "ratio_new_old": sum_sum(ratio_new_old / stats_denom, masks_shifted, segments).item(),
         "ratio_new_old_sum": sum_sum(ratio_new_old, masks_shifted, segments).item(),
         "ratio_new_old_squared_sum": sum_sum(  # useful to estimate the ESS
             ratio_new_old * ratio_new_old, masks_shifted, segments
         ).item(),
-        "ratio_ref_new": mean_sum(torch.exp(log_ratio_ref_new), masks_shifted, segments).item(),
-        "ratio_ref_old": mean_sum(torch.exp(ref_logprobs - old_logprobs), masks_shifted, segments).item(),
-        "clamp_log_ratio_ref_new_indicator": mean_sum(
-            clamp_log_ratio_ref_new_indicators, masks_shifted, segments
+        "ratio_ref_new": sum_sum(torch.exp(log_ratio_ref_new) / stats_denom, masks_shifted, segments).item(),
+        "ratio_ref_old": sum_sum(torch.exp(ref_logprobs - old_logprobs) / stats_denom, masks_shifted, segments).item(),
+        "clamp_log_ratio_ref_new_indicator": sum_sum(
+            clamp_log_ratio_ref_new_indicators / stats_denom, masks_shifted, segments
         ).item(),
-        "clamp_log_ratio_new_old_indicator": mean_sum(
-            clamp_log_ratio_new_old_indicators, masks_shifted, segments
+        "clamp_log_ratio_new_old_indicator": sum_sum(
+            clamp_log_ratio_new_old_indicators / stats_denom, masks_shifted, segments
         ).item(),
         "num_nans": torch.isnan(loss).sum().item(),
-        "token_weight": mean_sum(tokens_weights, masks_shifted, segments).item(),
+        "token_weight": sum_sum(tokens_weights / stats_denom, masks_shifted, segments).item(),
         "max_token_weight": tokens_weights[masks_shifted].max().item(),
         "min_token_weight": tokens_weights[masks_shifted].min().item(),
         "kl_coef": num_sequences * kl_coef,
@@ -371,7 +374,7 @@ def rl_step(
     
     # Add value prediction stats if available
     if value_predictions is not None:
-        stats["value_mean"] = mean_sum(value_predictions, masks_shifted, segments).item()
+        stats["value_mean"] = sum_sum(value_predictions / stats_denom, masks_shifted, segments).item()
         stats["value_max"] = value_predictions[masks_shifted].max().item() if masks_shifted.any() else 0.0
         stats["value_min"] = value_predictions[masks_shifted].min().item() if masks_shifted.any() else 0.0
 
@@ -451,15 +454,18 @@ def populate_rl_data(dataset: list[dict[str, Any]], eos_token_id: int, config: R
         axis=1,
     )
     df["group_tokens"] = df.apply(lambda row: [row["group_tokens"]] * len(row["input_ids"]), axis=1)
+    df["num_tokens_in_seq"] = df.apply(lambda row: [len(row["input_ids"])] * len(row["input_ids"]), axis=1)
 
     # Step 5: move the results back to the dataset
     advantages_list = df["advantages"].tolist()
     group_tokens_list = df["group_tokens"].tolist()
     overflow_list = df["overflow"].tolist()
+    num_tokens_in_seq_list = df["num_tokens_in_seq"].tolist()
     for i, entry in enumerate(dataset):
         entry["advantages"] = advantages_list[i]
         entry["group_tokens"] = group_tokens_list[i]
         entry["overflow"] = overflow_list[i]
+        entry["num_tokens_in_seq"] = num_tokens_in_seq_list[i]
     return dataset
 
 
@@ -483,4 +489,5 @@ def prepare_rl_fields(
     encoding["ref_logprobs"] = [0] * (len(encoding["labels"]) - len(ref_logprobs)) + ref_logprobs
     encoding["overflow"] = [0] * len(encoding["labels"])  # place holder
     encoding["group_tokens"] = [0] * len(encoding["labels"])  # place holder
+    encoding["num_tokens_in_seq"] = [1] * len(encoding["labels"])  # avoid division by zero in normalization
     return encoding
