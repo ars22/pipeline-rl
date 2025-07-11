@@ -67,18 +67,19 @@ class PipelineBatchEncoding(BaseModel):
     
     # Visual feature fields (optional, for multimodal models)
     pixel_values: torch.FloatTensor | None = None
-    image_grid_thw: List[List[int]] | None = None
+    image_grid_thw: torch.LongTensor | None = None
     
-    # TODO: am i needed?
-    @field_validator('input_ids', 'attention_mask', 'labels', 'position_ids',  mode='before')
+    @field_validator('input_ids', 'attention_mask', 'labels', 'position_ids', 'image_grid_thw', mode='before')
     @classmethod
     def convert_to_long_tensor(cls, v: List[int] | torch.Tensor | None) -> torch.LongTensor | None:
-        """Convert lists to long tensors."""
+        """Handle initialization of long tensors from different types."""
         if v is None:
             return None
         if isinstance(v, torch.Tensor):
-            return v.long() # type: ignore
-        return torch.tensor(v, dtype=torch.long)
+            return v.long()
+        if isinstance(v, list) or isinstance(v, np.ndarray):
+            return torch.tensor(v, dtype=torch.long)
+        raise ValueError(f"Unsupported type for long tensor: {type(v)}")
     
     @field_validator('seq_boundaries', mode='before')
     @classmethod
@@ -94,12 +95,14 @@ class PipelineBatchEncoding(BaseModel):
     @field_validator('rewards', 'advantages', 'ref_logprobs', 'old_logprobs', 'group_tokens', 'overflow', 'pixel_values', mode='before')
     @classmethod
     def convert_to_float_tensor(cls, v: List[float] | torch.Tensor | None) -> torch.FloatTensor | None:
-        """Convert lists to float tensors."""
+        """Handle initialization of float tensors from different types."""
         if v is None:
             return None
         if isinstance(v, torch.Tensor):
             return v.float()
-        return torch.tensor(v, dtype=torch.float)
+        if isinstance(v, list) or isinstance(v, np.ndarray):
+            return torch.tensor(v, dtype=torch.float)
+        raise ValueError(f"Unsupported type for float tensor: {type(v)}")
     
     def to_device(self, device: Union[str, torch.device]) -> 'PipelineBatchEncoding':
         """Move all tensors to the specified device and return updated instance."""

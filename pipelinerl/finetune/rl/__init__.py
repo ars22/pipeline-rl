@@ -93,12 +93,8 @@ class RLConfig(BaseModel):
         description="Filter out groups where all advantages are zero during preprocessing",
     )
     value_loss_coef: float = Field(
-        default=0.1,
+        default=0.0,
         description="Coefficient for the value loss in the final loss",
-    )
-    clip_eps: float = Field(
-        default=0.2,
-        description="Value function clipping parameter",
     )
 
 
@@ -155,6 +151,8 @@ def rl_step(
     masks = batch.labels != -100
     masks_shifted = masks[:, 1:]
 
+    has_value_head = hasattr(model, 'value_head')
+
     # if we have position_ids, we are packing
     if batch.is_packed:
         position_ids = batch.position_ids[0]
@@ -193,10 +191,7 @@ def rl_step(
     if hasattr(batch, 'pixel_values') and batch.pixel_values is not None:
         model_inputs["pixel_values"] = batch.pixel_values
     if hasattr(batch, 'image_grid_thw') and batch.image_grid_thw is not None:
-        model_inputs["image_grid_thw"] = batch.image_grid_thw.reshape((1, 3))
-
-    # Check if model has value head
-    has_value_head = hasattr(model, 'value_head') or (hasattr(model, 'module') and hasattr(model.module, 'value_head'))
+        model_inputs["image_grid_thw"] = batch.image_grid_thw #torch.tensor(.reshape((1, 3))
     
     outputs = model(**model_inputs)
 
@@ -208,11 +203,6 @@ def rl_step(
     entropy = -(probs * logprobs).sum(dim=-1)
     del logits, probs
     
-    # Get value predictions if available
-    value_predictions = None
-    if has_value_head and hasattr(outputs, 'value'):
-        value_predictions = outputs.value[:, :-1]  # Shift to align with other sequences
-
     # get log probs for actual tokens
     new_logprobs = torch.gather(logprobs, dim=2, index=batch.input_ids[:, 1:].unsqueeze(2)).squeeze(2)
     assert torch.isfinite(new_logprobs).all(), f"new_logprobs is not finite: {new_logprobs}"
@@ -220,7 +210,6 @@ def rl_step(
 
     # get shifted values and compute ratios
     rewards = batch.rewards[:, 1:]
-    advantages = batch.advantages[:, 1:]
     ref_logprobs = batch.ref_logprobs[:, 1:]
     old_logprobs = batch.old_logprobs[:, 1:]
     group_tokens = batch.group_tokens[:, 1:]
@@ -244,12 +233,15 @@ def rl_step(
     ratio_new_old = torch.exp(log_ratio_new_old)
     log_ratio_ref_new = ref_logprobs - new_logprobs
     assert torch.isfinite(log_ratio_ref_new).all(), f"log_ratio_ref_new is not finite: {log_ratio_ref_new}"
-    # compute weights and KL divergence
-    # Use value-estimated advantages if available and model has value head
-    if value_predictions is not None:
+
+    if has_value_head:
+        # Get value predictions if available
+        value_predictions = outputs.value[:, :-1] # no target for the last token 
         # Compute value-based advantages: A(s,a) = MC_return - V(s)
         # where MC_return is the Monte Carlo return (rewards) and V(s) is the value prediction
         advantages = rewards - value_predictions
+    else:
+        advantages = batch.advantages[:, 1:]
 
     log_p_weights = advantages.detach() if config.use_advantages else rewards
     if config.relu_log_p_weights:
@@ -271,7 +263,7 @@ def rl_step(
 
     # compute algorithm-specific losses
     match config.algo:
-        case "grpo":
+        case "ppo":
             surr1 = ratio_new_old * log_p_weights
             clamped_ratio = torch.clamp(ratio_new_old, 1 - config.epsilon, 1 + config.epsilon)
             clamp_log_ratio_new_old_indicators = clamped_ratio != ratio_new_old
@@ -295,9 +287,8 @@ def rl_step(
 
     policy_loss_total = -sum_sum(loss, masks_shifted, segments)
     
-    # Compute value loss if model has value head
-    value_loss = torch.tensor(0.0, device=policy_loss_total.device, dtype=policy_loss_total.dtype)
-    if has_value_head and hasattr(outputs, 'value') and outputs.value is not None:
+    final_loss = policy_loss_total
+    if has_value_head:
         # Get the value predictions
         values = outputs.value
         # Use the already extracted and shifted rewards as value labels
@@ -311,9 +302,7 @@ def rl_step(
         value_loss = sum_sum(value_loss, masks_shifted, segments) 
         
         # Combine policy loss and value loss
-        final_loss = policy_loss_total + config.value_loss_coef * value_loss
-    else:
-        final_loss = policy_loss_total
+        final_loss = final_loss + config.value_loss_coef * value_loss
 
     # ensure loss is valid
     assert torch.isfinite(final_loss), f"Non-finite loss detected: {final_loss}"
@@ -329,7 +318,6 @@ def rl_step(
         "loss": final_loss.item(),
         "max_loss": final_loss.item(),
         "min_loss": final_loss.item(),
-        "value_loss": value_loss.item() if torch.is_tensor(value_loss) else value_loss,
         "reward": mean_sum(rewards, masks_shifted, segments).item(),
         "max_reward": rewards[masks_shifted].max().item(),
         "min_reward": rewards[masks_shifted].min().item(),
@@ -368,12 +356,16 @@ def rl_step(
         "num_output_tokens_sum": masks_shifted.sum().item(),
         "input_size": batch.input_ids.numel(), 
     }
+
+    if has_value_head:
+        value_stats = {
+            "value_mean": mean_sum(value_predictions, masks_shifted, segments).item(),
+            "value_max": value_predictions[masks_shifted].max().item(),
+            "value_min": value_predictions[masks_shifted].min().item(),
+            "value_loss": value_loss.item(),
+        }
+        stats.update(value_stats)
     
-    # Add value prediction stats if available
-    if value_predictions is not None:
-        stats["value_mean"] = mean_sum(value_predictions, masks_shifted, segments).item()
-        stats["value_max"] = value_predictions[masks_shifted].max().item() if masks_shifted.any() else 0.0
-        stats["value_min"] = value_predictions[masks_shifted].min().item() if masks_shifted.any() else 0.0
 
     return final_loss, stats
 

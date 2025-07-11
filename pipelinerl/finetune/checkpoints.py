@@ -104,23 +104,6 @@ def load_model(args, model_class, current_dir):
 
     if args.load_as_bf16:
         loading_args["torch_dtype"] = torch.bfloat16
-    if args.lora.enabled:
-        if is_ds_zero_3:
-            raise Exception("LoRA is not compatible with Deepspeed zero stage 3")
-        if args.lora.base_model_8bit:
-            loading_args["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=False,
-                load_in_8bit=True,
-                llm_int8_has_fp16_weight=args.load_as_bf16,
-            )
-        elif args.lora.base_model_4bit:
-            loading_args["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                load_in_8bit=False,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=False,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-            )
     if args.auto_device_map:
         loading_args["device_map"] = "auto"
     model_cls = get_auto_model_class(model_class)
@@ -132,9 +115,7 @@ def load_model(args, model_class, current_dir):
     ):  # resume
         # Size mismatch errors here may be due to improper used of Deepspeed+save_pretrained()
         # instead, always call save_model_only() in all processes
-
-        # when LoRA enabled, always preload the original model, the lora weights will be loaded later
-        model_to_load = args.config_name if args.lora.enabled else str(current_dir)
+        model_to_load = args.config_name 
         logger.info(f"Loading model {model_cls} weights from {current_dir}")
     else:  # from scratch
         logger.info(f"Initializing model {model_cls} from {args.config_name}")
