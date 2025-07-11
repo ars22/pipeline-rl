@@ -21,33 +21,30 @@ def create_sentinel_batch(device, tokenizer=None, model_version=0) -> PipelineBa
 
     # get special tokens, defaulting to EOS token or generic IDs if not available
     eos_token_id = getattr(tokenizer, "eos_token_id", 2) if tokenizer else 2
-
-    # for start token, try BOS first, fall back to EOS if BOS is None/not available
-    bos_token_id = getattr(tokenizer, "bos_token_id", None) if tokenizer else None
-    if bos_token_id is None:
-        bos_token_id = eos_token_id  # Use EOS as start token if BOS not available
+    length = 8
 
     # create the minimal tensors needed
-    input_ids = [bos_token_id, eos_token_id]
-    attention_mask = [1, 1]  # both tokens are attended to
-    position_ids = [0, 1]  # valid positions for both tokens
+    input_ids = [eos_token_id] * length
+    labels = [-100] * length
+    attention_mask = [1] * length 
+    position_ids = list(range(length))
 
     # Prepare fields for dummy values (only needed for reward, advantages, etc.)
-    zeros = [0.0] * 2
-    ones = [1.0] * 2
+    zeros = [0.0] * length
+    ones = [1.0] * length
 
     sentinel_batch = {
-        "input_ids": torch.tensor([bos_token_id, eos_token_id], dtype=torch.long).reshape(1, -1),
-        "attention_mask": torch.tensor([1, 1], dtype=torch.long).reshape(1, -1),
-        "labels": torch.tensor([-100, eos_token_id], dtype=torch.long).reshape(1, -1),
-        "position_ids": torch.tensor([0, 1], dtype=torch.long).reshape(1, -1),
+        "input_ids": torch.tensor(input_ids, dtype=torch.long).reshape(1, -1),
+        "attention_mask": torch.tensor(attention_mask, dtype=torch.long).reshape(1, -1),
+        "labels": torch.tensor(labels, dtype=torch.long).reshape(1, -1),
+        "position_ids": torch.tensor(position_ids, dtype=torch.long).reshape(1, -1),
         "rewards": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "advantages": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "ref_logprobs": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "old_logprobs": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
         "group_tokens": torch.tensor(ones, dtype=torch.float).reshape(1, -1),
         "overflow": torch.tensor(zeros, dtype=torch.float).reshape(1, -1),
-        "seq_boundaries": torch.tensor([0, 2], dtype=torch.int)
+        "seq_boundaries": torch.tensor([0, length], dtype=torch.int)
     }
 
     # Add model_version and sentinel flag to match the expected format
