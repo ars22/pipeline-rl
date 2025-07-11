@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 RL_DATA_COLUMNS = [
     "overflow",
     "group_tokens",
-    "num_tokens_in_seq",
+    "num_out_tokens_in_seq",
     "rewards",
     "advantages",
     "old_logprobs",
@@ -225,10 +225,10 @@ def rl_step(
     ref_logprobs = batch.ref_logprobs[:, 1:]
     old_logprobs = batch.old_logprobs[:, 1:]
     group_tokens = batch.group_tokens[:, 1:]
-    num_tokens_in_seq = batch.num_tokens_in_seq[:, 1:]
+    num_out_tokens_in_seq = batch.num_out_tokens_in_seq[:, 1:]
     overflow = batch.overflow[:, 1:]
 
-    stats_denom = num_tokens_in_seq * config.batch_size 
+    stats_denom = num_out_tokens_in_seq * config.batch_size 
     if config.group_normalization:
         # assert that group_tokens is not zero
         assert (group_tokens > 0).all(), "group_tokens must be greater than zero for group normalization"
@@ -454,18 +454,18 @@ def populate_rl_data(dataset: list[dict[str, Any]], eos_token_id: int, config: R
         axis=1,
     )
     df["group_tokens"] = df.apply(lambda row: [row["group_tokens"]] * len(row["input_ids"]), axis=1)
-    df["num_tokens_in_seq"] = df.apply(lambda row: [len(row["input_ids"])] * len(row["input_ids"]), axis=1)
+    df["num_out_tokens_in_seq"] = df.apply(lambda row: [sum(1 for label in row["labels"] if label != -100)] * len(row["input_ids"]), axis=1)
 
     # Step 5: move the results back to the dataset
     advantages_list = df["advantages"].tolist()
     group_tokens_list = df["group_tokens"].tolist()
     overflow_list = df["overflow"].tolist()
-    num_tokens_in_seq_list = df["num_tokens_in_seq"].tolist()
+    num_out_tokens_in_seq_list = df["num_out_tokens_in_seq"].tolist()
     for i, entry in enumerate(dataset):
         entry["advantages"] = advantages_list[i]
         entry["group_tokens"] = group_tokens_list[i]
         entry["overflow"] = overflow_list[i]
-        entry["num_tokens_in_seq"] = num_tokens_in_seq_list[i]
+        entry["num_out_tokens_in_seq"] = num_out_tokens_in_seq_list[i]
     return dataset
 
 
@@ -489,5 +489,5 @@ def prepare_rl_fields(
     encoding["ref_logprobs"] = [0] * (len(encoding["labels"]) - len(ref_logprobs)) + ref_logprobs
     encoding["overflow"] = [0] * len(encoding["labels"])  # place holder
     encoding["group_tokens"] = [0] * len(encoding["labels"])  # place holder
-    encoding["num_tokens_in_seq"] = [1] * len(encoding["labels"])  # avoid division by zero in normalization
+    encoding["num_out_tokens_in_seq"] = [1 if label != -100 else 0 for label in encoding["labels"]]  # count only output tokens
     return encoding
