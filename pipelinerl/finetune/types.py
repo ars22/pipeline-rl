@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Literal, TypeAlias, Union
 import torch
 from pydantic import BaseModel, ConfigDict, field_validator
 
+import numpy as np
+
 ModelClass: TypeAlias = Literal["causal-language-modeling", "seq2seq-language-modeling", "vision2seq-language-modeling"]
 
 
