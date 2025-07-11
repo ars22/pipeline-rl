@@ -1,86 +1,34 @@
-data: null
-# Model class. Must be one of the following: causal-language-modeling, seq2seq-language-modeling, vision2seq-language-modeling
-model_class: causal-language-modeling
-# Model name or path of model to be trained.
-config_name: ???
-# Optimizer type, supported: adamw_torch, adafactor, cpuadam, lion
-optim: adamw_torch
-# use half precision training, full bf16 without mixed precision copies at all
-load_as_bf16: True
 use_flash_attention: true
-auto_device_map: False
-#LoRA adapter tuning config
-lora:
-  enabled: False
-  task_type: CAUSAL_LM # supported: CAUSAL_LM, SEQ_2_SEQ_LM
-  base_model_8bit: False # format used for storing base mode weights during forward
-  base_model_4bit: False
-  r: 16 # Lora attention dimension.
-  alpha: 16 # the alpha parameter for Lora scaling.
-  dropout: 0.05 # the dropout probability for Lora layers.
-  bias: "none" # Bias type for Lora. Can be 'none', 'all' or 'lora_only'
-  target_modules: [] # the names of the modules to apply Lora to.
-# Overwrite existing model checkpoints. If False, resume training from existing checkpoint if exists
-force_restart: False
-# Rewind dataloder to the last used position if training resumed from existing checkpoint
-resume_dataloader: False
-# Batch size for training.
-train_batch_size: 4
-# Batch size for evaluation.
-valid_batch_size: 4
-# Value of weight decay.
-weight_decay: 0.01
-# Learning rate for training.
-learning_rate: 0.0000025
-# How much to clip the gradient (no clipping if null)
-gradient_clipping_threshold: 1.0
-# Learning rate scheduler type (indexed by completed_steps).
-lr_scheduler_type: cosine # could be cosine, constant_with_warmup
-# Number of warmup (completed) steps in the learning rate schedule.
-num_warmup_steps: 50
-# Number of gradient accumulation steps.
-gradient_accumulation_passes: 256
-# Use gradient checkpointing to reduce memory footprint.
-gradient_checkpointing: True
-# Number of training steps passed to LR scheduler,
-# also the maximum number of steps if interrupt_train_steps is -1
-max_train_steps: 100000
-# Set interrupt_train_steps to the number of steps after which to interrupt training.
-# Using interrupt_train_steps is useful for stopping training before max_train_steps
-# is reached without affecting the LR scheduler.
-# This is useful for testing purposes.
-# Note that interrupt_train_steps is ignored if equal to -1
-interrupt_train_steps: -1
-# Maximum number of evaluation (completed) steps. If -1 the full dataset is evaluated.
-max_eval_steps: -1
-# Sequence lengths used for training.
-seq_length: 4096
-# Training seed.
-seed: 1
-# Interval to save checkpoints.
-save_checkpoint_steps: ???
-# Whether to keep intermediate checkpoints
-keep_intermediate_checkpoints: True
-# Whether to allow loading external model code
-trust_remote_code: False
-# Whether to empty the cache every training pass. Usually not worth it except for very large models if OOM
-cuda_empty_cache: True
-sft_config_name: null
-n_examples: 0 # 0 means do not limit number of samples
-log_each_n_steps: 10
-also_save_steps: []
-use_safetensors: True
-save_final_training_state: True
-objective: rl
-eval_callback:
-  _target_: tapeagents.finetune.eval.dummy_eval_callback
-  config_name: ""
+attn_implementation: flash_attention_2
+config_name: ${..model_path}
+output_dir: ${..output_dir}/finetune
+seq_length: 12000
+seq_packing: true
 rl:
-  kl_coef: 0.0
-  final_kl_coef: ${..rl.kl_coef}
-  reward_minus_kl_coef: 0.0
-  use_advantages: true
   algo: reinforce
-  temperature: 1.0
+  divide_advantage_by_std: false
+  kl_coef: 0.0
   entropy_bonus: 0.0
-  overlong_filtering: false
+  reward_minus_kl_coef: 0.0
+  epsilon: 4
+  use_advantages: true
+  relu_log_p_weights: false
+  clamp_log_ratio_ref_new_value: 5
+  temperature: ${...llm.parameters.temperature}
+  aggregate_loss: sum
+train_batch_size: 1
+gradient_accumulation_passes: 1024
+gradient_checkpointing: true
+gradient_clipping_threshold: 0.3
+# see https://medium.com/pytorch/how-activation-checkpointing-enables-scaling-up-training-deep-learning-models-7a93ae01ff2d
+# for the motivation to this false by default
+reentrant_checkpointing: false
+learning_rate: 1e-6
+save_checkpoint_steps: 100
+log_each_n_steps: 1
+input: training_data
+send_weight_updates: true
+queue_size: 32
+max_lag: ${..max_lag}
+weight_update_interval: 1
+pop_old_data: ${..pop_old_data}
