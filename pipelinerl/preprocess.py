@@ -440,8 +440,9 @@ def run_preprocessing_loop(
     }
 
     max_model_version = None
-    reset_buffer = True
     time_to_write = False
+    current_batch = []
+    current_length = 0
     batch_boundary = published_samples + train_batch_size
     target_samples_per_lead = samples_per_trainer[0] + samples_per_lead_per_step
     
@@ -571,12 +572,6 @@ def run_preprocessing_loop(
                                 write_micro_batch_slices(trainer_id, data_writer, sentinel_batch, cfg.finetune.seq_parallel)
                                 trainer_id = (trainer_id + cfg.finetune.seq_parallel) % num_trainers
                             else:
-                                # Get current batch state for this trainer
-                                if reset_buffer:
-                                    current_batch = []
-                                    current_length = 0
-                                    reset_buffer = False
-
                                 
                                 while len(processed_entries_queue) > 0:
                                     entry = processed_entries_queue[0]  # Peek at next entry
@@ -595,15 +590,17 @@ def run_preprocessing_loop(
                                         time_to_write = True
                                         break
                             
-                                if time_to_write and len(current_batch) > 0:
+                                if time_to_write:
+                                    assert len(current_batch) > 0, "Current batch should not be empty when writing"
                                     batch_encoding = collate_packed(current_batch, tokenizer, cfg.finetune.seq_parallel)
                                     write_micro_batch_slices(trainer_id, data_writer, batch_encoding, cfg.finetune.seq_parallel)
                                     published_samples += len(current_batch)
                                     samples_per_trainer[trainer_id] += len(current_batch)
                                     # Reset batch state for this trainer
                                     trainer_id = (trainer_id + cfg.finetune.seq_parallel) % num_trainers
-                                    reset_buffer = True
                                     time_to_write = False
+                                    current_batch = []
+                                    current_length = 0
                                     logger.debug(f"[inner loop] Packed microbatch with {len(current_batch)} samples for trainer {trainer_id}")
                         else:
                             batch_entries = []
