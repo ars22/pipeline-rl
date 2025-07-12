@@ -448,12 +448,7 @@ def run_preprocessing_loop(
     
     # Per-trainer sample tracking (similar to finetune_loop.py)
     total_filtered_out = 0  # Track total filtered samples across all batches
-    
-    # Per-trainer batch state for sequence packing
-    trainer_batch_state = {
-        idx: {"batch": [], "length": 0}
-        for idx in range(0, num_trainers, cfg.finetune.seq_parallel)
-    }
+
     with write_to_streams(output_stream) as data_writer, write_to_streams(stats_streams) as stats_writer:
         with SharedMemoryManager() as smm:
             # Create shared memory queues without the manager parameter
