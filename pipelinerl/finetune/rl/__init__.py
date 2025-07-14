@@ -217,7 +217,7 @@ def rl_step(
     num_out_tokens_in_seq = batch.num_out_tokens_in_seq[:, 1:]
     overflow = batch.overflow[:, 1:]
 
-    stats_denom = num_out_tokens_in_seq * config.batch_size 
+    stats_denom = num_out_tokens_in_seq
     if config.group_normalization:
         # assert that group_tokens is not zero
         assert (group_tokens > 0).all(), "group_tokens must be greater than zero for group normalization"

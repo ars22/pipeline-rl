@@ -5,15 +5,17 @@ import torch
 from datasets import Dataset
 
 
-def get_avg_rl_stats(rl_stats: dict, num_samples: int):
+def aggregate_rl_stats(rl_stats: dict, num_samples: int):
     avg_rl_stats: dict[str, float] = {}
     for k, v in rl_stats.items():
         if "min" in k:
             op = torch.min
         elif "max" in k:
             op = torch.max
-        else:
+        elif "loss" in k:
             op = torch.sum
+        else:
+            op = lambda x: torch.sum(x) / num_samples
         avg_rl_stats["rl/" + k] = op(torch.Tensor(v)).item()
     return avg_rl_stats
 
