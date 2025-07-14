@@ -97,13 +97,13 @@ class RLConfig(BaseModel):
         default=0.0,
         description="Coefficient for the value loss in the final loss",
     )
-    max_value_clamp: float = Field(
+    max_advantage_value_clamp: float = Field(
         default=1.0,
-        description="Maximum value for clamping value predictions",
+        description="Maximum value for clamping value predictions in advantage computation",
     )
-    min_value_clamp: float = Field(
+    min_advantage_value_clamp: float = Field(
         default=0.0,
-        description="Minimum value for clamping value predictions",
+        description="Minimum value for clamping value predictions in advantage computation",
     )
 
 
@@ -250,10 +250,10 @@ def rl_step(
         value_predictions = outputs.value[:, :-1] # no target for the last token 
         # Compute value-based advantages: A(s,a) = MC_return - V(s)
         # where MC_return is the Monte Carlo return (rewards) and V(s) is the value prediction
-        assert rewards.max() <= config.max_value_clamp and rewards.min() >= config.min_value_clamp, (
-            f"Rewards {rewards.max()}/{rewards.min()} exceed value clamp {config.max_value_clamp}/{config.min_value_clamp}"
+        assert rewards.max() <= config.max_advantage_value_clamp and rewards.min() >= config.min_advantage_value_clamp, (
+            f"Rewards {rewards.max()}/{rewards.min()} exceed advantage value clamp {config.max_advantage_value_clamp}/{config.min_advantage_value_clamp}"
         ) 
-        advantages = rewards - torch.clamp(value_predictions, config.min_value_clamp, config.max_value_clamp)
+        advantages = rewards - torch.clamp(value_predictions, config.min_advantage_value_clamp, config.max_advantage_value_clamp)
     else:
         advantages = batch.advantages[:, 1:]
 
@@ -379,6 +379,9 @@ def rl_step(
         stats["value_max"] = value_predictions[masks_shifted].max().item() if masks_shifted.any() else 0.0
         stats["value_min"] = value_predictions[masks_shifted].min().item() if masks_shifted.any() else 0.0
         stats["value_loss"] = value_loss.item()
+        stats["value_mse"] = sum_sum(
+            torch.square(value_predictions - value_labels) / stats_denom, masks_shifted, segments
+        ).item()
 
     return final_loss, stats
 
