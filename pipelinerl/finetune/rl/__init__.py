@@ -316,7 +316,10 @@ def rl_step(
         }
         return final_loss, stats_no_labels
 
-    # All the stats are average then summed. They will be normalized by the number of sequences at the end of the step
+    # Here is what will happend to different metrics down the line.
+    # 1. loss was multiplied by token_weights and is now summed
+    # 2. min/max are computed over the whole batch
+    # 3. all other stats are averaged by sequence and then over the batch
     stats = {
         "loss": final_loss.item(),
         "max_loss": final_loss.item(),
