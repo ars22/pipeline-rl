@@ -97,6 +97,10 @@ class RLConfig(BaseModel):
         default=0.0,
         description="Coefficient for the value loss in the final loss",
     )
+    value_clamp: float = Field(
+        default=1.0,
+        description="Clamp the value predictions to this range",
+    )
 
 
 def make_rl_data_callback(args, current_dir, rl_config, model):
@@ -242,7 +246,7 @@ def rl_step(
         value_predictions = outputs.value[:, :-1] # no target for the last token 
         # Compute value-based advantages: A(s,a) = MC_return - V(s)
         # where MC_return is the Monte Carlo return (rewards) and V(s) is the value prediction
-        advantages = rewards - value_predictions
+        advantages = rewards - torch.clamp(value_predictions, -config.value_clamp, config.value_clamp)
     else:
         advantages = batch.advantages[:, 1:]
 
