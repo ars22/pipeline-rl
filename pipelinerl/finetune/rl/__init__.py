@@ -289,7 +289,6 @@ def rl_step(
 
     policy_loss_total = -sum_sum(loss, masks_shifted, segments)
     
-    final_loss = policy_loss_total
     if has_value_head:
         # Get the value predictions
         values = outputs.value
@@ -304,7 +303,9 @@ def rl_step(
         value_loss = sum_sum(value_loss, masks_shifted, segments) 
         
         # Combine policy loss and value loss
-        final_loss = final_loss + config.value_loss_coef * value_loss
+        final_loss = policy_loss_total + config.value_loss_coef * value_loss
+    else:
+        final_loss = policy_loss_total
 
     # ensure loss is valid
     assert torch.isfinite(final_loss), f"Non-finite loss detected: {final_loss}"
