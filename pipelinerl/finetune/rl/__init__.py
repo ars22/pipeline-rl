@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 RL_DATA_COLUMNS = [
     "overflow",
     "group_tokens",
-    "num_out_tokens_in_seq",
+    "num_labels",
     "rewards",
     "advantages",
     "old_logprobs",
@@ -214,10 +214,9 @@ def rl_step(
     ref_logprobs = batch.ref_logprobs[:, 1:]
     old_logprobs = batch.old_logprobs[:, 1:]
     group_tokens = batch.group_tokens[:, 1:]
-    num_out_tokens_in_seq = batch.num_out_tokens_in_seq[:, 1:]
+    num_labels_in_seq = batch.num_labels[:, 1:] # sequence dependent normalization
     overflow = batch.overflow[:, 1:]
 
-    stats_denom = num_out_tokens_in_seq
     if config.group_normalization:
         # assert that group_tokens is not zero
         assert (group_tokens > 0).all(), "group_tokens must be greater than zero for group normalization"
@@ -324,37 +323,37 @@ def rl_step(
         "loss": final_loss.item(),
         "max_loss": final_loss.item(),
         "min_loss": final_loss.item(),
-        "reward": sum_sum(rewards / stats_denom, masks_shifted, segments).item(),
+        "reward": sum_sum(rewards / num_labels_in_seq, masks_shifted, segments).item(),
         "max_reward": rewards[masks_shifted].max().item(),
         "min_reward": rewards[masks_shifted].min().item(),
-        "entropy": sum_sum(entropy / stats_denom, masks_shifted, segments).item(),
-        "old_logprobs": sum_sum(old_logprobs / stats_denom, masks_shifted, segments).item(),
-        "new_logprobs": sum_sum(new_logprobs / stats_denom, masks_shifted, segments).item(),
-        "ref_logprobs": sum_sum(ref_logprobs / stats_denom, masks_shifted, segments).item(),
-        "advantage": sum_sum(advantages / stats_denom, masks_shifted, segments).item(),
+        "entropy": sum_sum(entropy / num_labels_in_seq, masks_shifted, segments).item(),
+        "old_logprobs": sum_sum(old_logprobs / num_labels_in_seq, masks_shifted, segments).item(),
+        "new_logprobs": sum_sum(new_logprobs / num_labels_in_seq, masks_shifted, segments).item(),
+        "ref_logprobs": sum_sum(ref_logprobs / num_labels_in_seq, masks_shifted, segments).item(),
+        "advantage": sum_sum(advantages / num_labels_in_seq, masks_shifted, segments).item(),
         "max_advantage": advantages[masks_shifted].max().item(),
         "min_advantage": advantages[masks_shifted].min().item(),
-        "kl": sum_sum(approx_kl / stats_denom, masks_shifted, segments).item(),
+        "kl": sum_sum(approx_kl / num_labels_in_seq, masks_shifted, segments).item(),
         "max_kl": approx_kl[masks_shifted].max().item(),
         "min_kl": approx_kl[masks_shifted].min().item(),
-        "policy_loss": sum_sum(policy_loss / stats_denom, masks_shifted, segments).item(),
-        "surr1": sum_sum(surr1 / stats_denom, masks_shifted, segments).item(),
-        "surr2": sum_sum(surr2 / stats_denom, masks_shifted, segments).item(),
-        "ratio_new_old": sum_sum(ratio_new_old / stats_denom, masks_shifted, segments).item(),
+        "policy_loss": sum_sum(policy_loss / num_labels_in_seq, masks_shifted, segments).item(),
+        "surr1": sum_sum(surr1 / num_labels_in_seq, masks_shifted, segments).item(),
+        "surr2": sum_sum(surr2 / num_labels_in_seq, masks_shifted, segments).item(),
+        "ratio_new_old": sum_sum(ratio_new_old / num_labels_in_seq, masks_shifted, segments).item(),
         "ratio_new_old_sum": sum_sum(ratio_new_old, masks_shifted, segments).item(),
         "ratio_new_old_squared_sum": sum_sum(  # useful to estimate the ESS
             ratio_new_old * ratio_new_old, masks_shifted, segments
         ).item(),
-        "ratio_ref_new": sum_sum(torch.exp(log_ratio_ref_new) / stats_denom, masks_shifted, segments).item(),
-        "ratio_ref_old": sum_sum(torch.exp(ref_logprobs - old_logprobs) / stats_denom, masks_shifted, segments).item(),
+        "ratio_ref_new": sum_sum(torch.exp(log_ratio_ref_new) / num_labels_in_seq, masks_shifted, segments).item(),
+        "ratio_ref_old": sum_sum(torch.exp(ref_logprobs - old_logprobs) / num_labels_in_seq, masks_shifted, segments).item(),
         "clamp_log_ratio_ref_new_indicator": sum_sum(
-            clamp_log_ratio_ref_new_indicators / stats_denom, masks_shifted, segments
+            clamp_log_ratio_ref_new_indicators / num_labels_in_seq, masks_shifted, segments
         ).item(),
         "clamp_log_ratio_new_old_indicator": sum_sum(
-            clamp_log_ratio_new_old_indicators / stats_denom, masks_shifted, segments
+            clamp_log_ratio_new_old_indicators / num_labels_in_seq, masks_shifted, segments
         ).item(),
         "num_nans": torch.isnan(loss).sum().item(),
-        "token_weight": sum_sum(tokens_weights / stats_denom, masks_shifted, segments).item(),
+        "token_weight": sum_sum(tokens_weights / num_labels_in_seq, masks_shifted, segments).item(),
         "max_token_weight": tokens_weights[masks_shifted].max().item(),
         "min_token_weight": tokens_weights[masks_shifted].min().item(),
         "kl_coef": num_sequences * kl_coef,
@@ -364,12 +363,12 @@ def rl_step(
     }
 
     if has_value_head:
-        stats["value_mean"] = sum_sum(value_predictions / stats_denom, masks_shifted, segments).item()
+        stats["value_mean"] = sum_sum(value_predictions / num_labels_in_seq, masks_shifted, segments).item()
         stats["value_max"] = value_predictions[masks_shifted].max().item() if masks_shifted.any() else 0.0
         stats["value_min"] = value_predictions[masks_shifted].min().item() if masks_shifted.any() else 0.0
         stats["value_loss"] = value_loss.item()
         stats["value_mse"] = sum_sum(
-            torch.square(value_predictions - value_labels) / stats_denom, masks_shifted, segments
+            torch.square(value_predictions - value_labels) / num_labels_in_seq, masks_shifted, segments
         ).item()
 
     return final_loss, stats
@@ -448,18 +447,18 @@ def populate_rl_data(dataset: list[dict[str, Any]], eos_token_id: int, config: R
         axis=1,
     )
     df["group_tokens"] = df.apply(lambda row: [row["group_tokens"]] * len(row["input_ids"]), axis=1)
-    df["num_out_tokens_in_seq"] = df.apply(lambda row: [sum(1 for label in row["labels"] if label != -100)] * len(row["input_ids"]), axis=1)
+    df["num_labels"] = df.apply(lambda row: [sum(1 for label in row["labels"] if label != -100)] * len(row["input_ids"]), axis=1)
 
     # Step 5: move the results back to the dataset
     advantages_list = df["advantages"].tolist()
     group_tokens_list = df["group_tokens"].tolist()
     overflow_list = df["overflow"].tolist()
-    num_out_tokens_in_seq_list = df["num_out_tokens_in_seq"].tolist()
+    num_labels_list = df["num_labels"].tolist()
     for i, entry in enumerate(dataset):
         entry["advantages"] = advantages_list[i]
         entry["group_tokens"] = group_tokens_list[i]
         entry["overflow"] = overflow_list[i]
-        entry["num_out_tokens_in_seq"] = num_out_tokens_in_seq_list[i]
+        entry["num_labels"] = num_labels_list[i]
     return dataset
 
 
@@ -483,5 +482,5 @@ def prepare_rl_fields(
     encoding["ref_logprobs"] = [0] * (len(encoding["labels"]) - len(ref_logprobs)) + ref_logprobs
     encoding["overflow"] = [0] * len(encoding["labels"])  # place holder
     encoding["group_tokens"] = [0] * len(encoding["labels"])  # place holder
-    encoding["num_out_tokens_in_seq"] = [1 if label != -100 else 0 for label in encoding["labels"]]  # count only output tokens
+    encoding["num_labels"] = [1 if label != -100 else 0 for label in encoding["labels"]]  # count only output tokens
     return encoding
