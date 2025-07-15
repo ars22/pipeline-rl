@@ -241,7 +241,8 @@ def rl_step(
         value_predictions = outputs.value[:, :-1] # no target for the last token 
         # Compute value-based advantages: A(s,a) = MC_return - V(s)
         # where MC_return is the Monte Carlo return (rewards) and V(s) is the value prediction
-        advantages = rewards - value_predictions
+        #FIXME: if this works better it should be a config
+        advantages = rewards - torch.clamp(value_predictions, 0, 1)
     else:
         advantages = batch.advantages[:, 1:]
 
