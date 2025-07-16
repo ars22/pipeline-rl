@@ -318,10 +318,10 @@ def rl_step(
         }
         return final_loss, stats_no_labels
 
-    # Here is what will happend to different metrics down the line.
-    # 1. loss was multiplied by token_weights and is now summed
-    # 2. min/max are computed over the whole batch
-    # 3. all other stats are averaged by sequence and then over the batch
+    # Metric aggregation behavior:
+    # 1. loss: pre-multiplied by token_weights, reported as sum
+    # 2. min/max values: computed across entire batch
+    # 3. other statistics: averaged per sequence, then averaged across batch
     stats = {
         "loss": final_loss.item(),
         "max_loss": final_loss.item(),

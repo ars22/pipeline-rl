@@ -392,8 +392,11 @@ def run_preprocessing_loop(
     
     # Initialize TrainerState
     trainer_state = TrainerState(exp_root_dir)
-    if cfg.debug.mode:
+    if cfg.debug.mode == "preprocessor":
         trainer_state.debug_mode_init()
+    elif cfg.debug.mode == "finetune+preprocessor":
+        trainer_state.start_listening()
+        trainer_state.wait_for_processed_samples()
     else:
         trainer_state.start_listening()
         trainer_state.wait_for_model_version()

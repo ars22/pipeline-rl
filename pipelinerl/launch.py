@@ -56,6 +56,10 @@ def validate_config(cfg: DictConfig):
         if cfg.finetune.train_batch_size > 1:
             raise ValueError("Vision language models cannot use batch size > 1 (train_batch_size must be 1)")
     
+    if cfg.finetune.seq_parallel > 1:
+        if not cfg.finetune.seq_packing:
+            raise ValueError("seq_parallel > 1 requires seq_packing to be true")
+
     # Check for value loss coefficient constraints
     if cfg.finetune.model_class == "causal-language-modeling-with-value-head":
         if not hasattr(cfg.finetune.rl, "value_loss_coef") or cfg.finetune.rl.value_loss_coef <= 0.0:
