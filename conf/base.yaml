@@ -1,5 +1,5 @@
 defaults:
-  - finetune: base 
+  - finetune: actor_critic
   - rewards: pure_success
   - streams: files
   - _self_
