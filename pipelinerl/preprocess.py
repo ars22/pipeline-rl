@@ -393,11 +393,14 @@ def run_preprocessing_loop(
     # Initialize TrainerState
     trainer_state = TrainerState(exp_root_dir)
     if cfg.debug.mode == "preprocessor":
+        logger.info("Debug mode: preprocessor")
         trainer_state.debug_mode_init()
     elif cfg.debug.mode == "finetune+preprocessor":
+        logger.info("Debug mode: finetune+preprocessor")
         trainer_state.start_listening()
         trainer_state.wait_for_processed_samples()
     else:
+        logger.info("Normal mode, waiting for finetune loop to start")
         trainer_state.start_listening()
         trainer_state.wait_for_model_version()
 
@@ -425,7 +428,6 @@ def run_preprocessing_loop(
     stats_aggregator = SlidingWindowAggregator(window_size=max(10, 1000 // cfg.preprocess.chunk_n_groups))
 
     buffer = Queue()
-    # Queue for holding processed entries, with size based on batch_size * accumulation_steps
     
     # Sequence packing configuration
     num_trainers = world_map.total_finetune_gpus
@@ -557,7 +559,8 @@ def run_preprocessing_loop(
 
                     batch_done = False
                     start_writing = time.time()
-                    while len(processed_entries_queue) > 0 and not batch_done:
+                    while (len(processed_entries_queue) > 0 and not batch_done) or \
+                        (cfg.preprocess.dataset_buffer_size > 0 and not batch_done): # if dataset_buffer_size is set, do not expect the actor to produce more data before the batch is done
                         logger.debug(f"[inner loop] trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_lead}")
                         if cfg.finetune.seq_packing:
                             if samples_per_trainer[trainer_id] == target_samples_per_lead:
