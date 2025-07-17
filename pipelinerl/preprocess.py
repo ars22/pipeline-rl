@@ -526,14 +526,18 @@ def run_preprocessing_loop(
                         for entry in dataset:
                             buffer.put(entry)
                         processed_chunks += 1
-                        if buffer.qsize() < cfg.preprocess.dataset_buffer_size:
-                            continue
-                        if cfg.preprocess.dataset_buffer_size:
-                            # If buffer size is not set, no point in logging
-                            logger.info(f"Buffer is full with {buffer.qsize()} samples, start writing")
 
-                    while not buffer.empty():
+                    if buffer.qsize() < cfg.preprocess.dataset_buffer_size:
+                        continue
+                    if cfg.preprocess.dataset_buffer_size:
+                        # If buffer size is not set, no point in logging
+                        logger.info(f"Buffer is full with {buffer.qsize()} samples, start writing")
+
+                    while True:
                         try:
+                            logger.debug(f"Processed entries queue has {len(processed_entries_queue)} entries, waiting for more")
+                            logger.debug(f"Processed entries queue size: {processed_entries_queue.maxlen}")
+                            logger.debug(f"Buffer size: {buffer.qsize()}")
                             if len(processed_entries_queue) == processed_entries_queue.maxlen:
                                 if not pop_old_data:
                                     break 
@@ -542,9 +546,10 @@ def run_preprocessing_loop(
                                     if processed_entries_queue_popped_data % 100 == 0 and last_time_notice != processed_entries_queue_popped_data // 100:
                                         logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
                                         last_time_notice = processed_entries_queue_popped_data // 100
-                            entry = buffer.get_nowait()
+                            entry = buffer.get()
                             processed_entries_queue.append(entry) # drop from the left if full
                         except Empty:
+                            logger.debug(f"Processed entries queue has {len(processed_entries_queue)} entries, waiting for more")
                             break
 
                         stats_aggregator.update([len(entry["input_ids"]) for entry in processed_entries_queue])
@@ -559,8 +564,7 @@ def run_preprocessing_loop(
 
                     batch_done = False
                     start_writing = time.time()
-                    while (len(processed_entries_queue) > 0 and not batch_done) or \
-                        (cfg.preprocess.dataset_buffer_size > 0 and not batch_done): # if dataset_buffer_size is set, do not expect the actor to produce more data before the batch is done
+                    while (len(processed_entries_queue) > 0 and not batch_done) or (published_samples - trainer_state.samples_processed < cfg.preprocess.dataset_buffer_size):
                         logger.debug(f"[inner loop] trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_lead}")
                         if cfg.finetune.seq_packing:
                             if samples_per_trainer[trainer_id] == target_samples_per_lead:
