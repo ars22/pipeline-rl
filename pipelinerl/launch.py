@@ -61,6 +61,8 @@ def validate_config(cfg: DictConfig):
             raise ValueError("seq_parallel > 1 requires seq_packing to be true")
     
     if cfg.preprocess.dataset_buffer_size > 0:
+        if cfg.preprocess.dataset_buffer_size != cfg.preprocess.ring_buffer_size:
+            raise ValueError("dataset_buffer_size must be equal to ring_buffer_size")
         if cfg.pop_old_data:
             raise ValueError("Cannot use pop_old_data with preprocessor dataset_buffer_size > 0")
 
