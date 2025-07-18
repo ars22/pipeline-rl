@@ -89,7 +89,7 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
         "--host",
         "0.0.0.0",
         "--seed",
-        str(preprocessor_llm_idx),
+        str(cfg.seed + preprocessor_llm_idx),
     ]
 
     # Add vLLM kwargs as separate arguments
@@ -139,7 +139,7 @@ def run_actor_llm(
         "--port",
         str(8080 + local_idx),
         "--seed",
-        str(actor_llm_idx),
+        str(cfg.seed + actor_llm_idx),
         "--actor-llm-idx",
         str(actor_llm_idx),
         "--weight-update-group-init-method",

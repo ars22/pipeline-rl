@@ -15,13 +15,10 @@ from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 from queue import Empty, Full
 from typing import List
-import random
-import math
 
 import datasets
 import transformers
 from litellm import BaseModel, Field
-from typing import Literal
 
 from pipelinerl.finetune.logging_ import flatten_dict_config
 from pipelinerl.shared_memory_array import SharedMemoryArray, SharedMemoryQueue
