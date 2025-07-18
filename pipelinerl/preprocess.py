@@ -533,29 +533,27 @@ def run_preprocessing_loop(
                         # If buffer size is not set, no point in logging
                         logger.info(f"Buffer is full with {len(buffer)} samples, start writing")
 
-                    while True:
-                        try:
-                            logger.debug(f"Processed entries queue has {len(processed_entries_queue)} entries, waiting for more")
-                            logger.debug(f"Processed entries queue size: {processed_entries_queue.maxlen}")
-                            logger.debug(f"Buffer size: {len(buffer)}")
-                            if len(processed_entries_queue) == processed_entries_queue.maxlen:
-                                if not pop_old_data:
-                                    break 
-                                else:
-                                    processed_entries_queue_popped_data += 1
-                                    if processed_entries_queue_popped_data % 100 == 0 and last_time_notice != processed_entries_queue_popped_data // 100:
-                                        logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
-                                        last_time_notice = processed_entries_queue_popped_data // 100
-                            entry = buffer.popleft()
-                            processed_entries_queue.append(entry) # drop from the left if full
-                        except IndexError:
-                            logger.debug(f"Processed entries queue has {len(processed_entries_queue)} entries, waiting for more")
-                            break
+                    while len(buffer) > 0:
+                        logger.debug(f"Processed entries queue has {len(processed_entries_queue)} entries, waiting for more")
+                        logger.debug(f"Processed entries queue size: {processed_entries_queue.maxlen}")
+                        logger.debug(f"Buffer size: {len(buffer)}")
+                        if len(processed_entries_queue) == processed_entries_queue.maxlen:
+                            if not pop_old_data:
+                                break 
+                            else:
+                                processed_entries_queue_popped_data += 1
+                                if processed_entries_queue_popped_data % 100 == 0 and last_time_notice != processed_entries_queue_popped_data // 100:
+                                    logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
+                                    last_time_notice = processed_entries_queue_popped_data // 100
+                        entry = buffer.popleft()
+                        processed_entries_queue.append(entry) # drop from the left if full
 
                         stats_aggregator.update([len(entry["input_ids"]) for entry in processed_entries_queue])
                         max_model_version = max([entry["model_version"] for entry in processed_entries_queue]) if processed_entries_queue else 0
                     
                     max_unconsumed_samples = cfg.preprocess.max_ready_samples_per_lead * num_trainers
+                    if len(processed_entries_queue) < 512:
+                        print("oh no")
 
                     assert isinstance(trainer_state.samples_processed, int)
                     if published_samples - trainer_state.samples_processed > max_unconsumed_samples:
