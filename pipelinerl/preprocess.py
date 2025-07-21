@@ -393,11 +393,14 @@ def run_preprocessing_loop(
     # Initialize TrainerState
     trainer_state = TrainerState(exp_root_dir)
     if cfg.debug.mode == "preprocessor":
+        logger.info("Debug mode: preprocessor")
         trainer_state.debug_mode_init()
     elif cfg.debug.mode == "finetune+preprocessor":
+        logger.info("Debug mode: finetune+preprocessor")
         trainer_state.start_listening()
         trainer_state.wait_for_processed_samples()
     else:
+        logger.info("Normal mode, waiting for finetune loop to start")
         trainer_state.start_listening()
         trainer_state.wait_for_model_version()
 
@@ -424,8 +427,7 @@ def run_preprocessing_loop(
 
     stats_aggregator = SlidingWindowAggregator(window_size=max(10, 1000 // cfg.preprocess.chunk_n_groups))
 
-    buffer = Queue()
-    # Queue for holding processed entries, with size based on batch_size * accumulation_steps
+    buffer = deque()
     
     # Sequence packing configuration
     num_trainers = world_map.total_finetune_gpus
@@ -522,28 +524,26 @@ def run_preprocessing_loop(
                             logger.error(f"Traceback: {dataset['traceback']}")
                             raise Exception(dataset['error'])
                         for entry in dataset:
-                            buffer.put(entry)
+                            buffer.append(entry)
                         processed_chunks += 1
-                        if buffer.qsize() < cfg.preprocess.dataset_buffer_size:
-                            continue
-                        if cfg.preprocess.dataset_buffer_size:
-                            # If buffer size is not set, no point in logging
-                            logger.info(f"Buffer is full with {buffer.qsize()} samples, start writing")
 
-                    while not buffer.empty():
-                        try:
-                            if len(processed_entries_queue) == processed_entries_queue.maxlen:
-                                if not pop_old_data:
-                                    break 
-                                else:
-                                    processed_entries_queue_popped_data += 1
-                                    if processed_entries_queue_popped_data % 100 == 0 and last_time_notice != processed_entries_queue_popped_data // 100:
-                                        logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
-                                        last_time_notice = processed_entries_queue_popped_data // 100
-                            entry = buffer.get_nowait()
-                            processed_entries_queue.append(entry) # drop from the left if full
-                        except Empty:
-                            break
+                    if len(buffer) < cfg.preprocess.dataset_buffer_size:
+                        continue
+                    if cfg.preprocess.dataset_buffer_size:
+                        # If buffer size is not set, no point in logging
+                        logger.info(f"Buffer is full with {len(buffer)} samples, start writing")
+
+                    while len(buffer) > 0:
+                        if len(processed_entries_queue) == processed_entries_queue.maxlen:
+                            if not pop_old_data:
+                                break 
+                            else:
+                                processed_entries_queue_popped_data += 1
+                                if processed_entries_queue_popped_data % 100 == 0 and last_time_notice != processed_entries_queue_popped_data // 100:
+                                    logger.warning(f"Popped {processed_entries_queue_popped_data} old entries from processed entries queue")
+                                    last_time_notice = processed_entries_queue_popped_data // 100
+                        entry = buffer.popleft()
+                        processed_entries_queue.append(entry) # drop from the left if full
 
                         stats_aggregator.update([len(entry["input_ids"]) for entry in processed_entries_queue])
                         max_model_version = max([entry["model_version"] for entry in processed_entries_queue]) if processed_entries_queue else 0
@@ -615,6 +615,10 @@ def run_preprocessing_loop(
                         if batch_done:
                             batch_boundary += train_batch_size
                             target_samples_per_lead += samples_per_lead_per_step
+                            if cfg.preprocess.dataset_buffer_size and len(processed_entries_queue) > 0:
+                                # There is enough data in the processed entries queue to write multiple batches
+                                batch_done = False
+                                
                         logger.debug(
                             f"[inner loop] wrote {published_samples} samples, "
                             f"trainer {trainer_id} is at {samples_per_trainer[trainer_id]} samples, "

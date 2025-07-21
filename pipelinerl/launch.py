@@ -59,6 +59,12 @@ def validate_config(cfg: DictConfig):
     if cfg.finetune.seq_parallel > 1:
         if not cfg.finetune.seq_packing:
             raise ValueError("seq_parallel > 1 requires seq_packing to be true")
+    
+    if cfg.preprocess.dataset_buffer_size > 0:
+        if cfg.preprocess.dataset_buffer_size != cfg.preprocess.ring_buffer_size:
+            raise ValueError("dataset_buffer_size must be equal to ring_buffer_size")
+        if cfg.pop_old_data:
+            raise ValueError("Cannot use pop_old_data with preprocessor dataset_buffer_size > 0")
 
     # Check for value loss coefficient constraints
     if cfg.finetune.model_class == "causal-language-modeling-with-value-head":

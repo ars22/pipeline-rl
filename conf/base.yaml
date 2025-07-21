@@ -96,7 +96,7 @@ output_dir: ???
 force_restart: false
 pop_old_data: true
 max_lag: null
-attempts: 8
+attempts: 1
 train_subset: null
 debug:
   mode: ""
