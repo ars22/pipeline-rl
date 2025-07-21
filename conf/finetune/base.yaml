@@ -89,7 +89,7 @@ eval_callback:
   _target_: tapeagents.finetune.eval.dummy_eval_callback
   config_name: ""
 rl:
-  algo: reinforce
+  policy_loss: reinforce
   divide_advantage_by_std: false
   kl_coef: 0.0
   final_kl_coef: ${..rl.kl_coef} 

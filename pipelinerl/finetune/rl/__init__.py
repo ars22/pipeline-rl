@@ -36,10 +36,10 @@ RL_DATA_COLUMNS = [
 
 
 class RLConfig(BaseModel):
-    algo: str = Field(
-        default="grpo",
-        description="Algorithm to use for RL",
-        choices=["grpo", "reinforce"],
+    policy_loss: str = Field(
+        default="ppo",
+        description="Policy Loss to use for RL",
+        choices=["ppo", "reinforce"],
     )
     use_advantages: bool = Field(
         default=True,
@@ -266,7 +266,7 @@ def rl_step(
     kl_coef = linear_decay_coef(current_step, max_step, config.kl_coef, config.final_kl_coef)
 
     # compute algorithm-specific losses
-    match config.algo:
+    match config.policy_loss:
         case "ppo":
             surr1 = ratio_new_old * log_p_weights
             clamped_ratio = torch.clamp(ratio_new_old, 1 - config.epsilon, 1 + config.epsilon)
@@ -280,7 +280,7 @@ def rl_step(
             ratio_new_old = torch.clamp(ratio_new_old, 0, 1 + config.epsilon)
             policy_loss = new_logprobs * log_p_weights * ratio_new_old.detach()
         case _:
-            raise ValueError(f"Unknown algorithm {config.algo}")
+            raise ValueError(f"Unknown algorithm {config.policy_loss}")
 
     # combine loss components
     loss = policy_loss - kl_coef * approx_kl + entropy_bonus_coef * entropy  # 1 x (BxL) x 1

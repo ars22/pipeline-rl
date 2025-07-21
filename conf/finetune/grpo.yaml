@@ -3,4 +3,4 @@ defaults:
   - _self_
 
 rl:
-  algo: ppo
+  policy_loss: ppo
