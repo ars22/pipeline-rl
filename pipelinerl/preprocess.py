@@ -427,7 +427,7 @@ def run_preprocessing_loop(
 
     stats_aggregator = SlidingWindowAggregator(window_size=max(10, 1000 // cfg.preprocess.chunk_n_groups))
 
-    buffer = deque() # Buffer()
+    buffer = deque()
     
     # Sequence packing configuration
     num_trainers = world_map.total_finetune_gpus
@@ -552,8 +552,6 @@ def run_preprocessing_loop(
                         max_model_version = max([entry["model_version"] for entry in processed_entries_queue]) if processed_entries_queue else 0
                     
                     max_unconsumed_samples = cfg.preprocess.max_ready_samples_per_lead * num_trainers
-                    if len(processed_entries_queue) < 512:
-                        print("oh no")
 
                     assert isinstance(trainer_state.samples_processed, int)
                     if published_samples - trainer_state.samples_processed > max_unconsumed_samples:
