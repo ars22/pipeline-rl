@@ -4,6 +4,11 @@ defaults:
   - streams: files
   - _self_
 
+seed: 42
+
+finetune:
+  seed: ${..seed}
+
 actor:
   log_each_n_secs: 0
   llm_max_rollouts: 64
