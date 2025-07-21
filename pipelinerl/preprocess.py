@@ -534,9 +534,6 @@ def run_preprocessing_loop(
                         logger.info(f"Buffer is full with {len(buffer)} samples, start writing")
 
                     while len(buffer) > 0:
-                        logger.debug(f"Processed entries queue has {len(processed_entries_queue)} entries, waiting for more")
-                        logger.debug(f"Processed entries queue size: {processed_entries_queue.maxlen}")
-                        logger.debug(f"Buffer size: {len(buffer)}")
                         if len(processed_entries_queue) == processed_entries_queue.maxlen:
                             if not pop_old_data:
                                 break 
@@ -560,9 +557,6 @@ def run_preprocessing_loop(
 
                     batch_done = False
                     start_writing = time.time()
-                    logger.info(f"Start writing micro batches, processed entries queue has {len(processed_entries_queue)} entries, "
-                                f"published samples: {published_samples}, last published samples: {last_published_samples}, "
-                                f"max model version: {max_model_version}, trainer_id: {trainer_id}")
                     while (len(processed_entries_queue) > 0 and not batch_done):
                         logger.debug(f"[inner loop] trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_lead}")
                         if cfg.finetune.seq_packing:
