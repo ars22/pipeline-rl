@@ -557,7 +557,7 @@ def run_preprocessing_loop(
 
                     batch_done = False
                     start_writing = time.time()
-                    while (len(processed_entries_queue) > 0 and not batch_done):
+                    while len(processed_entries_queue) > 0 and not batch_done:
                         logger.debug(f"[inner loop] trainer {trainer_id} has {samples_per_trainer[trainer_id]} samples, target is {target_samples_per_lead}")
                         if cfg.finetune.seq_packing:
                             if samples_per_trainer[trainer_id] == target_samples_per_lead:
