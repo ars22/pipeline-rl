@@ -1,4 +1,4 @@
-# Pipeline RL
+# Pipeline RL: fast LLM agent training
 
 [![Github](https://img.shields.io/badge/HF%20Blog%20Post-0000)](https://huggingface.co/blog/ServiceNow/pipelinerl/)
 
@@ -7,6 +7,53 @@ A scalable asynchronous reinforcement learning implementation with in-flight wei
 <p align="center">
     <img src="assets/figure1.jpg" alt="Pipeline-RL Architecture" width="600">
 </p>
+
+## Get started
+
+In order to use PipelineRL to train your agent, you need to implement a single function:
+
+````python
+async def generate_rollout(
+    cfg: DictConfig,
+    llm: TrainableLLM,
+    task: dict,
+    session: aiohttp.ClientSession,
+) -> RolloutResult:
+````
+
+`generate_rollout` must transform a task into a `RolloutResult` object, which contains a list of `TrainingText` objects. Where a `TrainingText` object is a useful 
+
+where
+
+````python
+class RolloutResult(BaseModel):
+    training_texts: list[TrainingText]
+    metrics: BaseMetrics
+    ...
+
+class TrainingText(BaseModel):
+    text: str
+    log_probs: list[float]
+    reward: float
+    input_ids: List[int] = Field(default_factory=list)
+    labels: List[int] = Field(default_factory=list)
+    ...
+````
+
+You first need to write a (async) `generate_rollout` function that generates a batch of rollouts for your task. This function should return a list of `RolloutResult` objects, which contain the text, log-probabilities, rewards, and latencies for each rollout.
+
+
+The actor loop expects a list of tasks to sample from. The tasks will then be transformed into a generator.
+
+### Frequently Asked Questions
+
+- **Why async?** PipelineRL uses asyncio and coroutines to maximize throughput and minimize latency. This allows us to issue multiple requests to the LLM servers concurrently, while still being able to pause and resume the sampling process when new weights are available.
+- **Why is PipelineRL faster than other RL implementations?** PipelineRL uses in-flight weight updates to keep the data as fresh as possible while still maximizing throughput. This means that we can sample large batches of data without waiting for the weights to be updated, which leads to faster training times.
+
+
+
+### Environment
+
 
 ## Why PipelineRL?
 
