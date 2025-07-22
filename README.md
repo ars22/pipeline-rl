@@ -10,49 +10,130 @@ A scalable asynchronous reinforcement learning implementation with in-flight wei
 
 ## Get started
 
-PipelineRL is agent framework agnostic, meaning you can use it to train any agent by implementing a `load_dataset` and `generate_rollout` functions for your task. For example, to train a math solving agent on the GSM8K dataset, you can implement the following functions:
+PipelineRL is agent framework agnostic, meaning you can use it to train any agent by implementing a `load_dataset` and `generate_rollout` functions for your task. For example, to train a number guessing agent, you can implement the following functions:
 
 ````python
-def load_dataset() -> List[Tuple[str, Dict]]:
-    dataset = load_dataset("openai/gsm8k", "main", split="train", trust_remote_code=True)
-    return list(dataset)
+def load_problems(dataset_names: list[str]):
+    n = 1024
+    c = 191
+    problems = []
+    for name in dataset_names:
+        if name == "train":
+            problems.extend([
+                {"answer": (2 * i * c) % n + 1, "dataset": "train"} for i in range(512)
+            ])
+        elif name == "test":
+            problems.extend([
+                {"answer": ((2 * i + 1) * c) % n + 1, "dataset": "test"} for i in range(512)
+            ])
+    return problems
 ````
 
 and 
 
 ````python
-async def generate_rollout(
+async def generate_guessing_rollout(
     cfg: DictConfig,
     llm: TrainableLLM,
-    task: dict,
+    problem: dict,
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
-  messages = [
-      {"role": "system", "content": cfg.actor.system_prompt},
-      {"role": "user", "content": cfg.actor.task_template.format(task=task["question"])}
-  ]
-  prompt = Prompt(messages=messages)
-  gold_answer = task["answer"].split("### ")[-1].strip()
-  llm_call = await llm_async_generate(llm, prompt, session)
-  trace = make_training_text(llm, llm_call)
-  # take the \boxed answer from the LLM response
-  boxed_start = llm_call.text.rfind("\\boxed{")
-  boxed_end = llm_call.text.rfind("}", boxed_start)
-  llm_answer = llm_call.text[boxed_start:boxed_end]
-  # simpler llm_answer extraction
-  trace.reward = 1 if llm_answer == gold_answer else 0
-  return RolloutResult(
-      training_texts=[trace],
-      metrics=BaseMetrics(
-          reward=trace.reward,
-          success=trace.reward > 0,
-          no_error=llm_call.error is None,
-          no_answer=answer == ""
-      )
-  )
+    initial_messages = [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant",
+        },
+        {
+            "role": "user",
+            "content": f"You must guess a number between 1 and 1024. Output the answer as <answer>number</answer>."
+                        " After each guess I will tell you if your answer is higher or lower than the target number."
+        }
+    ]
+    time_start = time.time()
+    llm_calls = []
+    guess_history = []
+    reward = 0
+    success = 0
+    error = 0
+    
+    for i in range(13):
+        messages = initial_messages.copy()
+        
+        # Get formatted history from environment
+        if i > 0:
+            async with session.post(
+                f"http://{cfg.verifier.host}:{cfg.verifier.port}/format_history",
+                json={
+                    "guess_history": guess_history,
+                    "target": problem["answer"],
+                    "turn": i
+                }
+            ) as response:
+                data = await response.json()
+                messages.append({
+                    "role": "user",
+                    "content": data["message"]
+                })
+        
+        llm_call = await llm_async_generate(llm, Prompt(messages=messages), session)
+        llm_calls.append(llm_call)
+
+        output_text = llm_call.output.content or ""
+        answer = re.search("<answer>(\d+)</answer>", output_text)
+        
+        if answer:
+            guess_value = int(answer.group(1))
+            
+            # Check guess with environment
+            async with session.post(
+                f"http://{cfg.verifier.host}:{cfg.verifier.port}/check_guess",
+                json={
+                    "guess": guess_value,
+                    "target": problem["answer"],
+                    "turn": i
+                }
+            ) as response:
+                data = await response.json()
+                
+                if data["status"] == "correct":
+                    reward = data["reward"]
+                    success = 1
+                    break
+                else:
+                    guess_history.append(guess_value)
+        else:
+            # Get error reward from environment
+            async with session.post(
+                f"http://{cfg.verifier.host}:{cfg.verifier.port}/compute_error_reward",
+                json={"turn": i}
+            ) as response:
+                data = await response.json()
+                reward = data["reward"]
+                error = 1
+                break
+                
+    latency = time.time() - time_start        
+
+    training_texts = [make_training_text(llm, llm_call) for llm_call in llm_calls]
+    for text in training_texts:
+        text.reward = reward
+
+    metrics = BaseMetrics(
+        reward=reward,
+        success=success,
+        no_error=not error,
+        no_answer=error,
+    )
+
+    return RolloutResult(
+        training_texts=training_texts,
+        metrics=metrics,
+        latency=latency,
+        dataset_name=problem["dataset"],
+    )
 ````
 
-finally you need to create a Hydra config file that defines the training parameters, such as batch size, learning rate, and model architecture. For example, `gsm8k.yaml`:
+finally you need to create a Hydra config file that defines the training parameters, such as batch size, learning rate, and model architecture. For example, `guessing.yaml`:
 
 ````yaml
 defaults:
@@ -60,11 +141,18 @@ defaults:
     - _self_
 
 actor:
-  rollout_policy: pipelinerl.domains.gsm8k.generate_rollout
-  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
-  task_template: |-
-    {task}
-dataset_loader: pipelinerl.domains.gsm8k.load_dataset
+  rollout_policy: pipelinerl.domains.guessing.generate_guessing_rollout
+environment:
+  _target_: pipelinerl.domains.guessing.GuessingEnvironment
+verifier:
+  host: localhost
+  port: 8000
+dataset_loader: pipelinerl.domains.guessing.load_problems
+train_dataset_names:
+  - train
+test_dataset_names:
+  - test
+model_path: meta-llama/Llama-3.2-1B
 ````
 
 ### Frequently Asked Questions
@@ -75,6 +163,74 @@ dataset_loader: pipelinerl.domains.gsm8k.load_dataset
 
 
 ### Environment
+
+```python
+class GuessingEnvironment:
+    def launch(self, port: int):
+        """
+        Serve the game logic API for the number guessing game.
+        """
+        from fastapi import FastAPI
+        from fastapi.responses import JSONResponse
+        import uvicorn
+        
+        app = FastAPI()
+        
+        @app.post("/check_guess")
+        async def check_guess(request: dict):
+            guess = request["guess"]
+            target = request["target"]
+            turn = request["turn"]
+            
+            # Check if guess is correct
+            if guess == target:
+                # Reward decreases with more turns: 2.0 for turn 0, 1.9 for turn 1, etc.
+                reward = 2 - turn / 10
+                status = "correct"
+                feedback = f"{guess} is correct!"
+            else:
+                reward = 0  # No reward for wrong guess
+                relation = "lower" if guess < target else "higher"
+                status = "wrong"
+                feedback = f"{guess}, which is {relation} than the target number."
+            
+            return JSONResponse(content={
+                "status": status,
+                "feedback": feedback,
+                "reward": reward
+            })
+        
+        @app.post("/format_history")
+        async def format_history(request: dict):
+            guess_history = request["guess_history"]
+            target = request["target"]
+            turn = request["turn"]
+            
+            if turn == 0:
+                return JSONResponse(content={"message": ""})
+            
+            message = f"Your {turn} previous guesses:"
+            for guess in guess_history:
+                relation = "lower" if guess < target else "higher"
+                message += f"\n{guess}, which is {relation} than the target number."
+            
+            return JSONResponse(content={"message": message})
+        
+        @app.post("/compute_error_reward")
+        async def compute_error_reward(request: dict):
+            turn = request["turn"]
+            # Penalty for format errors: -2.0 for turn 0, -1.9 for turn 1, etc.
+            reward = -2 + turn / 10
+            return JSONResponse(content={"reward": reward})
+        
+        @app.get("/health")
+        async def health():
+            return JSONResponse(content={"status": "ok"})
+        
+        uvicorn.run(app, host="0.0.0.0", port=port)
+```
+
+
 
 
 ## Why PipelineRL?
