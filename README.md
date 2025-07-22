@@ -2,11 +2,38 @@
 
 [![Github](https://img.shields.io/badge/HF%20Blog%20Post-0000)](https://huggingface.co/blog/ServiceNow/pipelinerl/)
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Get Started](#get-started)
+- [Setup](#setup)
+- [Run Experiments](#run-experiments)
+- [Architecture and Pipeline Stages](#architecture-and-pipeline-stages)
+  - [1. Orchestrator](#1-orchestrator)
+  - [2. Inference Servers](#2-inference-servers)
+  - [3. Actor Processes](#3-actor-processes)
+  - [4. Preprocessor](#4-preprocessor)
+  - [5. Trainer (Fine-tuner)](#5-trainer-fine-tuner)
+  - [6. Verifier](#6-verifier)
+  - [Streams Backend](#streams-backend)
+  - [Streams & Queues](#streams--queues)
+
+## Overview
+
 A scalable asynchronous reinforcement learning implementation with in-flight weight updates. Designed to maximize GPU utilization while staying as on-policy as possible.
 
 <p align="center">
     <img src="assets/figure1.jpg" alt="Pipeline-RL Architecture" width="600">
 </p>
+
+PipelineRL tackles the classic trade-off between **inference throughput** (large batches on many GPUs) and **on-policy data freshness** by performing _inflight weight updates_. After each optimizer step, updated weights are broadcast to the inference servers without halting sampling. This keeps batch sizes optimal and data near on-policy, yielding fast, stable RL for large language models.
+
+<p align="center">
+    <img src="assets/losses.png" alt="Pipeline-RL Effectiveness" width="600">
+</p>
+
+- In experiments on 7B and 32B models (batch size 4096, lr=1e-6, max tokens=8192), PipelineRL matches or exceeds Open-Reasoner-Zero on AIME-2024 and MATH-500.
+- Uses a simplified GRPO algorithm: no value network, no trust-region clamping, no KL or entropy bonuses by default (though KL support is available).
 
 ## Get started
 
@@ -30,8 +57,6 @@ def load_problems(dataset_names: list[str]):
 ````
 
 and 
-
-
 
 ````python
 async def generate_guessing_rollout(
@@ -90,6 +115,7 @@ async def generate_guessing_rollout(
             break
     latency = time.time() - time_start        
 
+    # TrainingText contains the prompt and output tokens, and the log probs of the output tokens.
     training_texts = [make_training_text(llm, llm_call) for llm_call in llm_calls]
     for text in training_texts:
         text.reward = reward
@@ -126,23 +152,6 @@ train_dataset_names:
 test_dataset_names:
     - test
 ````
-
-
-
-## Why PipelineRL?
-
-PipelineRL tackles the classic trade-off between **inference throughput** (large batches on many GPUs) and **on-policy data freshness** by performing _inflight weight updates_. After each optimizer step, updated weights are broadcast to the inference servers without halting sampling. This keeps batch sizes optimal and data near on-policy, yielding fast, stable RL for large language models.
-
-<p align="center">
-    <img src="assets/losses.png" alt="Pipeline-RL Effectiveness" width="600">
-</p>
-
-- In experiments on 7B and 32B models (batch size 4096, lr=1e-6, max tokens=8192), PipelineRL matches or exceeds Open-Reasoner-Zero on AIME-2024 and MATH-500.
-- Uses a simplified GRPO algorithm: no value network, no trust-region clamping, no KL or entropy bonuses by default (though KL support is available).
-
-
-
-
 
 ## Setup
 
