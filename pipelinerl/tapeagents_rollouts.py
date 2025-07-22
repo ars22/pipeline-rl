@@ -10,9 +10,7 @@ from tapeagents.environment import Environment
 from tapeagents.llms.trainable import TrainableLLM
 from tapeagents.orchestrator import get_agent_and_env_from_config, main_loop
 
-from pipelinerl.async_llm import llm_async_generate
-from pipelinerl.math.rollouts import RolloutResult
-from pipelinerl.rollouts import TrainingText
+from pipelinerl.rollouts import RolloutResult, TrainingText
 
 
 def run_tapeagent(
@@ -49,21 +47,13 @@ async def generate_rollout(
     problem: dict,
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
-    def generate(self, prompt: Prompt):
-        # !! should be called in a separate thread only !!
-        # 'self' here is the llm instance (agent.llms["default"])
-        # 'session' is captured from the outer scope of generate_rollout
-        def _implementation():
-            llm_call = asyncio.run(llm_async_generate(self, prompt, session))
-            yield LLMEvent(output=llm_call.output, llm_call=llm_call)
-
-        return LLMStream(_implementation(), prompt)
-
     time_start = time.time()
-    task: str = cfg.task_template.format(task=problem["task"])
+    task: str = cfg.actor.task_template.format(task=problem["task"])
     agent, environment = get_agent_and_env_from_config(cfg)
-    agent.llms = {"default": llm.model_copy()}
-    agent.llms["default"].generate = generate  # type: ignore
+    
+    # set the LLM directly on the agent
+    agent.llms = {"default": llm}
+    
     samples, metrics = await asyncio.to_thread(run_tapeagent, task, agent, environment, cfg.max_loops)
     latency = time.time() - time_start
     return RolloutResult(training_texts=samples, metrics=metrics, latency=latency, dataset_name=problem.get("dataset"))

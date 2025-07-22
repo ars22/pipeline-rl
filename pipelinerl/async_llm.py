@@ -6,7 +6,7 @@ import aiohttp
 import numpy as np
 from PIL import Image
 from tapeagents.core import LLMCall, LLMOutput, Prompt, TokenLogprob
-from tapeagents.llms.trainable import TrainableLLM
+from tapeagents.llms import TrainableLLM
 
 from pipelinerl.finetune.data import MASKED_TOKEN_ID
 from pipelinerl.rollouts import TrainingText
