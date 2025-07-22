@@ -31,6 +31,8 @@ def load_problems(dataset_names: list[str]):
 
 and 
 
+
+
 ````python
 async def generate_guessing_rollout(
     cfg: DictConfig,
@@ -38,7 +40,15 @@ async def generate_guessing_rollout(
     problem: dict,
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
-    initial_messages = [
+    agent = GuessingAgent()
+    time_start = time.time()
+    llm_calls = []
+    reward = 0
+    success = 0
+    error = 0
+    
+    # Initialize messages
+    messages = [
         {
             "role": "system",
             "content": "You are a helpful assistant",
@@ -49,68 +59,36 @@ async def generate_guessing_rollout(
                         " After each guess I will tell you if your answer is higher or lower than the target number."
         }
     ]
-    time_start = time.time()
-    llm_calls = []
-    guess_history = []
-    reward = 0
-    success = 0
-    error = 0
     
     for i in range(13):
-        messages = initial_messages.copy()
-        
-        # Get formatted history from environment
-        if i > 0:
-            async with session.post(
-                f"http://{cfg.verifier.host}:{cfg.verifier.port}/format_history",
-                json={
-                    "guess_history": guess_history,
-                    "target": problem["answer"],
-                    "turn": i
-                }
-            ) as response:
-                data = await response.json()
-                messages.append({
-                    "role": "user",
-                    "content": data["message"]
-                })
-        
-        llm_call = await llm_async_generate(llm, Prompt(messages=messages), session)
+        # Agent makes a guess
+        guess, llm_call = await agent.guess(llm, messages, session)
         llm_calls.append(llm_call)
 
         output_text = llm_call.output.content or ""
-        answer = re.search("<answer>(\d+)</answer>", output_text)
         
-        if answer:
-            guess_value = int(answer.group(1))
-            
-            # Check guess with environment
-            async with session.post(
-                f"http://{cfg.verifier.host}:{cfg.verifier.port}/check_guess",
-                json={
-                    "guess": guess_value,
-                    "target": problem["answer"],
-                    "turn": i
-                }
-            ) as response:
-                data = await response.json()
-                
-                if data["status"] == "correct":
-                    reward = data["reward"]
-                    success = 1
-                    break
-                else:
-                    guess_history.append(guess_value)
-        else:
-            # Get error reward from environment
-            async with session.post(
-                f"http://{cfg.verifier.host}:{cfg.verifier.port}/compute_error_reward",
-                json={"turn": i}
-            ) as response:
-                data = await response.json()
-                reward = data["reward"]
+        # Environment evaluates the guess
+        async with session.post(
+            f"http://{cfg.verifier.host}:{cfg.verifier.port}/step",
+            json={
+                "output_text": output_text,
+                "guess": guess,  # Just the last guess
+                "target": problem["answer"],
+                "turn": i
+            }
+        ) as response:
+            data = await response.json()
+        
+        reward = data["reward"]
+        
+        if data["done"]:
+            if data["status"] == "correct":
+                success = 1
+            elif data["status"] == "format_error":
                 error = 1
-                break
+            break
+
+        messages.append(data["message"])
                 
     latency = time.time() - time_start        
 
@@ -152,15 +130,31 @@ train_dataset_names:
   - train
 test_dataset_names:
   - test
-model_path: meta-llama/Llama-3.2-1B
 ````
 
-### Frequently Asked Questions
 
-- **Why async?** PipelineRL uses asyncio and coroutines to maximize throughput and minimize latency. This allows us to issue multiple requests to the LLM servers concurrently, while still being able to pause and resume the sampling process when new weights are available.
-- **Why is PipelineRL faster than other RL implementations?** PipelineRL uses in-flight weight updates to keep the data as fresh as possible while still maximizing throughput. This means that we can sample large batches of data without waiting for the weights to be updated, which leads to faster training times.
+#### Agent
 
-
+```python
+class GuessingAgent:
+    def __init__(self):
+        self.guess_history = []
+    
+    async def guess(self, llm: TrainableLLM, messages: list[dict], session: aiohttp.ClientSession):
+        """Make a guess using the LLM and return both the guess and llm_call."""
+        llm_call = await llm_async_generate(llm, Prompt(messages=messages), session)
+        
+        # Extract the guess from the output
+        output_text = llm_call.output.content or ""
+        match = re.search("<answer>(\d+)</answer>", output_text)
+        guess = int(match.group(1)) if match else None
+        
+        # Add valid guess to history
+        if guess is not None:
+            self.guess_history.append(guess)
+        
+        return guess, llm_call
+```
 
 ### Environment
 
@@ -173,55 +167,56 @@ class GuessingEnvironment:
         from fastapi import FastAPI
         from fastapi.responses import JSONResponse
         import uvicorn
+        import re
         
         app = FastAPI()
         
-        @app.post("/check_guess")
-        async def check_guess(request: dict):
-            guess = request["guess"]
+        @app.post("/step")
+        async def step(request: dict):
+            output_text = request["output_text"]
+            guess = request.get("guess")  # Last guess (can be None for format errors)
             target = request["target"]
             turn = request["turn"]
+            
+            # Extract answer using regex if guess not provided
+            if guess is None:
+                match = re.search("<answer>(\d+)</answer>", output_text)
+                if not match:
+                    # Format error - penalty reward
+                    return JSONResponse(content={
+                        "status": "format_error",
+                        "reward": -2 + turn / 10,
+                        "guess": None,
+                        "message": None,  # No follow-up message needed
+                        "done": True
+                    })
+                guess = int(match.group(1))
             
             # Check if guess is correct
             if guess == target:
                 # Reward decreases with more turns: 2.0 for turn 0, 1.9 for turn 1, etc.
-                reward = 2 - turn / 10
-                status = "correct"
-                feedback = f"{guess} is correct!"
+                return JSONResponse(content={
+                    "status": "correct",
+                    "reward": 2 - turn / 10,
+                    "guess": guess,
+                    "message": None,  # No follow-up message needed
+                    "done": True
+                })
             else:
-                reward = 0  # No reward for wrong guess
+                # Wrong guess - generate feedback message about this guess only
                 relation = "lower" if guess < target else "higher"
-                status = "wrong"
-                feedback = f"{guess}, which is {relation} than the target number."
-            
-            return JSONResponse(content={
-                "status": status,
-                "feedback": feedback,
-                "reward": reward
-            })
-        
-        @app.post("/format_history")
-        async def format_history(request: dict):
-            guess_history = request["guess_history"]
-            target = request["target"]
-            turn = request["turn"]
-            
-            if turn == 0:
-                return JSONResponse(content={"message": ""})
-            
-            message = f"Your {turn} previous guesses:"
-            for guess in guess_history:
-                relation = "lower" if guess < target else "higher"
-                message += f"\n{guess}, which is {relation} than the target number."
-            
-            return JSONResponse(content={"message": message})
-        
-        @app.post("/compute_error_reward")
-        async def compute_error_reward(request: dict):
-            turn = request["turn"]
-            # Penalty for format errors: -2.0 for turn 0, -1.9 for turn 1, etc.
-            reward = -2 + turn / 10
-            return JSONResponse(content={"reward": reward})
+                feedback_message = f"Your guess of {guess} is {relation} than the target number."
+                
+                return JSONResponse(content={
+                    "status": "wrong",
+                    "reward": 0,
+                    "guess": guess,
+                    "message": {
+                        "role": "user",
+                        "content": feedback_message
+                    },
+                    "done": False
+                })
         
         @app.get("/health")
         async def health():
@@ -230,6 +225,11 @@ class GuessingEnvironment:
         uvicorn.run(app, host="0.0.0.0", port=port)
 ```
 
+
+### Frequently Asked Questions
+
+- **Why async?** PipelineRL uses asyncio and coroutines to maximize throughput and minimize latency. This allows us to issue multiple requests to the LLM servers concurrently, while still being able to pause and resume the sampling process when new weights are available.
+- **Why is PipelineRL faster than other RL implementations?** PipelineRL uses in-flight weight updates to keep the data as fresh as possible while still maximizing throughput. This means that we can sample large batches of data without waiting for the weights to be updated, which leads to faster training times.
 
 
 
