@@ -10,7 +10,15 @@ A scalable asynchronous reinforcement learning implementation with in-flight wei
 
 ## Get started
 
-In order to use PipelineRL to train your agent, you need to implement a single function:
+PipelineRL is agent framework agnostic, meaning you can use it to train any agent by implementing a `load_dataset` and `generate_rollout` functions for your task. For example, to train a math solving agent on the GSM8K dataset, you can implement the following functions:
+
+````python
+def load_dataset() -> List[Tuple[str, Dict]]:
+    dataset = load_dataset("openai/gsm8k", "main", split="train", trust_remote_code=True)
+    return list(dataset)
+````
+
+and 
 
 ````python
 async def generate_rollout(
@@ -19,31 +27,45 @@ async def generate_rollout(
     task: dict,
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
+  messages = [
+      {"role": "system", "content": cfg.actor.system_prompt},
+      {"role": "user", "content": cfg.actor.task_template.format(task=task["question"])}
+  ]
+  prompt = Prompt(messages=messages)
+  gold_answer = task["answer"].split("### ")[-1].strip()
+  llm_call = await llm_async_generate(llm, prompt, session)
+  trace = make_training_text(llm, llm_call)
+  # take the \boxed answer from the LLM response
+  boxed_start = llm_call.text.rfind("\\boxed{")
+  boxed_end = llm_call.text.rfind("}", boxed_start)
+  llm_answer = llm_call.text[boxed_start:boxed_end]
+  # simpler llm_answer extraction
+  trace.reward = 1 if llm_answer == gold_answer else 0
+  return RolloutResult(
+      training_texts=[trace],
+      metrics=BaseMetrics(
+          reward=trace.reward,
+          success=trace.reward > 0,
+          no_error=llm_call.error is None,
+          no_answer=answer == ""
+      )
+  )
 ````
 
-`generate_rollout` must transform a task into a `RolloutResult` object, which contains a list of `TrainingText` objects. Where a `TrainingText` object is a useful 
+finally you need to create a Hydra config file that defines the training parameters, such as batch size, learning rate, and model architecture. For example, `gsm8k.yaml`:
 
-where
+````yaml
+defaults:
+    - base
+    - _self_
 
-````python
-class RolloutResult(BaseModel):
-    training_texts: list[TrainingText]
-    metrics: BaseMetrics
-    ...
-
-class TrainingText(BaseModel):
-    text: str
-    log_probs: list[float]
-    reward: float
-    input_ids: List[int] = Field(default_factory=list)
-    labels: List[int] = Field(default_factory=list)
-    ...
+actor:
+  rollout_policy: pipelinerl.domains.gsm8k.generate_rollout
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+dataset_loader: pipelinerl.domains.gsm8k.load_dataset
 ````
-
-You first need to write a (async) `generate_rollout` function that generates a batch of rollouts for your task. This function should return a list of `RolloutResult` objects, which contain the text, log-probabilities, rewards, and latencies for each rollout.
-
-
-The actor loop expects a list of tasks to sample from. The tasks will then be transformed into a generator.
 
 ### Frequently Asked Questions
 
