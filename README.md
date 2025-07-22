@@ -115,7 +115,7 @@ async def generate_guessing_rollout(
             break
     latency = time.time() - time_start        
 
-    # TrainingText contains the prompt and output tokens, and the log probs of the output tokens.
+    # TrainingText contains the prompt and output tokens, reward, and the log probs of the output tokens necessary for RL training.
     training_texts = [make_training_text(llm, llm_call) for llm_call in llm_calls]
     for text in training_texts:
         text.reward = reward
