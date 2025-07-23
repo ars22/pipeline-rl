@@ -58,7 +58,7 @@ def load_problems(dataset_names: list[str]) -> list[dict]:
     return problems
 ````
 
-Then, we must implement a `generate_rollout` function which takes a problem from the `load_problems` function and generate a `RolloutResult`. `RolloutResult` contains the a list of `TrainingText` necessary for training the agent, `BaseMetrics` (reward, success, etc.), latency of the rollout, and the `dataset_name` which will be used for grouping the metrics. Here, the function should use an LLM to generate guesses and provide feedback based on the problem's answer.
+Then, we must implement a `generate_rollout` function which takes a problem from the `load_problems` function and generate a `RolloutResult`. `RolloutResult` contains the a list of `TrainingText` (token ids, log probs, reward, etc.), `BaseMetrics` (reward, success, etc.), latency of the rollout, and the `dataset_name` which will be used for grouping the metrics. Here, the function should use an LLM to generate guesses and provide feedback based on the problem's answer.
 
 ````python
 async def generate_rollout(
