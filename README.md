@@ -138,7 +138,7 @@ async def generate_rollout(
     
 ````
 
-finally you need to create a Hydra config file that points to the rollout function and the dataset loader. Additional hyper-parameters such as model path, learning rate, etc. can also be modified. For example, `guessing.yaml`:
+Finally you need to create a Hydra config file that points to the rollout function and the dataset loader. Additional hyper-parameters such as model path, learning rate, etc. can also be modified. For example, `guessing.yaml`:
 
 ````yaml
 defaults:
@@ -177,6 +177,12 @@ The streaming logs can be overwhelming, and it is therefore easier to debug usin
 
 <p align="center">
     <img src="assets/logs.png" alt="Logs folder" width="800">
+</p>
+
+After roughly 20 minutes, the actor will have learned a strategy to guess the number correctly. The training can be monitored in real-time using WANDB, which will show the training and test metrics:
+
+<p align="center">
+    <img src="assets/guessing_success.png" alt="Logs folder" width="800">
 </p>
 
 ## Setup
