@@ -37,10 +37,10 @@ PipelineRL tackles the classic trade-off between **inference throughput** (large
 
 ## Get started
 
-PipelineRL is agent framework agnostic, meaning you can use it to train any agent by implementing a `load_dataset` and `generate_rollout` functions for your task. For example, to train a number guessing agent, you can implement the following functions:
+PipelineRL is agent framework agnostic, meaning you can use it to train any agent by implementing a `load_problems` and `generate_rollout` functions for your task. For example, to train a number guessing agent, you can implement the following functions:
 
 ````python
-def load_problems(dataset_names: list[str]):
+def load_problems(dataset_names: list[str]) -> list[dict]:
     n = 1024
     c = 191
     problems = []
@@ -59,7 +59,7 @@ def load_problems(dataset_names: list[str]):
 and 
 
 ````python
-async def generate_guessing_rollout(
+async def generate_rollout(
     cfg: DictConfig,
     llm: TrainableLLM,
     problem: dict,
@@ -136,7 +136,7 @@ async def generate_guessing_rollout(
     
 ````
 
-finally you need to create a Hydra config file that defines the training parameters, such as batch size, learning rate, and model architecture. For example, `python -m pipelinerl.launch output_dir=results/guessing --config-name guessing ` where `guessing.yaml`:
+finally you need to create a Hydra config file that points to the rollout function and the dataset loader. Additional hyper-parameters such as model path, learning rate, etc. can also be modified. For example, `guessing.yaml`:
 
 ````yaml
 defaults:
@@ -152,6 +152,30 @@ train_dataset_names:
 test_dataset_names:
     - test
 ````
+
+You can now launch the training with the following command:
+
+```bash
+python -m pipelinerl.launch config_name=guessing output_dir=results/guessing
+```
+
+After a few minutes, the actor will first be evaluated on the test dataset, and then it will start collecting training rollouts. 
+
+<p align="center">
+    <img src="assets/actor.png" alt="Actor" width="600">
+</p>
+
+When enough data has been collected, the trainer will perform a RL step and update the actor's weights.
+
+<p align="center">
+    <img src="assets/rl_loss.png" alt="RL loss" width="600">
+</p>
+
+The streaming logs can be overwhelming, and it is therefore easier to debug using the each process log files in the `results/guessing`:
+
+<p align="center">
+    <img src="assets/logs.png" alt="Logs folder" width="600">
+</p>
 
 ## Setup
 
