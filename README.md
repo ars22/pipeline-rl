@@ -164,19 +164,19 @@ python -m pipelinerl.launch config_name=guessing output_dir=results/guessing
 After a few minutes, the actor will first be evaluated on the test dataset, and then it will start collecting training rollouts. 
 
 <p align="center">
-    <img src="assets/actor.png" alt="Actor" width="600">
+    <img src="assets/actor.png" alt="Actor" width="800">
 </p>
 
 When enough data has been collected, the trainer will perform a RL step and update the actor's weights.
 
 <p align="center">
-    <img src="assets/rl_loss.png" alt="RL loss" width="600">
+    <img src="assets/rl_loss.png" alt="RL loss" width="800">
 </p>
 
 The streaming logs can be overwhelming, and it is therefore easier to debug using the each process log files in the `results/guessing`:
 
 <p align="center">
-    <img src="assets/logs.png" alt="Logs folder" width="600">
+    <img src="assets/logs.png" alt="Logs folder" width="800">
 </p>
 
 ## Setup
