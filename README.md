@@ -37,7 +37,9 @@ PipelineRL tackles the classic trade-off between **inference throughput** (large
 
 ## Get started
 
-PipelineRL is agent framework agnostic, meaning you can use it to train any agent by implementing a `load_problems` and `generate_rollout` functions for your task. For example, to train a number guessing agent, you can implement the following functions:
+PipelineRL is agent framework agnostic, meaning you can use it to train any agent by implementing a `load_problems` and `generate_rollout` functions for your task. For example, we can easily design and train a multi-turn LLM agent that must guess a number between 1 and 1024. After each guess, the agent receives feedback whether the guess was higher or lower than the target number. 
+
+First, we must implement `load_problems` to generate a list of train and test problems. Each problem is a dictionary with an `answer` key and a `dataset` key indicating whether it belongs to the training or testing dataset. 
 
 ````python
 def load_problems(dataset_names: list[str]) -> list[dict]:
@@ -56,7 +58,7 @@ def load_problems(dataset_names: list[str]) -> list[dict]:
     return problems
 ````
 
-and 
+Then, we must implement a `generate_rollout` function which takes a problem from the `load_problems` function and generate a `RolloutResult`. `RolloutResult` contains the a list of `TrainingText` necessary for training the agent, `BaseMetrics` (reward, success, etc.), latency of the rollout, and the `dataset_name` which will be used for grouping the metrics. Here, the function should use an LLM to generate guesses and provide feedback based on the problem's answer.
 
 ````python
 async def generate_rollout(
