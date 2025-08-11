@@ -138,7 +138,7 @@ async def generate_rollout(
     
 ````
 
-Finally you need to create a Hydra config file that points to the rollout function and the dataset loader. Additional hyper-parameters such as model path, learning rate, etc. can also be modified. For example, [`guessing.yaml`](pipelinerl/conf/guessing.yaml):
+Finally you need to create a Hydra config file that points to the rollout function and the dataset loader. Additional hyper-parameters such as model path, learning rate, etc. can also be modified. For example, [`guessing.yaml`](conf/guessing.yaml):
 
 ````yaml
 defaults:
