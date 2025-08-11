@@ -58,7 +58,7 @@ def load_problems(dataset_names: list[str]) -> list[dict]:
     return problems
 ````
 
-Then, we must implement a `generate_rollout` function which takes a problem from the `load_problems` function and generate a `RolloutResult`. `RolloutResult` contains the a list of `TrainingText` (token ids, log probs, reward, etc.), `BaseMetrics` (reward, success, etc.), latency of the rollout, and the `dataset_name` which will be used for grouping the metrics. Here, the function should use an LLM to generate guesses and provide feedback based on the problem's answer.
+Then, we must implement a `generate_rollout` function which takes a problem from the `load_problems` function and generate a `RolloutResult`. `RolloutResult` contains the a list of `TrainingText` (token ids, log probs, reward, etc.), `BaseMetrics` (reward, success, etc.), latency of the rollout in seconds, and the `dataset_name` which will be used for grouping the metrics. Here, the function should use an LLM to generate guesses and provide feedback based on the problem's answer.
 
 ````python
 async def generate_rollout(
@@ -138,7 +138,7 @@ async def generate_rollout(
     
 ````
 
-Finally you need to create a Hydra config file that points to the rollout function and the dataset loader. Additional hyper-parameters such as model path, learning rate, etc. can also be modified. For example, `guessing.yaml`:
+Finally you need to create a Hydra config file that points to the rollout function and the dataset loader. Additional hyper-parameters such as model path, learning rate, etc. can also be modified. For example, [`guessing.yaml`](pipelinerl/conf/guessing.yaml):
 
 ````yaml
 defaults:
@@ -161,7 +161,7 @@ You can now launch the training with the following command:
 python -m pipelinerl.launch config_name=guessing output_dir=results/guessing
 ```
 
-After a few minutes, the actor will first be evaluated on the test dataset, and then it will start collecting training rollouts. 
+Once the LLMs are served, the actor will be evaluated on the test dataset before collecting training rollouts.
 
 <p align="center">
     <img src="assets/actor.png" alt="Actor" width="800">
