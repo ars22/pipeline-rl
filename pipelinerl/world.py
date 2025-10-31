@@ -4,8 +4,35 @@ from typing import Literal
 from pydantic import BaseModel
 from omegaconf import DictConfig
 import torch
+import re
 
 logger = logging.getLogger(__name__)
+
+
+def expand_nodelist(nodelist: str):
+    s = nodelist.replace(" ", "")
+    # If it's just a comma list with no brackets:
+    if "[" not in s and "," in s:
+        return [h for h in s.split(",") if h]
+    # Bracketed form: prefix[spec]
+    m = re.fullmatch(r"(.*)\[(.+)\]", s)
+    if m:
+        prefix, spec = m.groups()
+        hosts = []
+        for chunk in spec.split(","):
+            # range like 07-12 (keep zero padding width)
+            r = re.fullmatch(r"(\d+)-(\d+)", chunk)
+            if r:
+                a, b = r.groups()
+                width = max(len(a), len(b))
+                for i in range(int(a), int(b) + 1):
+                    hosts.append(f"{prefix}{i:0{width}d}")
+            else:
+                # single index (could be zero-padded)
+                hosts.append(f"{prefix}{chunk}")
+        return hosts
+    # Single host or simple comma list fallback
+    return [s] if s else []
 
 
 class Job(BaseModel):
@@ -37,14 +64,25 @@ class WorldMap:
         self.my_rank = int(os.environ.get("RANK", 0))
         self.address_map = {}
         if self.world_size > 1:
-            self.master_addr = os.environ["MASTER_ADDR"]
-            # e.g.: dns-f6c9712f-4d9b-4c8d-a648-f8d94cf12113-0
+            nodelist = os.environ.get("ALL_ADDR", "")
+            assert nodelist is not None, "ALL_ADDR is not set even though WORLD_SIZE > 1"
+            nodelist = [x.strip() for x in nodelist.strip().split(",")]
+            assert len(nodelist) == self.world_size, f"SLURM_NODELIST length {len(nodelist)} does not match WORLD_SIZE {self.world_size}"
+            self.master_addr = nodelist[0]
             for rank in range(self.world_size):
-                basename = self.master_addr[: self.master_addr.rfind("-")]
-                self.address_map[rank] = f"{basename}-{rank}"
+                self.address_map[rank] = nodelist[rank]
+
+            # nodelist = expand_nodelist(nodelist)
+            # nodelist = nodelist.strip().split(",")
+            # e.g.: dns-f6c9712f-4d9b-4c8d-a648-f8d94cf12113-0
+            # for rank in range(self.world_size):
+            #     basename = self.master_addr[: self.master_addr.rfind("-")]
+            #     self.address_map[rank] = f"{basename}-{rank}"
         else:
             self.master_addr = "localhost"
             self.address_map[0] = "localhost"
+        
+        self.nodelist = [self.address_map[i] for i in range(self.world_size)]
 
         self._log_info(f"--- INITIALIZE WORLD MAP (this is rank {self.my_rank}) ---")
 
@@ -183,13 +221,15 @@ class WorldMap:
 
     def _place_pipeline_stages(self, cfg):
         for worker_idx in range(cfg.world.replicas):
-            node = self.get_least_busy_node()
+            # node = self.get_least_busy_node()
+            node = 0
             self.add_job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
             self.add_job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
 
     def _place_environments(self, cfg):
         for worker_idx in range(cfg.world.env_replicas):
-            node = self.get_least_busy_node()
+            # node = self.get_least_busy_node()
+            node = 0
             envs_at_node = len([job for job in self.job_map[node] if job.kind == "environment"])
             self.add_job(
                 kind="environment",
@@ -250,6 +290,9 @@ class WorldMap:
 
     def my_jobs(self) -> list[Job]:
         return self.job_map[self.my_rank]
+    
+    def get_jobs_on_rank(self, rank: int) -> list[Job]:
+        return self.job_map[rank]
 
     def nodes_with_finetuning(self) -> list[int]:
         return [node for node, jobs in self.job_map.items() if any(job.kind == "finetune" for job in jobs)]

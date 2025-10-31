@@ -586,7 +586,12 @@ def run_preprocessing_loop(
                                         break
                             
                                 if time_to_write:
-                                    assert len(current_batch) > 0, "Current batch should not be empty when writing"
+                                    try:
+                                        assert len(current_batch) > 0, "Current batch should not be empty when writing"
+                                    except AssertionError as e:
+                                        logger.error(f"AssertionError: {e}")
+                                        logger.error(f"Current length: {current_length}, target samples per lead: {target_samples_per_lead}, samples per trainer: {samples_per_trainer[trainer_id]}")
+                                        continue
                                     batch_encoding = collate_packed(current_batch, tokenizer, cfg.finetune.seq_parallel)
                                     write_micro_batch_slices(trainer_id, data_writer, batch_encoding, cfg.finetune.seq_parallel)
                                     published_samples += len(current_batch)

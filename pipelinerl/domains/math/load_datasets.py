@@ -8,6 +8,7 @@ import datasets
 import hydra
 from datasets import load_dataset
 from omegaconf import DictConfig
+import pandas as pd
 
 """
 math_verify expects the following LaTeX format for the gold answer (with $ or \\boxed).
@@ -112,6 +113,13 @@ def process_open_reasoner(dataset, dataset_name):
         yield {"dataset": dataset_name, "task": task, "answer": answer}
 
 
+def process_pope(dataset, dataset_name):
+    for _, item in dataset.iterrows():
+        task = item['prompt'][0]['content']
+        answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
+        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer}
+
+
 def process_gpqa(dataset, dataset_name):
     for item in dataset:
         yield {
@@ -153,8 +161,11 @@ def load_math(split):
 
 
 def _load_aime_dataset(year: int, upsample_factor: int = 0) -> list[dict]:
-    aime_dataset = load_dataset("AI-MO/aimo-validation-aime", split="train", trust_remote_code=True)
-    aime_dataset = aime_dataset.filter(lambda x: str(year) in x["url"])
+    if year == 2025:
+        aime_dataset = load_dataset("MathArena/aime_2025", split="train", trust_remote_code=True)
+    else:
+        aime_dataset = load_dataset("AI-MO/aimo-validation-aime", split="train", trust_remote_code=True)
+        aime_dataset = aime_dataset.filter(lambda x: str(year) in x["url"])
 
     dataset_name = f"aime_{year}" + ("" if upsample_factor > 0 else "_original")
     samples = [s for s in process_aime_and_amc(aime_dataset, dataset_name) if s is not None]
@@ -332,6 +343,9 @@ def load_datasets(dataset_names: List[str] | str | None, seed: int | None = None
     if "aime_2024" in dataset_names:
         datasets += _load_aime_dataset(2024, upsample_factor=16)
 
+    if "aime_2025" in dataset_names:
+        datasets += _load_aime_dataset(2025, upsample_factor=1)
+
     if "aime_2024_original" in dataset_names:
         datasets += _load_aime_dataset(2024)
 
@@ -353,6 +367,12 @@ def load_datasets(dataset_names: List[str] | str | None, seed: int | None = None
         with open(PATH, "r") as f:
             samples = [json.loads(line) for line in f]
         logger.info(f"Loading easy data dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "pope_512" in dataset_names:
+        dataset = pd.read_parquet("/project/flame/yuxiaoq/datasets/POPE-hard-first_guide-no_guide-v2-verl/train.parquet")
+        samples = [s for s in process_pope(dataset, "pope_512") if s is not None]
+        logger.info(f"Loading Pope 512 dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "open_reasoner_zero_57k" in dataset_names:

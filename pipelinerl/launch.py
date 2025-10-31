@@ -238,8 +238,11 @@ def run_finetune(cfg: DictConfig, world_map: WorldMap, gpus: list[int], exp_dir:
     if world_map.world_size > 1:
         # DeepSpeed multi-node args
         assert cfg.use_deepspeed
-        assert world_map.master_addr.startswith("dns-") and world_map.master_addr.endswith("-0")
-        hosts = [world_map.master_addr[:-2] + f"-{i}" for i in range(world_map.world_size)]
+        # assert world_map.master_addr.startswith("dns-") and world_map.master_addr.endswith("-0")
+        # hosts = [world_map.master_addr[:-2] + f"-{i}" for i in range(world_map.world_size)]
+        
+        hosts = world_map.nodelist
+        
         filter_parts = []
         for rank, job_list in world_map.job_map.items():
             for job in job_list:
@@ -461,9 +464,11 @@ def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | No
     exp_dir = Path(cfg.output_dir)
     processes = []
     all_job_kinds = ["actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm", "finetune"]
+    # for rank in range(world_map.world_size):
+    logger.info(f"Jobs on rank {world_map.my_rank}: {world_map.get_jobs_on_rank(world_map.my_rank)}")
     if job_kind_filter is None:
         job_kind_filter = all_job_kinds
-    for job in world_map.my_jobs():
+    for job in world_map.get_jobs_on_rank(world_map.my_rank):
         if job.kind not in all_job_kinds:
             raise ValueError(f"Unknown job kind {job.kind}")
         if job.kind not in job_kind_filter:
@@ -486,6 +491,7 @@ def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | No
             processes.extend(run_finetune(cfg, world_map, job.gpus, exp_dir))
         else:
             raise ValueError(f"Unknown job kind {job.kind}")
+    
     return processes
 
 
@@ -550,8 +556,11 @@ def main(cfg: DictConfig):
             redis.flushall()
 
         if world_map.world_size > 1:
-            assert world_map.master_addr.startswith("dns-") and world_map.master_addr.endswith("-0")
-            hosts = [world_map.master_addr[:-2] + f"-{i}" for i in range(world_map.world_size)]
+            # assert world_map.master_addr.startswith("dns-") and world_map.master_addr.endswith("-0")
+            # hosts = [world_map.master_addr[:-2] + f"-{i}" for i in range(world_map.world_size)]
+            
+            hosts = world_map.nodelist
+        
             hostfile_lines = [f"{host} slots=8" for host in hosts]
             deepspeed_hostfile_content = "\n".join(hostfile_lines)
             hostfile_path = str(exp_dir / "hostfile.txt")

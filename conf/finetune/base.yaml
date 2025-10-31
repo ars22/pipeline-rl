@@ -26,7 +26,7 @@ force_restart: ${..force_restart}
 # Rewind dataloder to the last used position if training resumed from existing checkpoint
 resume_dataloader: False
 # Batch size for training.
-train_batch_size: 1
+train_batch_size: 4
 # Batch size for evaluation.
 valid_batch_size: 4
 # Value of weight decay.
@@ -38,9 +38,9 @@ gradient_clipping_threshold: 0.3
 # Learning rate scheduler type (indexed by completed_steps).
 lr_scheduler_type: cosine # could be cosine, constant_with_warmup
 # Number of warmup (completed) steps in the learning rate schedule.
-num_warmup_steps: 50
+num_warmup_steps: 0
 # Number of gradient accumulation steps.
-gradient_accumulation_passes: 1024
+gradient_accumulation_passes: 64
 # Use gradient checkpointing to reduce memory footprint.
 gradient_checkpointing: true
 # see https://medium.com/pytorch/how-activation-checkpointing-enables-scaling-up-training-deep-learning-models-7a93ae01ff2d
@@ -58,7 +58,7 @@ interrupt_train_steps: -1
 # Maximum number of evaluation (completed) steps. If -1 the full dataset is evaluated.
 max_eval_steps: -1
 # Sequence lengths used for training.
-seq_length: 12000
+seq_length: 20000
 seq_packing: true
 output_dir: ${..output_dir}/finetune
 # Training seed.
@@ -85,7 +85,7 @@ queue_size: 32
 max_lag: ${..max_lag}
 weight_update_interval: 1
 pop_old_data: ${..pop_old_data}
-attempts: 8
+attempts: 4
 eval_callback:
   _target_: tapeagents.finetune.eval.dummy_eval_callback
   config_name: ""
