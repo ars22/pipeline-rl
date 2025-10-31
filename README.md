@@ -1,3 +1,11 @@
+# CMU-AIRe Setup
+
+- Follow the conda environment and other setup instructions below. 
+- For multinode training use the file ```run_multi_slurm.sh```.
+- For singlenode training use the file ```run_single_slurm.sh```.
+- For configs, we have one main config in ```conf/base.yaml```. You can override this with your own, for example,  ```conf/pope.yaml```. The top of the config imports other configs, for example, the training configs are separate (in ```conf/finetune/base.yaml```) and are imported.
+
+
 # Pipeline RL: fast LLM agent training
 
 [![Github](https://img.shields.io/badge/HF%20Blog%20Post-0000)](https://huggingface.co/blog/ServiceNow/pipelinerl/)
