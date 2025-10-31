@@ -91,10 +91,10 @@ eval_callback:
   config_name: ""
 rl:
   policy_loss: reinforce
-  divide_advantage_by_std: false
-  kl_coef: 0.0
+  divide_advantage_by_std: true
+  kl_coef: 0.001
   final_kl_coef: ${..rl.kl_coef} 
-  entropy_bonus: 0.0
+  entropy_bonus: 0.001
   reward_minus_kl_coef: 0.0
   epsilon: 4
   use_advantages: true

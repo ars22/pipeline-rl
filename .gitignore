@@ -186,3 +186,9 @@ results/
 data/
 cache/
 dump.rdb
+
+
+# specific for this project
+test.py
+slurm*.out
+slurm*.err

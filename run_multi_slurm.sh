@@ -13,6 +13,8 @@
 #SBATCH --qos=flame-64gpu_qos
 
 
+export JOB_NAME="pope-q4bins-16k-b32n8-with-kl-ent-advn"
+
 export WORLD_SIZE=$SLURM_NTASKS
 nodes=$(scontrol show hostnames $SLURM_JOB_NODELIST)
 nodes_array=($nodes)
@@ -52,7 +54,6 @@ fi
 
 # Define the absolute path to the working directory for the job
 JOB_WORKING_DIR="/home/asetlur/PipelineRL"
-JOB_SCRIPT_NAME="$JOB_WORKING_DIR/scripts/run.sh"
 
 
 # Print some info
@@ -80,27 +81,5 @@ srun -w "$HOSTLIST" --ntasks-per-node=1 \
     export MASTER_PORT=$MASTER_PORT
     echo "[$(hostname -s)] RANK=$RANK WORLD_SIZE=$WORLD_SIZE MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT ALL_ADDR=$ALL_ADDR"
     python -m pipelinerl.launch --config-name=pope \
-      output_dir=/project/flame/asetlur/pipeline-rl/results/prl-pope-16k-8a8f-grpo-n4-r2
+      output_dir=/project/flame/asetlur/pipeline-rl/results/$JOB_NAME
     '
-
-
-# sh -c "exec bash $JOB_SCRIPT_NAME"
-
-
-
-
-
-
-# export MASTER_ADDR=$(scontrol show hostnames "$SLURM_NODELIST" | head -n 1)
-
-# head_node=${nodes_array[0]}
-# head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
-# head_node_ip=$(echo $head_node_ip | awk '{print $1}') # Clean up potential extra output
-
-# Validate IP address was obtained
-# if [ -z "$head_node_ip" ]; then
-#     echo "ERROR: Failed to obtain head node IP address."
-#     exit 1
-# fi
-
-# export MASTER_ADDR=$head_node_ip
