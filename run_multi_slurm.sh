@@ -13,7 +13,7 @@
 #SBATCH --qos=flame-64gpu_qos
 
 
-export JOB_NAME="pope-q4bins-16k-b32n8-with-kl-ent-advn"
+export JOB_NAME="pope-q4bins-16k-b32n8-with-kl-ent"
 
 export WORLD_SIZE=$SLURM_NTASKS
 nodes=$(scontrol show hostnames $SLURM_JOB_NODELIST)

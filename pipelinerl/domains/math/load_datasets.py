@@ -344,7 +344,7 @@ def load_datasets(dataset_names: List[str] | str | None, seed: int | None = None
         datasets += _load_aime_dataset(2024, upsample_factor=16)
 
     if "aime_2025" in dataset_names:
-        datasets += _load_aime_dataset(2025, upsample_factor=1)
+        datasets += _load_aime_dataset(2025, upsample_factor=32)
 
     if "aime_2024_original" in dataset_names:
         datasets += _load_aime_dataset(2024)

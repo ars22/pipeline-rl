@@ -64,7 +64,7 @@ output_dir: ${..output_dir}/finetune
 # Training seed.
 seed: 42
 # Interval to save checkpoints.
-save_checkpoint_steps: 100
+save_checkpoint_steps: 50
 # Whether to keep intermediate checkpoints
 keep_intermediate_checkpoints: True
 # Whether to allow loading external model code
@@ -91,7 +91,7 @@ eval_callback:
   config_name: ""
 rl:
   policy_loss: reinforce
-  divide_advantage_by_std: true
+  divide_advantage_by_std: false
   kl_coef: 0.001
   final_kl_coef: ${..rl.kl_coef} 
   entropy_bonus: 0.001
