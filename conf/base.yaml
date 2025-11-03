@@ -75,8 +75,8 @@ world:
   replicas: 1
   
   actor_fraction: 4
-  preprocessor_fraction: 1
-  finetune_fraction: 3
+  preprocessor_fraction: 0
+  finetune_fraction: 4
 
   env_replicas: 2
 
@@ -85,7 +85,7 @@ world:
 # this will be autocreated based on the config
 jobs: []
 
-eval_every_n_versions: 13200
+eval_every_n_versions: 12800
 
 # changed
 model_path: Qwen/Qwen3-4B-Instruct-2507 

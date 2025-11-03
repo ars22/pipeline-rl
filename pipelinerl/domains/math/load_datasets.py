@@ -114,10 +114,17 @@ def process_open_reasoner(dataset, dataset_name):
 
 
 def process_pope(dataset, dataset_name):
-    for _, item in dataset.iterrows():
+    for item in dataset:
         task = item['prompt'][0]['content']
         answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
         yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer}
+
+
+def process_pope_mix(dataset, dataset_name):
+    for item in dataset:
+        task = item['prompt'][0]['content']
+        answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
+        yield {"dataset": dataset_name + f"_{item['level'].replace('-', '_')}", "task": task, "answer": answer}
 
 
 def process_gpqa(dataset, dataset_name):
@@ -373,6 +380,12 @@ def load_datasets(dataset_names: List[str] | str | None, seed: int | None = None
         dataset = pd.read_parquet("/project/flame/yuxiaoq/datasets/POPE-hard-first_guide-no_guide-v2-verl/train.parquet")
         samples = [s for s in process_pope(dataset, "pope_512") if s is not None]
         logger.info(f"Loading Pope 512 dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "pope_mix" in dataset_names:
+        ds = load_dataset("CohenQu/POPE-MIX-first_guide-no_guide-0.0-0.64-1024-verl")
+        samples = [s for s in process_pope_mix(ds['train'], "pope_mix") if s is not None]
+        logger.info(f"Loading Pope Mix dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "open_reasoner_zero_57k" in dataset_names:
