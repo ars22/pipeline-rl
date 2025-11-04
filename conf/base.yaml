@@ -133,7 +133,7 @@ wandb:
   wandb_resume: always
   # Whether to use only the basename or the full path as the run name
   wandb_use_basename: True
-  wandb_workspace_root: /project/flame/asetlur/pipeline-rl/results
+  wandb_workspace_root: null
   # set the group in your config
   wandb_group: null
   wandb_dir: null
