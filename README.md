@@ -5,7 +5,7 @@
 - For singlenode training use the file ```run_single_slurm.sh```.
 - For configs, we have one main config in ```conf/base.yaml```. You can override this with your own, for example,  ```conf/pope.yaml```. The top of the config imports other configs, for example, the training configs are separate (in ```conf/finetune/base.yaml```) and are imported.
 
-## Setup for HF cluster
+# HF cluster setup
 
 Install the required dependencies from the root directory as follows:
 
@@ -18,7 +18,15 @@ Install the required dependencies from the root directory as follows:
 To test your installation run:
 
 ```sh
-python -m pipelinerl.launch --config-name=math output_dir=data/ 
+python -m pipelinerl.launch --config-name=math output_dir=data/dummy_run/ 
+```
+
+## Launch Slurm jobs
+
+To launch Slurm jobs, run:
+
+```sh
+sbatch --nodes=<num_nodes> run_hf.slurm --config=<config_name> --job-name=<job_name>
 ```
 
 # Pipeline RL: fast LLM agent training
