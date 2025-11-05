@@ -1,0 +1,49 @@
+defaults:
+    - base
+    - _self_
+
+model_path: Qwen/Qwen3-32B
+
+llm:
+  parameters:
+    max_tokens: 32768 
+    temperature: 0.8
+
+actor:
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+environment:
+  _target_: pipelinerl.domains.math.MathEnvironment
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - olympiads-ref-base-exact-matching-train
+test_dataset_names:
+  - olympiads-ref-base-exact-matching-test
+
+
+vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 1024
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 2
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+world:
+  replicas: 1
+  actor_fraction: 2
+  preprocessor_fraction: 0
+  finetune_fraction: 4
+  env_replicas: 2
+  actor_group_port: 9000
+  environment_start_port: 7777
