@@ -1,5 +1,10 @@
 # CMU-AIRe Setup
 
+## TODO List
+[] Unify the data loading mechanism
+[] Separate the logging mechanism for different dataset sources (e.g., different benchmarks)
+
+
 - Follow the conda environment and other setup instructions below. 
 - For multinode training use the file ```run_multi_slurm.sh```.
 - For singlenode training use the file ```run_single_slurm.sh```.

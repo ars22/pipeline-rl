@@ -112,6 +112,11 @@ def process_open_reasoner(dataset, dataset_name):
         answer = "\\boxed{" + item["1"]["ground_truth"]["value"] + "}"
         yield {"dataset": dataset_name, "task": task, "answer": answer}
 
+def process_pope_local(dataset, dataset_name):
+    for _, item in dataset.iterrows():
+        task = item['prompt'][0]['content']
+        answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
+        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer}
 
 def process_pope(dataset, dataset_name):
     for item in dataset:
@@ -387,6 +392,20 @@ def load_datasets(dataset_names: List[str] | str | None, seed: int | None = None
         samples = [s for s in process_pope_mix(ds['train'], "pope_mix") if s is not None]
         logger.info(f"Loading Pope Mix dataset: {len(samples)} samples")
         datasets += add_ids(samples)
+    
+    for custom_dataset_name in [
+        "POPE-MIX-first_guide-no_guide-0.0-0.125-1024-verl-train", 
+        "POPE-MIX-first_guide-no_guide-0.0-0.125-1024-verl-test", 
+        "olympiads-ref-base-exact-matching-train",
+        "olympiads-ref-base-exact-matching-test",
+    ]:
+        if custom_dataset_name in dataset_names:
+            custom_dataset_prefix = "-".join(custom_dataset_name.split("-")[:-1])
+            split = custom_dataset_name.split("-")[-1]
+            dataset = pd.read_parquet(f"tmp/datasets/{custom_dataset_prefix}/{split}.parquet")
+            samples = [s for s in process_pope_local(dataset, custom_dataset_prefix) if s is not None]
+            logger.info(f"Loading {custom_dataset_name} dataset: {len(samples)} samples")
+            datasets += add_ids(samples)
 
     if "open_reasoner_zero_57k" in dataset_names:
         dataset = load_dataset(

@@ -192,3 +192,5 @@ dump.rdb
 test.py
 slurm*.out
 slurm*.err
+
+tmp/
