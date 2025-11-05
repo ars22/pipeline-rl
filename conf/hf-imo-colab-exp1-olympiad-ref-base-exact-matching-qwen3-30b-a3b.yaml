@@ -8,6 +8,12 @@ llm:
   parameters:
     max_tokens: 32768 
     temperature: 0.8
+test_llm:
+  parameters: 
+    max_tokens: 32768
+    temperature: 0.8 
+    top_p: 0.95
+    top_k: 50
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
