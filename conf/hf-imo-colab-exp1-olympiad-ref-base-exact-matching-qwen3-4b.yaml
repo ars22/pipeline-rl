@@ -2,7 +2,7 @@ defaults:
     - base
     - _self_
 
-model_path: Qwen/Qwen3-32B
+model_path: Qwen/Qwen3-4B-Thinking-2507
 
 llm:
   parameters:
@@ -35,7 +35,7 @@ vllm_config:
     max-num-batched-tokens: 1024
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
-    tensor-parallel-size: 2
+    tensor-parallel-size: 1
     pipeline-parallel-size: 1
     generation-config: vllm
 

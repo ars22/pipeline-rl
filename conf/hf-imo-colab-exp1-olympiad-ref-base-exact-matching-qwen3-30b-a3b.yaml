@@ -2,7 +2,7 @@ defaults:
     - base
     - _self_
 
-model_path: Qwen/Qwen3-32B
+model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
 
 llm:
   parameters:
