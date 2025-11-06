@@ -6,11 +6,11 @@ model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
 
 llm:
   parameters:
-    max_tokens: 32768 
+    max_tokens: 16384 
     temperature: 0.8
 test_llm:
   parameters: 
-    max_tokens: 32768
+    max_tokens: 16384
     temperature: 0.8 
     top_p: 0.95
     top_k: 50
