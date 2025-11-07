@@ -14,6 +14,7 @@ finetune:
   seq_length: 38912
   seq_parallel: 2
   attempts: 16
+  max_train_steps: 100
 
 llm:
   parameters:
