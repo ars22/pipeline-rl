@@ -5,8 +5,8 @@ defaults:
 model_path: Qwen/Qwen3-4B-Thinking-2507
 
 finetune:
-  train_batch_size: 2
-  valid_batch_size: 2
+  train_batch_size: 4
+  valid_batch_size: 4
   gradient_accumulation_passes: 1
   seq_length: 38912
   seq_parallel: 2
