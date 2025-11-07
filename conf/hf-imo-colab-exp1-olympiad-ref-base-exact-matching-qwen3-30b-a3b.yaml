@@ -3,6 +3,8 @@ defaults:
     - _self_
 
 model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
+# For debugging to skip test set rollouts
+eval_every_n_versions: 0
 
 finetune:
   train_batch_size: 1
