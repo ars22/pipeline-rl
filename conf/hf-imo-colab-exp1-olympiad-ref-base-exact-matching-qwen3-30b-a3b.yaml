@@ -4,14 +4,15 @@ defaults:
 
 model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
 # For debugging to skip test set rollouts
-eval_every_n_versions: 0
+# eval_every_n_versions: 0
 
+# Config for 16 GPUs
 finetune:
-  train_batch_size: 1
-  valid_batch_size: 1
-  gradient_accumulation_passes: 1
+  train_batch_size: 8
+  valid_batch_size: 8
+  gradient_accumulation_passes: 64 # min on 16 GPUs
   seq_length: 38912
-  seq_parallel: 2
+  seq_parallel: 4
   attempts: 16
 
 llm:
@@ -57,9 +58,9 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 4
+  actor_fraction: 8 # 16 GPUs
   preprocessor_fraction: 0
-  finetune_fraction: 4
+  finetune_fraction: 8 # 16 GPUs
   env_replicas: 2
   actor_group_port: 9000
   environment_start_port: 7777
