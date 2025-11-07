@@ -59,9 +59,9 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 8
+  actor_fraction: 16
   preprocessor_fraction: 0
-  finetune_fraction: 4
+  finetune_fraction: 8
   env_replicas: 2
   actor_group_port: 9000
   environment_start_port: 7777
