@@ -10,6 +10,7 @@ finetune:
   gradient_accumulation_passes: 1
   seq_length: 38912
   seq_parallel: 2
+  attempts: 16
 
 llm:
   parameters:
