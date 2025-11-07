@@ -4,13 +4,20 @@ defaults:
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
 
+finetune:
+  train_batch_size: 1
+  valid_batch_size: 1
+  gradient_accumulation_passes: 1
+  seq_length: 38912
+  seq_parallel: 2
+
 llm:
   parameters:
-    max_tokens: 16384 
+    max_tokens: 32768 
     temperature: 0.8
 test_llm:
   parameters: 
-    max_tokens: 16384
+    max_tokens: 32768
     temperature: 0.8 
     top_p: 0.95
     top_k: 50
