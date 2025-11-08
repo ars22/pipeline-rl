@@ -14,15 +14,16 @@ finetune:
   seq_length: 38912
   seq_parallel: 4
   attempts: 16
+  max_train_steps: 100
 
 llm:
   parameters:
-    max_tokens: 32768  
+    max_tokens: 32768
     temperature: 0.8
 test_llm:
   parameters: 
-    max_tokens: 32768 
-    temperature: 0.8 
+    max_tokens: 32768
+    temperature: 0.8
     top_p: 0.95
     top_k: 50
 

@@ -18,7 +18,7 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 32768 
+    max_tokens: 32768
     temperature: 0.8
 test_llm:
   parameters: 
