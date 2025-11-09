@@ -6,11 +6,11 @@ model_path: Qwen/Qwen3-32B
 # For debugging to skip test set rollouts
 # eval_every_n_versions: 0
 
-# Config for 16 GPUs
+# Config for 32 GPUs
 finetune:
-  train_batch_size: 8
-  valid_batch_size: 8
-  gradient_accumulation_passes: 64 # min on 16 GPUs
+  train_batch_size: 16
+  valid_batch_size: 16
+  gradient_accumulation_passes: 32 # min on 32 GPUs
   seq_length: 38912
   seq_parallel: 4
   attempts: 16
@@ -61,7 +61,7 @@ world:
   replicas: 1
   actor_fraction: 32
   preprocessor_fraction: 0
-  finetune_fraction: 16
+  finetune_fraction: 32
   env_replicas: 2
   actor_group_port: 9000
   environment_start_port: 7777
