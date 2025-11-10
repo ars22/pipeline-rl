@@ -635,7 +635,7 @@ def rl_finetuning_worker(
                 model.set_gradient_accumulation_boundary(True)
                 model.step()
                 grad_norm = model.get_global_grad_norm() if hasattr(model, "get_global_grad_norm") else None
-                if isinstance(training_metrics.grad_norm, torch.Tensor):
+                if isinstance(grad_norm, torch.Tensor):
                     grad_norm = grad_norm.item()
                 training_metrics.grad_norm = grad_norm if grad_norm is not None else -1.0
             else:
