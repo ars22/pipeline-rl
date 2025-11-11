@@ -4,7 +4,7 @@ defaults:
 
 model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
 # For debugging to skip test set rollouts
-# eval_every_n_versions: 0
+eval_every_n_versions: 0
 
 # Config for 32 GPUs
 finetune:
@@ -12,7 +12,7 @@ finetune:
   valid_batch_size: 16
   gradient_accumulation_passes: 32 # min on 32 GPUs
   seq_length: 38912
-  seq_parallel: 4
+  seq_parallel: 2
   attempts: 16
   max_train_steps: 100
 
