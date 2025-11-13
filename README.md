@@ -23,7 +23,7 @@ Install the required dependencies from the root directory as follows:
 To test your installation run:
 
 ```sh
-python -m pipelinerl.launch --config-name=math output_dir=data/dummy_run/ 
+python -m pipelinerl.launch --config-name=math output_dir=tmp/results/test_run/ 
 ```
 
 ## Launch Slurm jobs

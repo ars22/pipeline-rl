@@ -1,0 +1,67 @@
+defaults:
+    - base
+    - _self_
+
+model_path: Qwen/Qwen3-4B-Thinking-2507
+# For debugging to skip test set rollouts
+# eval_every_n_versions: 0
+
+# Config for 8 GPUs
+finetune:
+  train_batch_size: 64
+  valid_batch_size: 64
+  gradient_accumulation_passes: 8 # min on 8 GPUs
+  seq_length: 38912
+  seq_parallel: 2
+  attempts: 16
+  max_train_steps: 100
+
+llm:
+  parameters:
+    max_tokens: 32768 
+    temperature: 0.8
+test_llm:
+  parameters: 
+    max_tokens: 32768
+    temperature: 0.8 
+    top_p: 0.95
+    top_k: 50
+
+actor:
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+environment:
+  _target_: pipelinerl.domains.math.MathEnvironment
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - olympiads-ref-base-exact-matching-train
+test_dataset_names:
+  - olympiads-ref-base-exact-matching-test
+
+
+vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 1024
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+world:
+  replicas: 1
+  actor_fraction: 16
+  preprocessor_fraction: 0
+  finetune_fraction: 8
+  env_replicas: 2
+  actor_group_port: 9000
+  environment_start_port: 7777
