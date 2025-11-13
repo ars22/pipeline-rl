@@ -4,7 +4,7 @@ defaults:
 
 model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
 # For debugging to skip test set rollouts
-eval_every_n_versions: 0
+# eval_every_n_versions: 0
 
 # Config for 32 GPUs
 finetune:
