@@ -59,6 +59,44 @@ Example config:
 
 ```sh
 python -m pipelinerl.launch --config-name=hf_demo output_dir=results/hub_test
+# Dataset configuration
+
+`pipelinerl.domains.math.load_datasets` expects every sample to look like:
+
+```json
+{
+  "dataset": "gsm8k_train",
+  "task": "Carla buys seven bags of apples...",
+  "answer": "\\boxed{42}"
+}
+```
+
+The `dataset` field tags the data source, `task` contains the prompt handed to the actor, and `answer` is the gold solution (Math tasks should already wrap the final value in `\\boxed{}`).
+
+## Hugging Face Hub datasets
+
+You can point configs at Hub datasets in two ways:
+
+```yaml
+train_dataset_names:
+  - open_reasoner_zero_57k       # builtin dataset
+  - openai/gsm8k                # hub dataset, uses split=train by default
+```
+
+For datasets that need an explicit split or config, supply the minimal dict form:
+
+```yaml
+train_dataset_names:
+  - open_reasoner_zero_57k
+  - hub_id: openai/gsm8k
+    config: main
+    split: test
+```
+
+See the following demo config for a complete example:
+
+```sh
+python -m pipelinerl.launch --config-name hf_demo output_dir=tmp/results/hf_demo/
 ```
 
 # Pipeline RL: fast LLM agent training
@@ -125,7 +163,6 @@ To use Redis instead of the filesystem for data streaming:
 ```
 python -m pipelinerl.launch streams=redis output_dir=results/base1
 ```
-
 
 ## Architecture and pipeline stages
 

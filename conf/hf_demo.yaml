@@ -28,6 +28,9 @@ llm:
     temperature: 1.0
 
 actor:
+
+actor:
+  llm_max_rollouts: 256
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
@@ -36,9 +39,11 @@ environment:
   _target_: pipelinerl.domains.math.MathEnvironment
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - open_reasoner_zero_57k
+  - hub_id: hf-imo-colab/DeepScaleR-Preview-Dataset
+    split: train
 test_dataset_names:
-  - aime_2024
+  - hub_id: hf-imo-colab/aime_2025
+    split: train
 model_path: Qwen/Qwen2.5-0.5B-Instruct
 
 vllm_config:
