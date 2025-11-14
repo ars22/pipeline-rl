@@ -2,6 +2,10 @@ defaults:
     - base
     - _self_
 
+
+# For debugging to skip test set rollouts
+eval_every_n_versions: 0
+
 finetune:
   train_batch_size: 1
   valid_batch_size: 1
@@ -10,9 +14,20 @@ finetune:
   seq_parallel: 1
   attempts: 2
   max_train_steps: 100
+  save_checkpoint_steps: 5
+  push_to_hub: true
+  hub_model_id: hf-imo-colab/pipeline-rl-demo
+  hub_model_revision: v00.00
+  hub_ignore_patterns:
+    - "*.pt"
+    - "*.pth"
+
+llm:
+  parameters:
+    max_tokens: 32 
+    temperature: 1.0
 
 actor:
-  llm_max_rollouts: 256
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-

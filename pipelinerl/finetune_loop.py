@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict
 from functools import partial
 import numpy as np
@@ -48,6 +48,7 @@ from pipelinerl.finetune.rl import (
 from pipelinerl.finetune.rl.utils import aggregate_rl_stats
 from pipelinerl.finetune.types import TrainingMetrics
 from pipelinerl.finetune.utils import create_sentinel_batch
+from pipelinerl.finetune.hf_hub import push_checkpoint_to_hub
 from pipelinerl.streams import (
     SingleStreamSpec,
     read_stream,
@@ -530,6 +531,24 @@ def rl_finetuning_worker(
     intermediate_root_dir = output_dir / "intermediate"
     training_state_dir = output_dir / "training_state"
 
+    hub_upload_futures: list[Future] = []
+
+    def track_hub_future(future: Future | None):
+        if future is None or not get_accelerator().is_main_process:
+            return
+        hub_upload_futures.append(future)
+        pending: list[Future] = []
+        for upload_future in hub_upload_futures:
+            if upload_future.done():
+                try:
+                    upload_future.result()
+                except Exception:
+                    logger.exception("Hub upload failed for revision %s", getattr(upload_future, "_hf_revision", "unknown"))
+                    raise
+            else:
+                pending.append(upload_future)
+        hub_upload_futures[:] = pending
+
     final_train_steps = calculate_train_steps(args, args.interrupt_train_steps)
     if training_metrics.completed_steps == final_train_steps:
         logger.info("Training is already completed")
@@ -820,6 +839,7 @@ def rl_finetuning_worker(
                 asdict(training_metrics),
             )
 
+            upload_source = current_dir
             if args.keep_intermediate_checkpoints:
                 intermediate_dir = intermediate_root_dir / str(training_metrics.completed_steps)
                 save_model_and_tokenizer(
@@ -833,6 +853,15 @@ def rl_finetuning_worker(
 
                 if args.cuda_empty_cache:
                     torch.cuda.empty_cache()
+                upload_source = intermediate_dir
+
+            if get_accelerator().is_main_process:
+                future = push_checkpoint_to_hub(
+                    args,
+                    upload_source,
+                    training_metrics.completed_steps,
+                )
+                track_hub_future(future)
 
             get_accelerator().wait_for_everyone()  # wait for the main process that saves the model
 
@@ -859,6 +888,25 @@ def rl_finetuning_worker(
             asdict(training_metrics),
         )
         dt = log_time(dt, time_stats, "finetune/final_training_state_save")
+
+    if get_accelerator().is_main_process:
+        track_hub_future(
+            push_checkpoint_to_hub(
+                args,
+                current_dir,
+                training_metrics.completed_steps,
+            )
+        )
+        for future in list(hub_upload_futures):
+            try:
+                future.result()
+            except Exception:
+                logger.exception(
+                    "Hub upload failed for revision %s",
+                    getattr(future, "_hf_revision", "unknown"),
+                )
+                raise
+        hub_upload_futures.clear()
 
     if get_accelerator().is_main_process:
         with open(output_dir / "summary.json", "w") as wf:

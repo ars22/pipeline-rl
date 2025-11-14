@@ -23,7 +23,7 @@ Install the required dependencies from the root directory as follows:
 To test your installation run:
 
 ```sh
-python -m pipelinerl.launch --config-name=math output_dir=tmp/results/test_run/ 
+python -m pipelinerl.launch --config-name=guessing output_dir=tmp/results/test_run/ 
 ```
 
 ## Launch Slurm jobs
@@ -34,21 +34,36 @@ To launch Slurm jobs, run:
 sbatch --nodes=<num_nodes> run_hf.slurm --config=<config_name> --job-name=<job_name>
 ```
 
-# Dataset configuration
+# Hugging Face Hub integration
 
-`pipelinerl.domains.math.load_datasets` expects every sample to look like:
+## Checkpoint uploads
 
-```json
-{
-  "dataset": "gsm8k_train",
-  "task": "Carla buys seven bags of apples...",
-  "answer": "\\boxed{42}"
-}
+PipelineRL can upload intermediate checkpoints to the Hugging Face Hub. Each save step creates a branch named `<prefix>-step-XXXXXX` (for example `v00.00-step-000120`) so you can browse checkpoints without overwriting history. Configure the trainer in your Hydra config:
+
+```yaml
+finetune:
+  push_to_hub: true                    # enable uploads
+  hub_model_id: my-org/my-model-repo   # target repository
+  hub_model_revision: v00.00           # branch name prefix for checkpoints
+  hub_base_revision: main              # branch to base new checkpoint branches on
+  hub_private: true                    # create a private repo when missing
+  hub_ignore_patterns:                 # optional: additional ignore patterns (e.g. optimizer states)
+    - "*.pth"
+    - "*.pt"
+  hub_max_retries: 3                  # optional: tweak retry/backoff behaviour
+  hub_retry_base_seconds: 5.0
+  hub_retry_max_seconds: 60.0
 ```
 
-The `dataset` field tags the data source, `task` contains the prompt handed to the actor, and `answer` is the gold solution (Math tasks should already wrap the final value in `\\boxed{}`).
+Uploads run asynchronously during training and the trainer waits for any outstanding uploads at shutdown to ensure checkpoints reach the Hub.
 
-## Hugging Face Hub datasets
+Example config:
+
+```sh
+python -m pipelinerl.launch --config-name=hf_demo output_dir=results/hub_test
+```
+
+## Datasets
 
 You can point configs at Hub datasets in two ways:
 
@@ -73,6 +88,20 @@ See the following demo config for a complete example:
 ```sh
 python -m pipelinerl.launch --config-name hf_demo output_dir=tmp/results/hf_demo/
 ```
+
+### Dataset configuration
+
+`pipelinerl.domains.math.load_datasets` expects every sample to look like:
+
+```json
+{
+  "dataset": "gsm8k_train",
+  "task": "Carla buys seven bags of apples...",
+  "answer": "\\boxed{42}"
+}
+```
+
+The `dataset` field tags the data source, `task` contains the prompt handed to the actor, and `answer` is the gold solution (Math tasks should already wrap the final value in `\\boxed{}`).
 
 # Pipeline RL: fast LLM agent training
 
