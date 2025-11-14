@@ -50,7 +50,7 @@ finetune:
     - "*.png"
 ```
 
-Provide an access token (for example by exporting `HUGGINGFACE_HUB_TOKEN`) with write permissions before launching training. Uploads run asynchronously during training and the trainer waits for any outstanding uploads at shutdown to ensure checkpoints reach the Hub.
+Uploads run asynchronously during training and the trainer waits for any outstanding uploads at shutdown to ensure checkpoints reach the Hub.
 
 Example config:
 
