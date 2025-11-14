@@ -2,12 +2,12 @@ import json
 import logging
 import random
 import re
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import datasets
 import hydra
 from datasets import load_dataset
-from omegaconf import DictConfig
+from omegaconf import DictConfig, ListConfig, OmegaConf
 import pandas as pd
 
 """
@@ -217,13 +217,53 @@ def add_ids(dataset: list[dict]):
     return dataset
 
 
-def load_datasets(dataset_names: List[str] | str | None, seed: int | None = None) -> List[Tuple[str, Dict]]:
+def load_datasets(
+    dataset_names: List[str | Dict[str, Any]] | Dict[str, Any] | str | None, seed: int | None = None
+) -> List[Tuple[str, Dict]]:
     if dataset_names is None:
         return []
 
+    if isinstance(dataset_names, (DictConfig, ListConfig)):
+        dataset_names = OmegaConf.to_container(dataset_names, resolve=True)
+
+    if isinstance(dataset_names, dict):
+        dataset_names = [dataset_names]
     if isinstance(dataset_names, str):
         dataset_names = [dataset_names]
+    elif not isinstance(dataset_names, list):
+        dataset_names = list(dataset_names)
+
     datasets = []
+
+    for dataset_spec in dataset_names:
+        if isinstance(dataset_spec, dict):
+            hub_id = dataset_spec.get("hub_id")
+            if not hub_id:
+                raise ValueError("Hub dataset specs must include a 'hub_id' field.")
+            config = dataset_spec.get("config")
+            split = dataset_spec.get("split", "train")
+            load_args: Tuple[Any, ...] = (hub_id,)
+            if config is not None:
+                load_args += (config,)
+            dataset = load_dataset(*load_args, split=split)
+            samples = [dict(row) for row in dataset]
+            dataset_label = dataset_spec.get("dataset", dataset_spec.get("name", hub_id))
+            for sample in samples:
+                sample.setdefault("dataset", dataset_label)
+            logger.info(
+                f"Loading hub dataset {hub_id}"
+                + (f"/{config}" if config else "")
+                + f" split={split}: {len(samples)} samples"
+            )
+            datasets += add_ids(samples)
+        elif isinstance(dataset_spec, str) and "/" in dataset_spec:
+            dataset = load_dataset(dataset_spec, split="train", trust_remote_code=True)
+            samples = [dict(row) for row in dataset]
+            for sample in samples:
+                sample.setdefault("dataset", dataset_spec)
+            logger.info(f"Loading hub dataset {dataset_spec} split=train: {len(samples)} samples")
+            datasets += add_ids(samples)
+
     if "eurus_train" in dataset_names:
         dataset = load_dataset("PRIME-RL/Eurus-2-RL-Data", split="train", trust_remote_code=True)
         samples = [s for s in process_eurus(dataset) if s is not None]
@@ -441,6 +481,8 @@ def load_datasets(dataset_names: List[str] | str | None, seed: int | None = None
         datasets += add_ids(samples)
 
     for dataset_name in dataset_names:
+        if not isinstance(dataset_name, str):
+            continue
         test_matched = re.match(r"multiplication_(\d+)_by_(\d+)_(\d+)_test", dataset_name)
         train_matched = re.match(r"multiplication(_upto)?_(\d+)_by_(\d+)_(\d+)_train", dataset_name)
         if test_matched:
