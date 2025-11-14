@@ -10,7 +10,7 @@ finetune:
   seq_parallel: 1
   attempts: 2
   max_train_steps: 100
-  save_checkpoint_steps: 1
+  save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: hf-imo-colab/test-push
   hub_model_revision: v00.00
@@ -19,7 +19,7 @@ finetune:
     - "*.png"
 
 actor:
-  llm_max_rollouts: 256
+  llm_max_rollouts: 32
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
