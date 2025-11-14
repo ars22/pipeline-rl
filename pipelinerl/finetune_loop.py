@@ -859,7 +859,7 @@ def rl_finetuning_worker(
                 future = push_checkpoint_to_hub(
                     args,
                     upload_source,
-                    training_metrics.samples,
+                    training_metrics.completed_steps,
                 )
                 track_hub_future(future)
 
@@ -894,7 +894,7 @@ def rl_finetuning_worker(
             push_checkpoint_to_hub(
                 args,
                 current_dir,
-                training_metrics.samples,
+                training_metrics.completed_steps,
             )
         )
         for future in list(hub_upload_futures):
