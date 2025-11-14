@@ -16,11 +16,11 @@ finetune:
   max_train_steps: 100
   save_checkpoint_steps: 5
   push_to_hub: true
-  hub_model_id: hf-imo-colab/test-push
+  hub_model_id: hf-imo-colab/pipeline-rl-demo
   hub_model_revision: v00.00
   hub_ignore_patterns:
-    - "*.mp4"
-    - "*.png"
+    - "*.pt"
+    - "*.pth"
 
 llm:
   parameters:
@@ -28,9 +28,6 @@ llm:
     temperature: 1.0
 
 actor:
-
-actor:
-  llm_max_rollouts: 256
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-

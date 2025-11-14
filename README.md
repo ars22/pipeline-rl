@@ -23,7 +23,7 @@ Install the required dependencies from the root directory as follows:
 To test your installation run:
 
 ```sh
-python -m pipelinerl.launch --config-name=math output_dir=tmp/results/test_run/ 
+python -m pipelinerl.launch --config-name=guessing output_dir=tmp/results/test_run/ 
 ```
 
 ## Launch Slurm jobs
@@ -34,7 +34,9 @@ To launch Slurm jobs, run:
 sbatch --nodes=<num_nodes> run_hf.slurm --config=<config_name> --job-name=<job_name>
 ```
 
-# Hugging Face Hub checkpoint uploads
+# Hugging Face Hub integration
+
+## Checkpoint uploads
 
 PipelineRL can upload intermediate checkpoints to the Hugging Face Hub. Each save step creates a branch named `<prefix>-step-XXXXXX` (for example `v00.00-step-000120`) so you can browse checkpoints without overwriting history. Configure the trainer in your Hydra config:
 
@@ -59,21 +61,9 @@ Example config:
 
 ```sh
 python -m pipelinerl.launch --config-name=hf_demo output_dir=results/hub_test
-# Dataset configuration
-
-`pipelinerl.domains.math.load_datasets` expects every sample to look like:
-
-```json
-{
-  "dataset": "gsm8k_train",
-  "task": "Carla buys seven bags of apples...",
-  "answer": "\\boxed{42}"
-}
 ```
 
-The `dataset` field tags the data source, `task` contains the prompt handed to the actor, and `answer` is the gold solution (Math tasks should already wrap the final value in `\\boxed{}`).
-
-## Hugging Face Hub datasets
+## Datasets
 
 You can point configs at Hub datasets in two ways:
 
@@ -98,6 +88,20 @@ See the following demo config for a complete example:
 ```sh
 python -m pipelinerl.launch --config-name hf_demo output_dir=tmp/results/hf_demo/
 ```
+
+### Dataset configuration
+
+`pipelinerl.domains.math.load_datasets` expects every sample to look like:
+
+```json
+{
+  "dataset": "gsm8k_train",
+  "task": "Carla buys seven bags of apples...",
+  "answer": "\\boxed{42}"
+}
+```
+
+The `dataset` field tags the data source, `task` contains the prompt handed to the actor, and `answer` is the gold solution (Math tasks should already wrap the final value in `\\boxed{}`).
 
 # Pipeline RL: fast LLM agent training
 
