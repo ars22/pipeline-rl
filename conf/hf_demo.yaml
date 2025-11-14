@@ -2,6 +2,10 @@ defaults:
     - base
     - _self_
 
+
+# For debugging to skip test set rollouts
+eval_every_n_versions: 0
+
 finetune:
   train_batch_size: 1
   valid_batch_size: 1
@@ -11,18 +15,17 @@ finetune:
   attempts: 2
   max_train_steps: 100
   save_checkpoint_steps: 5
-
-llm:
-  parameters:
-    max_tokens: 32 
-    temperature: 1.0
-
   push_to_hub: true
   hub_model_id: hf-imo-colab/test-push
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.mp4"
     - "*.png"
+
+llm:
+  parameters:
+    max_tokens: 32 
+    temperature: 1.0
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
