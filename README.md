@@ -66,7 +66,12 @@ train_dataset_names:
   - hub_id: openai/gsm8k
     config: main
     split: test
-    dataset: gsm8k_eval   # optional override for the emitted dataset field
+```
+
+See the following demo config for a complete example:
+
+```sh
+python -m pipelinerl.launch --config-name hf_demo output_dir=tmp/results/hf_demo/
 ```
 
 # Pipeline RL: fast LLM agent training

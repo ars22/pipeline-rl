@@ -242,14 +242,14 @@ def load_datasets(
                 raise ValueError("Hub dataset specs must include a 'hub_id' field.")
             config = dataset_spec.get("config")
             split = dataset_spec.get("split", "train")
+            trust_remote_code = dataset_spec.get("trust_remote_code", True)
             load_args: Tuple[Any, ...] = (hub_id,)
             if config is not None:
                 load_args += (config,)
-            dataset = load_dataset(*load_args, split=split)
+            dataset = load_dataset(*load_args, split=split, trust_remote_code=trust_remote_code)
             samples = [dict(row) for row in dataset]
-            dataset_label = dataset_spec.get("dataset", dataset_spec.get("name", hub_id))
             for sample in samples:
-                sample.setdefault("dataset", dataset_label)
+                sample.setdefault("dataset", hub_id)
             logger.info(
                 f"Loading hub dataset {hub_id}"
                 + (f"/{config}" if config else "")
