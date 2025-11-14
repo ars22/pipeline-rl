@@ -45,9 +45,12 @@ finetune:
   hub_model_revision: v00.00           # branch name prefix for checkpoints
   hub_base_revision: main              # branch to base new checkpoint branches on
   hub_private: true                    # create a private repo when missing
-  hub_ignore_patterns:
-    - "*.mp4"
-    - "*.png"
+  hub_ignore_patterns:                 # optional: additional ignore patterns (e.g. optimizer states)
+    - "*.pth"
+    - "*.pt"
+  hub_max_retries: 3                  # optional: tweak retry/backoff behaviour
+  hub_retry_base_seconds: 5.0
+  hub_retry_max_seconds: 60.0
 ```
 
 Uploads run asynchronously during training and the trainer waits for any outstanding uploads at shutdown to ensure checkpoints reach the Hub.
