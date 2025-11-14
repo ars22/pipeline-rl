@@ -1,0 +1,54 @@
+defaults:
+    - base
+    - _self_
+
+finetune:
+  train_batch_size: 1
+  valid_batch_size: 1
+  gradient_accumulation_passes: 4
+  seq_length: 2048
+  seq_parallel: 1
+  attempts: 2
+  max_train_steps: 100
+
+actor:
+  llm_max_rollouts: 256
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+environment:
+  _target_: pipelinerl.domains.math.MathEnvironment
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - hub_id: hf-imo-colab/DeepScaleR-Preview-Dataset
+    split: train
+test_dataset_names:
+  - hub_id: hf-imo-colab/aime_2025
+    split: train
+model_path: Qwen/Qwen2.5-0.5B-Instruct
+
+vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 1024
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+world:
+  replicas: 1
+  actor_fraction: 4
+  preprocessor_fraction: 0
+  finetune_fraction: 4
+  env_replicas: 2
+  actor_group_port: 9000
+  environment_start_port: 7777
