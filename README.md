@@ -34,6 +34,30 @@ To launch Slurm jobs, run:
 sbatch --nodes=<num_nodes> run_hf.slurm --config=<config_name> --job-name=<job_name>
 ```
 
+# Hugging Face Hub checkpoint uploads
+
+PipelineRL can upload intermediate checkpoints to the Hugging Face Hub. Each save step creates a branch named `<prefix>-step-XXXXXX` (for example `v00.00-step-000120`) so you can browse checkpoints without overwriting history. Configure the trainer in your Hydra config:
+
+```yaml
+finetune:
+  push_to_hub: true                    # enable uploads
+  hub_model_id: my-org/my-model-repo   # target repository
+  hub_model_revision: v00.00           # branch name prefix for checkpoints
+  hub_base_revision: main              # branch to base new checkpoint branches on
+  hub_private: true                    # create a private repo when missing
+  hub_ignore_patterns:
+    - "*.mp4"
+    - "*.png"
+```
+
+Provide an access token (for example by exporting `HUGGINGFACE_HUB_TOKEN`) with write permissions before launching training. Uploads run asynchronously during training and the trainer waits for any outstanding uploads at shutdown to ensure checkpoints reach the Hub.
+
+Example config:
+
+```sh
+python -m pipelinerl.launch --config-name=hf_demo output_dir=results/hub_test
+```
+
 # Pipeline RL: fast LLM agent training
 
 [![Github](https://img.shields.io/badge/HF%20Blog%20Post-0000)](https://huggingface.co/blog/ServiceNow/pipelinerl/)

@@ -71,6 +71,13 @@ keep_intermediate_checkpoints: True
 trust_remote_code: false
 # Whether to empty the cache every training pass. Usually not worth it except for very large models if OOM
 cuda_empty_cache: True
+# Hugging Face Hub upload configuration
+push_to_hub: false
+hub_model_id: null
+hub_model_revision: v00.00
+hub_base_revision: main
+hub_private: true
+hub_ignore_patterns: []
 sft_config_name: null
 n_examples: 0 # 0 means do not limit number of samples
 log_each_n_steps: 1
