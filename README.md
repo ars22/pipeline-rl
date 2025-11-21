@@ -1,3 +1,11 @@
+# Docker Setup
+```
+docker build -t prl -f docker/Dockerfile .
+docker run -it --gpus all --mount type=bind,src=/home/violet/pipeline-rl,dst=/pipeline-rl --shm-size=100gb --env-file=/home/violet/.env prl
+cd /pipeline-rl
+pip install --no-deps -e .
+```
+
 # CMU-AIRe Setup
 
 ## TODO List

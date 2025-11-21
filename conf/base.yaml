@@ -41,12 +41,11 @@ preprocess:
   log_every_n_samples: 128
 llm:
   parameters:
-    # changed
-    max_tokens: 16384 
-    # 8192
-    # changed
+    max_tokens: 16384
     temperature: 0.8 
-    # 1.0
+    # default to false, only used true when want to use thinking for qwen3 instruct
+    chat_template_kwargs: null      
+
 test_llm:
   parameters: 
     max_tokens: 16000
@@ -54,6 +53,17 @@ test_llm:
     # 1.0
     top_p: 0.95
     top_k: 50
+    chat_template_kwargs: null
+
+genrm_llm:
+  model_path: Qwen/Qwen3-4B
+  parameters:
+    max_tokens: 1024
+    temperature: 0.0
+    top_p: 1.0
+    top_k: -1
+    chat_template_kwargs:
+      enable_thinking: false
 
 vllm_config:
   use_v1: false
@@ -76,6 +86,7 @@ world:
   
   actor_fraction: 4
   preprocessor_fraction: 0
+  genrm_fraction: 0
   finetune_fraction: 4
 
   env_replicas: 2
@@ -87,9 +98,7 @@ jobs: []
 
 eval_every_n_versions: 12800
 
-# changed
-model_path: Qwen/Qwen3-4B-Instruct-2507 
-# Qwen/Qwen2.5-7B
+model_path: Qwen/Qwen3-4B
 
 # will use default based on the chosen backend
 accelerate_config: null

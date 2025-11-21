@@ -69,6 +69,12 @@ def process_math(dataset, dataset_name):
         yield sample
 
 
+def process_omni_math(dataset, dataset_name):
+    for item in dataset:
+        answer = "\\boxed{" + item['answer'] + "}"
+        sample = {"dataset": dataset_name, "task": item['problem'], "answer": answer, "solution": item['solution']}
+        yield sample
+
 def process_gsm8k(dataset, dataset_name):
     for item in dataset:
         sample = {
@@ -320,6 +326,12 @@ def load_datasets(
         dataset = load_dataset("agentica-org/DeepScaleR-Preview-Dataset", split="train", trust_remote_code=True)
         samples = [s for s in process_math(dataset, "deepscaler") if s is not None]
         logger.info(f"Loading deepscaler preview train dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "omni-math-l4_6" in dataset_names:
+        dataset = load_dataset("violetxi/omni-math-difficulty-4_6", split="train", trust_remote_code=True)
+        samples = [s for s in process_omni_math(dataset, "omni-math-l4_6") if s is not None]
+        logger.info(f"Loading violetxi/omni-math-difficulty-4_6 dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "math_test" in dataset_names:

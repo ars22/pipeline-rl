@@ -232,6 +232,58 @@ async def schedule_rollouts(
     logger.info("Rollout scheduler finished")
 
 
+async def run_sequential_rollouts(
+    cfg: DictConfig,
+    attempts: int,
+    problem_queue: SharedMemoryQueue,
+    result_queue: SharedMemoryQueue,
+    trainer_state: TrainerState,
+    llms: list[TrainableLLM],
+    scheduler_name: str,
+):
+    """
+    Sequential rollout loop for debugging.
+    """
+    logger.info("Starting SEQUENTIAL rollout scheduler (DEBUG MODE)")
+    rollout_policy = hydra.utils.get_method(cfg.actor.rollout_policy)
+    
+    connector = aiohttp.TCPConnector(limit=1, limit_per_host=1)
+    timeout = aiohttp.ClientTimeout(total=3600.0)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        while True:
+            try:
+                problem = problem_queue.get(block=False)
+            except Empty:
+                await asyncio.sleep(0.1)
+                continue
+            
+            llm = llms[0]
+            model_version = trainer_state.propagated_weight_version or 0
+            
+            # Run attempts sequentially
+            group_rollouts = []
+            for i in range(attempts):
+                try:
+                    rollout_result = await rollout_policy(cfg, llm, problem, session)
+                    rollout_result.model_version = model_version
+                    full_group_id = f"{scheduler_name}_debug_{i}"
+                    rollout_result.group_id = full_group_id
+                    
+                    for step_index, sample in enumerate(rollout_result.training_texts):
+                        sample.metadata["model_version"] = model_version
+                        sample.metadata["rollout_index"] = i
+                        sample.metadata["step_index"] = step_index
+                        sample.group_id = full_group_id
+                    
+                    group_rollouts.append(rollout_result)
+                except Exception as e:
+                    logger.error(f"Exception in sequential rollout: {e}")
+                    # In debug mode, we might want to just raise it to hit the debugger
+                    raise e
+
+            result_queue.put(group_rollouts)
+
+
 def rollout_maker_entrypoint(
     cfg: DictConfig,
     attempts: int,
@@ -248,9 +300,18 @@ def rollout_maker_entrypoint(
         trainer_state.wait_for_model_version()
     loop = uvloop.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(
-        schedule_rollouts(cfg, attempts, problem_queue, result_queue, trainer_state, llms, scheduler_name)
-    )
+    if cfg.debug.mode:
+        asyncio.run(
+            run_sequential_rollouts(
+                cfg, attempts, problem_queue, result_queue, 
+                trainer_state, llms, scheduler_name
+            )
+        )
+    else:
+        asyncio.run(schedule_rollouts(
+            cfg, attempts, problem_queue, result_queue, 
+            trainer_state, llms, scheduler_name
+        ))
     loop.close()
     logger.info("Rollout maker loop closed")
 
@@ -316,10 +377,18 @@ class ActorLoop:
             scheduler_name = (
                 f"{'train' if is_training else 'test'} scheduler for llms {','.join([str(i) for i in llm_idxs])}"
             )
-            process = mp.Process(
-                target=rollout_maker_entrypoint,
-                args=(self.cfg, attempts, self.problem_queue, self.result_queue, llms, scheduler_name),
-            )
+            if self.debug_mode:
+                import threading
+                process = threading.Thread(
+                    target=rollout_maker_entrypoint,
+                    args=(self.cfg, attempts, self.problem_queue, self.result_queue, llms, scheduler_name),
+                    daemon=True,
+                )
+            else:
+                process = mp.Process(
+                    target=rollout_maker_entrypoint,
+                    args=(self.cfg, attempts, self.problem_queue, self.result_queue, llms, scheduler_name),
+                )
             process.start()
             self.rollout_processes.append(process)
 

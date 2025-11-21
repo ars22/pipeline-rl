@@ -2,6 +2,16 @@ defaults:
     - base
     - _self_
 
+world:
+  replicas: 1
+  actor_fraction: 1
+  preprocessor_fraction: 0
+  genrm_fraction: 1
+  finetune_fraction: 0
+
+  environment_fraction: 1
+
+
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
@@ -16,9 +26,10 @@ test_llm:
     chat_template_kwargs:
       enable_thinking: false
 environment:
-  _target_: pipelinerl.domains.math.MathEnvironment
+  _target_: pipelinerl.domains.math.GenRMMathEnvironment
+  prompt_template_path: pipelinerl.prompt_templates.math_likelihood_judge
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - pope_mix
+  - omni-math-l4_6
 test_dataset_names:
   - aime_2025

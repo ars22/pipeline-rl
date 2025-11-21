@@ -1,6 +1,7 @@
 import base64
 import io
 import logging
+from omegaconf import OmegaConf, DictConfig
 
 import aiohttp
 import numpy as np
@@ -55,7 +56,14 @@ async def llm_async_generate(
         "model": llm.model_name,
         "messages": prompt.messages,
         "stream": llm.stream,
-    }
+    }    
+    # ensure chat_template_kwargs is a dict, if exists
+    chat_template_kwargs = llm.parameters.pop("chat_template_kwargs", None)
+    if chat_template_kwargs:
+        if isinstance(chat_template_kwargs, DictConfig):
+            chat_template_kwargs = OmegaConf.to_container(chat_template_kwargs)
+        llm.parameters.update({"chat_template_kwargs": chat_template_kwargs})
+
     if llm.collect_logprobs:
         data.update(
             {

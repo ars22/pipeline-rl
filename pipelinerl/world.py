@@ -169,9 +169,10 @@ class WorldMap:
 
 
     def _split_gpus_by_purpose(self, cfg):
-        fraction_sum = cfg.world.actor_fraction + cfg.world.preprocessor_fraction + cfg.world.finetune_fraction
+        fraction_sum = cfg.world.actor_fraction + cfg.world.preprocessor_fraction + cfg.world.finetune_fraction + cfg.world.genrm_fraction
         actor_fraction = cfg.world.actor_fraction / fraction_sum
         preprocessor_fraction = cfg.world.preprocessor_fraction / fraction_sum
+        genrm_fraction = cfg.world.genrm_fraction / fraction_sum
 
         # TODO: support nodes with less than 8 GPUs available
         total_gpus = self.world_size * self.node_size
@@ -179,10 +180,13 @@ class WorldMap:
         desired_preprocessor_gpu_share = (
             max(int(total_gpus * preprocessor_fraction), self.gpus_per_llm) if cfg.world.preprocessor_fraction else 0
         )
-        desired_finetune_gpu_share = total_gpus - desired_actor_gpu_share - desired_preprocessor_gpu_share
+        desired_genrm_gpu_share = (
+            max(int(total_gpus * genrm_fraction), self.gpus_per_llm) if cfg.world.genrm_fraction else 0
+        )
+        desired_finetune_gpu_share = total_gpus - desired_actor_gpu_share - desired_preprocessor_gpu_share - desired_genrm_gpu_share
         self._log_info(
             f"Desired GPU share: {desired_actor_gpu_share} for actors,"
-            f"{desired_preprocessor_gpu_share} for preprocessors, {desired_finetune_gpu_share} for finetune"
+            f"{desired_preprocessor_gpu_share} for preprocessors, {desired_genrm_gpu_share} for genrm, {desired_finetune_gpu_share} for finetune"
         )
 
         gpus_per_actor = int(desired_actor_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 else 0
@@ -191,26 +195,36 @@ class WorldMap:
             int(desired_preprocessor_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 else 0
         )
         gpus_per_preprocessor = gpus_per_preprocessor - (gpus_per_preprocessor % self.gpus_per_llm)
+        gpus_per_genrm = (
+            int(desired_genrm_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 else 0
+        )
+        gpus_per_genrm = gpus_per_genrm - (gpus_per_genrm % self.gpus_per_llm)
+
         self.llms_per_actor = max(int(gpus_per_actor / self.gpus_per_llm), 1) if gpus_per_actor > 0 else 0
         self.total_actor_llms = self.llms_per_actor * cfg.world.replicas
         self.llms_per_preprocessor = (
             max(int(gpus_per_preprocessor / self.gpus_per_llm), 1) if gpus_per_preprocessor > 0 else 0
         )
+        self.llms_per_genrm = (
+            max(int(gpus_per_genrm / self.gpus_per_llm), 1) if gpus_per_genrm > 0 else 0
+        )
         self.gpus_per_actor = gpus_per_actor
         self.gpus_per_preprocessor = gpus_per_preprocessor
+        self.gpus_per_genrm = gpus_per_genrm
 
         total_actor_gpus = cfg.world.replicas * gpus_per_actor
         total_preprocessor_gpus = cfg.world.replicas * gpus_per_preprocessor
-        self.total_finetune_gpus = total_gpus - total_actor_gpus - total_preprocessor_gpus
+        total_genrm_gpus = cfg.world.replicas * gpus_per_genrm
+        self.total_finetune_gpus = total_gpus - total_actor_gpus - total_preprocessor_gpus - total_genrm_gpus
         self._log_info(
             f"The configuration required:\n"
-            f"{desired_actor_gpu_share} for actors, {desired_preprocessor_gpu_share} for preprocessors, {self.total_finetune_gpus} for finetune,\n"
+            f"{desired_actor_gpu_share} for actors, {desired_preprocessor_gpu_share} for preprocessors, {desired_genrm_gpu_share} for genrm, {self.total_finetune_gpus} for finetune,\n"
             f"with {cfg.world.replicas} actors and {cfg.world.replicas} preprocessors,\n"
             f"and with {self.gpus_per_llm} per each LLM.\n"
         )
         self._log_info("I have adjusted the GPU shares to accomodate these constraints.")
         self._log_info(
-            f"Actual GPU share: {total_actor_gpus} for actors, {total_preprocessor_gpus} for preprocessors, {self.total_finetune_gpus} for finetune"
+            f"Actual GPU share: {total_actor_gpus} for actors, {total_preprocessor_gpus} for preprocessors, {total_genrm_gpus} for genrm, {self.total_finetune_gpus} for finetune"
         )
         if self.total_finetune_gpus < 0:
             raise ValueError("Not enough gpus to place all workers")
@@ -280,6 +294,26 @@ class WorldMap:
                     url=ref_url,
                 )
 
+        # host an additional llm for genrm
+        for _ in range(cfg.world.replicas):
+            for genrm_llm_idx in range(self.llms_per_genrm):
+                node = next(
+                    (node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_llm), None
+                )
+                if node is None:
+                    raise ValueError("Not enough gpus to place all genrm llms")
+                gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_llm)]
+                local_idx = min(gpus)
+                genrm_url = f"http://{self.address_map[node]}:{8280 + local_idx}"
+                self.add_job(
+                    kind="genrm_llm",
+                    replica_idx=genrm_llm_idx,
+                    local_idx=local_idx,
+                    node_rank=node,
+                    gpus=gpus,
+                    url=genrm_url,
+                )
+
     def get_least_busy_node(self):
         """Get the node with the least number of CPU-heavy jobs."""
         result = 0 
@@ -308,3 +342,6 @@ class WorldMap:
 
     def get_preprocessor_urls(self) -> list[str]:
         return [job.url for job in self.get_all_jobs() if job.kind == "preprocessor_llm"]
+    
+    def get_genrm_urls(self) -> list[str]:
+        return [job.url for job in self.get_all_jobs() if job.kind == "genrm_llm"]

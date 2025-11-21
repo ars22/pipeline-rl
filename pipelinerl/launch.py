@@ -113,6 +113,47 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
         )
 
 
+def run_genrm_llm(cfg: DictConfig, genrm_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path):
+    kwargs = cfg.vllm_config.vllm_kwargs
+    if kwargs["num-scheduler-steps"] > 1:
+        kwargs["num-scheduler-steps"] = 1
+        logger.warning("Set num-scheduler-steps to 1 for GenRM vLLM")
+    log_dir = exp_dir / f"genrm_vllm_{genrm_llm_idx}"
+    os.makedirs(log_dir, exist_ok=True)
+
+    cmd = [
+        "python",
+        "-m",
+        "vllm.entrypoints.openai.api_server",
+        "--model",
+        str(cfg.genrm_llm.model_path or cfg.model_path),
+        "--port",
+        str(8280 + local_idx),
+        "--host",
+        "0.0.0.0",
+        "--seed",
+        str(cfg.seed + genrm_llm_idx),
+    ]
+
+    # Add vLLM kwargs as separate arguments
+    for k, v in kwargs.items():
+        cmd.append(f"--{k}")
+        if v not in [None, ""]:
+            cmd.append(str(v))
+
+    gpu_str = ",".join([str(gpu) for gpu in gpus])
+    logger.info(f"Running GenRM LLM with command: {' '.join(cmd)} with gpus: {gpu_str}")
+    log_file_path = os.path.join(log_dir, "stdout.log")
+    err_file_path = os.path.join(log_dir, "stderr.log")
+    with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
+        yield _popen(
+            cmd,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            stdout=log_file,
+            stderr=err_file,
+        )
+
+
 def run_actor_llm(
     cfg: DictConfig, world_map: WorldMap, actor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
 ):
@@ -198,9 +239,9 @@ def run_actor(world_map: WorldMap, actor_idx: int, exp_dir: Path):
     )
 
 
-def run_environment(cfg: DictConfig, job: Job):
-    # run in a subprocess like in the rest of the code
+def run_environment(cfg: DictConfig, job: Job, world_map: WorldMap):
     run_dir = Path(cfg.output_dir) / f"environment_{job.replica_idx}"
+    llm_urls = "+".join(world_map.get_genrm_urls())
     cmd = [
         "python",
         "-m",
@@ -212,19 +253,26 @@ def run_environment(cfg: DictConfig, job: Job):
         f"output_dir={cfg.output_dir}",
         f"hydra.run.dir={str(run_dir)}",
         f"me.job_idx={job.idx}",
+        f"+me.llm_urls={llm_urls}",
     ]
     logger.info(f"Running environment with command: {' '.join(cmd)}")
     os.makedirs(run_dir, exist_ok=True)    
     save_command(run_dir, cmd)
     log_file_path = str(run_dir / "stdout.log")
     err_file_path = str(run_dir / "stderr.log")
-    with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
+    if cfg.debug.mode:
         yield _popen(
             cmd,
             env=dict(os.environ),
-            stdout=log_file,
-            stderr=err_file,
         )
+    else:
+        with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
+            yield _popen(
+                cmd,
+                env=dict(os.environ),
+                stdout=log_file,
+                stderr=err_file,
+            )
 
 
 def run_finetune(cfg: DictConfig, world_map: WorldMap, gpus: list[int], exp_dir: Path):
@@ -463,7 +511,7 @@ def debug_link_streams(cfg: DictConfig, topics: list[str]):
 def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | None = None):
     exp_dir = Path(cfg.output_dir)
     processes = []
-    all_job_kinds = ["actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm", "finetune"]
+    all_job_kinds = ["actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm", "finetune", "genrm_llm"]
     # for rank in range(world_map.world_size):
     logger.info(f"Jobs on rank {world_map.my_rank}: {world_map.get_jobs_on_rank(world_map.my_rank)}")
     if job_kind_filter is None:
@@ -476,7 +524,7 @@ def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | No
         if job.kind == "actor":
             processes.extend(run_actor(world_map, job.replica_idx, exp_dir))
         elif job.kind == "environment":
-            processes.extend(run_environment(cfg, job))
+            processes.extend(run_environment(cfg, job, world_map))
         elif job.kind == "actor_llm":
             if cfg.debug.use_existing_llms:
                 continue
@@ -487,6 +535,10 @@ def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | No
             if cfg.debug.use_existing_llms:
                 continue            
             processes.extend(run_ref_llm(cfg, job.replica_idx, job.local_idx, job.gpus, exp_dir))
+        elif job.kind == "genrm_llm":
+            if cfg.debug.use_existing_llms:
+                continue
+            processes.extend(run_genrm_llm(cfg, job.replica_idx, job.local_idx, job.gpus, exp_dir))
         elif job.kind == "finetune":
             processes.extend(run_finetune(cfg, world_map, job.gpus, exp_dir))
         else:
@@ -586,7 +638,7 @@ def main(cfg: DictConfig):
     if cfg.debug.mode == "finetune":
         processes.extend(launch_jobs(cfg, world_map, ["finetune"]))
     elif cfg.debug.mode == "actor":
-        processes.extend(launch_jobs(cfg, world_map, ["actor", "environment", "actor_llm"]))
+        processes.extend(launch_jobs(cfg, world_map, ["actor", "environment", "actor_llm", "genrm_llm"]))
     elif cfg.debug.mode == "preprocessor":
         processes.extend(launch_jobs(cfg, world_map, ["preprocessor", "preprocessor_llm"]))
     elif cfg.debug.mode == "actor+preprocessor":
