@@ -2,12 +2,12 @@ import json
 import logging
 import random
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 import datasets
 import hydra
 from datasets import load_dataset
-from omegaconf import DictConfig, ListConfig, OmegaConf
+from omegaconf import DictConfig
 import pandas as pd
 
 """
@@ -132,6 +132,23 @@ def process_pope_mix(dataset, dataset_name):
         yield {"dataset": dataset_name + f"_{item['level'].replace('-', '_')}", "task": task, "answer": answer}
 
 
+def process_pope_hard_with_guide(dataset, dataset_name):
+    for item in dataset:
+        task = item['prompt'][0]['content']
+        answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
+        if ("easy" not in item['level']):
+            yield {"dataset": dataset_name + f"_{item['level'].replace('-', '_')}", "task": task, "answer": answer}
+
+
+
+def process_pope_hard_no_guide(dataset, dataset_name):
+    for item in dataset:
+        task = item['prompt'][0]['content']
+        answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
+        if ("easy" not in item['level']) and ("with-guidance" not in item['level']):
+            yield {"dataset": dataset_name + f"_{item['level'].replace('-', '_')}", "task": task, "answer": answer}
+
+
 def process_gpqa(dataset, dataset_name):
     for item in dataset:
         yield {
@@ -217,53 +234,13 @@ def add_ids(dataset: list[dict]):
     return dataset
 
 
-def load_datasets(
-    dataset_names: List[str | Dict[str, Any]] | Dict[str, Any] | str | None, seed: int | None = None
-) -> List[Tuple[str, Dict]]:
+def load_datasets(dataset_names: List[str] | str | None, seed: int | None = None) -> List[Tuple[str, Dict]]:
     if dataset_names is None:
         return []
 
-    if isinstance(dataset_names, (DictConfig, ListConfig)):
-        dataset_names = OmegaConf.to_container(dataset_names, resolve=True)
-
-    if isinstance(dataset_names, dict):
-        dataset_names = [dataset_names]
     if isinstance(dataset_names, str):
         dataset_names = [dataset_names]
-    elif not isinstance(dataset_names, list):
-        dataset_names = list(dataset_names)
-
     datasets = []
-
-    for dataset_spec in dataset_names:
-        if isinstance(dataset_spec, dict):
-            hub_id = dataset_spec.get("hub_id")
-            if not hub_id:
-                raise ValueError("Hub dataset specs must include a 'hub_id' field.")
-            config = dataset_spec.get("config")
-            split = dataset_spec.get("split", "train")
-            trust_remote_code = dataset_spec.get("trust_remote_code", True)
-            load_args: Tuple[Any, ...] = (hub_id,)
-            if config is not None:
-                load_args += (config,)
-            dataset = load_dataset(*load_args, split=split, trust_remote_code=trust_remote_code)
-            samples = [dict(row) for row in dataset]
-            for sample in samples:
-                sample.setdefault("dataset", hub_id)
-            logger.info(
-                f"Loading hub dataset {hub_id}"
-                + (f"/{config}" if config else "")
-                + f" split={split}: {len(samples)} samples"
-            )
-            datasets += add_ids(samples)
-        elif isinstance(dataset_spec, str) and "/" in dataset_spec:
-            dataset = load_dataset(dataset_spec, split="train", trust_remote_code=True)
-            samples = [dict(row) for row in dataset]
-            for sample in samples:
-                sample.setdefault("dataset", dataset_spec)
-            logger.info(f"Loading hub dataset {dataset_spec} split=train: {len(samples)} samples")
-            datasets += add_ids(samples)
-
     if "eurus_train" in dataset_names:
         dataset = load_dataset("PRIME-RL/Eurus-2-RL-Data", split="train", trust_remote_code=True)
         samples = [s for s in process_eurus(dataset) if s is not None]
@@ -432,6 +409,26 @@ def load_datasets(
         samples = [s for s in process_pope_mix(ds['train'], "pope_mix") if s is not None]
         logger.info(f"Loading Pope Mix dataset: {len(samples)} samples")
         datasets += add_ids(samples)
+
+    if "pope_hard_no_guide" in dataset_names:
+        ds = load_dataset("CohenQu/POPE-MIX-first_guide-no_guide-0.0-0.64-1024-verl")
+        samples = [s for s in process_pope_hard_no_guide(ds['train'], "pope") if s is not None]
+        logger.info(f"Loading pope_hard_no_guide dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "pope_hard_with_guide" in dataset_names:
+        ds = load_dataset("CohenQu/POPE-MIX-first_guide-no_guide-0.0-0.64-1024-verl")
+        samples = [s for s in process_pope_hard_with_guide(ds['train'], "pope") if s is not None]
+        logger.info(f"Loading pope_hard_with_guide dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+
+    if "pope_hard_no_guide_test" in dataset_names:
+        ds = load_dataset("CohenQu/POPE-MIX-first_guide-no_guide-0.0-0.64-1024-verl")
+        samples = [s for s in process_pope_hard_no_guide(ds['train'], "pope_test") if s is not None]
+        samples = samples * 2
+        logger.info(f"Loading pope_hard_no_guide_test dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
     
     for custom_dataset_name in [
         "POPE-MIX-first_guide-no_guide-0.0-0.125-1024-verl-train", 
@@ -481,8 +478,6 @@ def load_datasets(
         datasets += add_ids(samples)
 
     for dataset_name in dataset_names:
-        if not isinstance(dataset_name, str):
-            continue
         test_matched = re.match(r"multiplication_(\d+)_by_(\d+)_(\d+)_test", dataset_name)
         train_matched = re.match(r"multiplication(_upto)?_(\d+)_by_(\d+)_(\d+)_train", dataset_name)
         if test_matched:

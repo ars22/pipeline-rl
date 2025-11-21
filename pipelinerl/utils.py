@@ -210,22 +210,30 @@ def clean_up(target_path: Path, state: Dict, state_path: str | Path) -> None:
 
 
 def always_or_never_success_stats(success_stats: Mapping[str, Mapping[str, list[int]]]) -> dict[str, float]:
-    always_success = {}
-    never_success = {}
-    sometimes_success = {}
-    return_stats = {}
+
+    return_stats = {}    
+    overall_always_success = {}
+    overall_never_success = {}
+    overall_sometimes_success = {}
+
     for dataset in success_stats:
+        always_success = {}
+        never_success = {}
+        sometimes_success = {}
         for problem in success_stats[dataset]:
             always_success[problem] = all(success_stats[dataset][problem])
             never_success[problem] = not any(success_stats[dataset][problem])
             sometimes_success[problem] = not always_success[problem] and not never_success[problem]
+            overall_always_success[problem] = always_success[problem]
+            overall_never_success[problem] = never_success[problem]
+            overall_sometimes_success[problem] = sometimes_success[problem]
         return_stats[f"{dataset}_always_success"] = float(np.mean(list(always_success.values())))
         return_stats[f"{dataset}_never_success"] = float(np.mean(list(never_success.values())))
         return_stats[f"{dataset}_sometimes_success"] = float(np.mean(list(sometimes_success.values())))
     return_stats["overall"] = {
-        "always_success": float(np.mean(list(always_success.values()))),
-        "never_success": float(np.mean(list(never_success.values()))),
-        "sometimes_success": float(np.mean(list(sometimes_success.values()))),
+        "always_success": float(np.mean(list(overall_always_success.values()))),
+        "never_success": float(np.mean(list(overall_never_success.values()))),
+        "sometimes_success": float(np.mean(list(overall_sometimes_success.values()))),
     }
     return return_stats
 
