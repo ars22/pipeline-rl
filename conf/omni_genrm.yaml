@@ -11,8 +11,10 @@ world:
   env_replicas: 1
 
 finetune:
+  attempts: 16
   train_batch_size: 2
   valid_batch_size: 2
+  seq_parallel: 2
   gradient_accumulation_passes: 128
   rl:
     kl_coef: 0.001
