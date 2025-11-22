@@ -59,33 +59,15 @@ async def generate_math_rollout(
     # choose the job randomly
     env_job = random.choice(env_jobs)
     assert env_job.port is not None
-    use_genrm = cfg.world.get("genrm_fraction", 0) > 0
-    prompt_template_path = cfg.environment.get("prompt_template_path", "")
-    
-    if use_genrm:
-        answer_status, genrm_score = await verify_answer_rpc(
-            cfg=cfg,
-            session=session,
-            host=env_job.hostname,
-            port=env_job.port,
-            prediction=llm_call.output.content,
-            gold=problem["answer"],
-            strict=True,
-            prompt=problem["task"],
-            solution=problem["solution"],
-            prompt_template_path=prompt_template_path,
-            return_score=True,
-        )
-    else:
-        genrm_score = None
-        answer_status = await verify_answer_rpc(
-            session=session,
-            host=env_job.hostname,
-            port=env_job.port,
-            prediction=llm_call.output.content,
-            gold=problem["answer"],
-            strict=True,
-        )
+            
+    answer_status = await verify_answer_rpc(
+        session=session,
+        host=env_job.hostname,
+        port=env_job.port,
+        prediction=llm_call.output.content,
+        gold=problem["answer"],
+        strict=True,
+    )
 
     trace = make_training_text(llm, llm_call)
     # Determine reward based on answer status and finished state
@@ -108,10 +90,6 @@ async def generate_math_rollout(
             reward = rewards.correct_answer_finished
         case _:
             raise ValueError(f"Invalid answer_status/finished combination: {answer_status}/{trace.finished}")
-
-    # if genrm score is available, use it as the primary reward    
-    if genrm_score is not None:
-        reward = genrm_score
 
     # Apply discount factor based on output length
     reward *= discount_factor**llm_call.output_length_tokens

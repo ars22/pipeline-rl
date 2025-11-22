@@ -4,21 +4,34 @@ defaults:
 
 world:
   replicas: 1
-  actor_fraction: 1
-  preprocessor_fraction: 0
+  actor_fraction: 4
+  preprocessor_fraction: 1
   genrm_fraction: 1
-  finetune_fraction: 0
+  finetune_fraction: 2
+  env_replicas: 1
 
-  environment_fraction: 1
-
-
+finetune:
+  train_batch_size: 2
+  valid_batch_size: 2
+  gradient_accumulation_passes: 128
+  rl:
+    kl_coef: 0.001
 actor:
-  rollout_policy: pipelinerl.domains.math.generate_math_rollout
+  genrm_norm_method: smooth
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout_genrm
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
     {task}
+vllm_config:
+  vllm_kwargs:
+    max-num-seq: 256
+    num-scheduler-steps: 1
+    max-num-batched-tokens: 32768
+    gpu-memory-utilization: 0.85
 llm:
   parameters:
+    max_tokens: 16384
+    temperature: 0.8 
     chat_template_kwargs:
       enable_thinking: false
 test_llm:
@@ -30,6 +43,8 @@ environment:
   prompt_template_path: pipelinerl.prompt_templates.math_likelihood_judge
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - omni-math-l4_6
+  - omni-cohen
 test_dataset_names:
   - aime_2025
+  - aime_2024
+  - omni-cohen

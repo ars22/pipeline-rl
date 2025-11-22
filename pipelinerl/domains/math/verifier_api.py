@@ -159,6 +159,37 @@ def verify_countdown(prediction: str, gold: str) -> str:
 
 
 async def verify_answer_rpc(
+    session: aiohttp.ClientSession,
+    host: str,
+    port: int,
+    prediction: str,
+    gold: str,
+    strict: bool = True,
+    max_prediction_length: int = 1000,
+):
+    """
+    Verify the answer using the verifier API.
+    """
+    json = {
+        "prediction": prediction,
+        "gold": gold,
+        "strict": strict,
+        "max_prediction_length": max_prediction_length,
+    }
+    async with session.post(
+        f"http://{host}:{port}/verify_answer",
+        json=json,
+    ) as response:
+        if response.status == 200:
+            data = await response.json()
+            return data["answer_status"]
+        else:
+            logger.error(f"Error verifying answer: {response.status}")
+            logger.error(f"Response: {await response.text()}")
+            raise ValueError("Error verifying answer")
+
+
+async def verify_answer_rpc_genrm(
     cfg: DictConfig,
     session: aiohttp.ClientSession,
     host: str,
@@ -202,7 +233,7 @@ async def verify_answer_rpc(
         if response.status == 200:
             data = await response.json()
             if return_score:
-                return data["answer_status"], data.get("genrm_score")
+                return data["answer_status"], data.get("genrm_score", None)
             else:
                 return data["answer_status"]
         else:
@@ -237,13 +268,12 @@ async def call_genrm(session: aiohttp.ClientSession,
         ) as response:
             if response.status == 200:
                 data = await response.json()
-                text = data["choices"][0]["message"]["content"]
-                breakpoint()
+                text = data["choices"][0]["message"]["content"]                
                 try:
-                    if "Score:" in response_str:
-                        score_str = response_str.split("Score:")[1].lstrip().split("\n")[0]
+                    if "Score:" in text:
+                        score_str = text.split("Score:")[1].lstrip().split("\n")[0]
                     else:
-                        score_str = response_str.split("Score")[1].lstrip().split("\n")[0]
+                        score_str = text.split("Score")[1].lstrip().split("\n")[0]
                     score_str = score_str.replace("**", "").replace("*", "")[0]
                     score = int(score_str[0])
                     if score not in [1, 2, 3, 4, 5]:
@@ -343,8 +373,7 @@ class GenRMMathEnvironment:
                     answer_status = await loop.run_in_executor(
                         process_pool, partial(verify_answer, prediction, gold, strict, max_prediction_length)
                     )
-                
-                genrm_score = None
+
                 assert genrm_urls, "genrm_urls is not set"                
                 genrm_url = random.choice(genrm_urls)
                 async with aiohttp.ClientSession() as session:
@@ -359,5 +388,3 @@ class GenRMMathEnvironment:
                 return JSONResponse(content={"status": "ok"})
 
             uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
-
-

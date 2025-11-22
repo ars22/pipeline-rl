@@ -35,6 +35,7 @@ from pipelinerl.streams import (
 from .utils import (
     always_or_never_success_stats,
     calculate_stats,
+    calculate_stats_genrm,
     setup_logging,
     wait_for_environments,
     wait_for_inference_servers,
@@ -150,23 +151,25 @@ async def schedule_rollouts(
             model_version = trainer_state.propagated_weight_version
             assert model_version is not None
             rollout_result = await rollout_policy(cfg, llm, problem, session)
-            rollout_result.model_version = model_version
-            # Make a group id that will be different from groups made by another rollout maker
-            full_group_id = f"{scheduler_name}_{group_id}"
-            rollout_result.group_id = full_group_id
-            for step_index, sample in enumerate(rollout_result.training_texts):
-                # Downstream in the pipeline we'll need these fields in every sample
-                sample.metadata["model_version"] = model_version
-                sample.metadata["rollout_index"] = rollout_index
-                sample.metadata["step_index"] = step_index
-                sample.group_id = full_group_id
-            group_rollouts[group_id].append(rollout_result)
-            if len(group_rollouts[group_id]) == attempts:
-                # This is blocking call, but there's just one other thread reading from this queue.
-                random.shuffle(group_rollouts[group_id])
-                result_queue.put(group_rollouts[group_id])
-                del group_rollouts[group_id]
-            finished_rollouts += 1
+            # skip this rollout if the genrm score is not available
+            if rollout_result:
+                rollout_result.model_version = model_version
+                # Make a group id that will be different from groups made by another rollout maker
+                full_group_id = f"{scheduler_name}_{group_id}"
+                rollout_result.group_id = full_group_id
+                for step_index, sample in enumerate(rollout_result.training_texts):
+                    # Downstream in the pipeline we'll need these fields in every sample
+                    sample.metadata["model_version"] = model_version
+                    sample.metadata["rollout_index"] = rollout_index
+                    sample.metadata["step_index"] = step_index
+                    sample.group_id = full_group_id
+                group_rollouts[group_id].append(rollout_result)
+                if len(group_rollouts[group_id]) == attempts:
+                    # This is blocking call, but there's just one other thread reading from this queue.
+                    random.shuffle(group_rollouts[group_id])
+                    result_queue.put(group_rollouts[group_id])
+                    del group_rollouts[group_id]
+                finished_rollouts += 1
         except Exception as e:
             # Cancel all tasks except the current one
             logger.error("Exception in rollout, stop all other rollout tasks", exc_info=e)
@@ -264,18 +267,20 @@ async def run_sequential_rollouts(
             group_rollouts = []
             for i in range(attempts):
                 try:
-                    rollout_result = await rollout_policy(cfg, llm, problem, session)
-                    rollout_result.model_version = model_version
-                    full_group_id = f"{scheduler_name}_debug_{i}"
-                    rollout_result.group_id = full_group_id
-                    
-                    for step_index, sample in enumerate(rollout_result.training_texts):
-                        sample.metadata["model_version"] = model_version
-                        sample.metadata["rollout_index"] = i
-                        sample.metadata["step_index"] = step_index
-                        sample.group_id = full_group_id
-                    
-                    group_rollouts.append(rollout_result)
+                    rollout_result = await rollout_policy(cfg, llm, problem, session)                    
+                    # skip this rollout if the genrm score is not available
+                    if rollout_result:
+                        rollout_result.model_version = model_version
+                        full_group_id = f"{scheduler_name}_debug_{i}"
+                        rollout_result.group_id = full_group_id
+                        
+                        for step_index, sample in enumerate(rollout_result.training_texts):
+                            sample.metadata["model_version"] = model_version
+                            sample.metadata["rollout_index"] = i
+                            sample.metadata["step_index"] = step_index
+                            sample.group_id = full_group_id
+                        
+                        group_rollouts.append(rollout_result)
                 except Exception as e:
                     logger.error(f"Exception in sequential rollout: {e}")
                     # In debug mode, we might want to just raise it to hit the debugger
@@ -419,7 +424,10 @@ class ActorLoop:
             domain_agnostic_metrics = self.compute_domain_agnostic_metrics(result) 
             all_metrics = result.metrics.model_dump() | domain_agnostic_metrics
             for k, v in all_metrics.items():
-                if isinstance(v, list):
+                if v is None:
+                    # skip optional metrics that are None - GenRM scores for test data
+                    continue
+                elif isinstance(v, list):
                     self.stats[k][dataset_name][group_id] += v
                 elif isinstance(v, float) | isinstance(v, bool) | isinstance(v, int):
                     self.stats[k][dataset_name][group_id].append(v)
@@ -590,6 +598,9 @@ class ActorLoop:
 
         stats = defaultdict(float)
         for metric_name, dict_of_stats_per_metric in self.stats.items():
+            if metric_name in ["genrm_original_score", "genrm_normalized_score"]:
+                for agg, group_stats in calculate_stats_genrm(dict_of_stats_per_metric).items():
+                    stats[f"{split_name}{metric_name}_{agg}"] = group_stats
             for agg, group_stats in calculate_stats(dict_of_stats_per_metric).items():
                 stats[f"{split_name}{metric_name}_{agg}"] = group_stats
 
@@ -611,6 +622,10 @@ class ActorLoop:
                 for k, v in calculate_stats(self.model_versions_list).items()
             }
         )
+        stats |= {
+            f"{split_name}outcome_reward_" + k: v
+            for k, v in calculate_stats_genrm(self.stats["outcome_reward"]).items()
+        }
 
         stats |= loop_stats
         for k, v in self.sliding_stats.items():

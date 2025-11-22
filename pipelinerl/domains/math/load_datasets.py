@@ -334,6 +334,12 @@ def load_datasets(
         logger.info(f"Loading violetxi/omni-math-difficulty-4_6 dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
+    if "omni-cohen" in dataset_names:
+        dataset = load_dataset("violetxi/omni-filtered-by-cohen", split="test", trust_remote_code=True)
+        samples = [s for s in process_omni_math(dataset, "omni-cohen") if s is not None]
+        logger.info(f"Loading violetxi/omni-filtered-by-cohen dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
     if "math_test" in dataset_names:
         # math_dataset = load_math("test")
         dataset = load_dataset("hendrycks/competition_math", split="test", trust_remote_code=True)

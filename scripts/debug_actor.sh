@@ -1,1 +1,10 @@
-CUDA_VISIBLE_DEVICES=0 python -m pipelinerl.launch --config-name=omni_genrm output_dir=results/prl-pope-16k-4a4f-grpo-n4-d debug.mode=actor world.actor_fraction=1 world.finetune_fraction=0
+CUDA_VISIBLE_DEVICES=0,1 python -m pipelinerl.launch \
+--config-name=omni_genrm \
+output_dir=results/prl-pope-16k-4a4f-grpo-n4-d \
+debug.mode=actor \
+finetune.rl.kl_coef=0 \
+world.actor_fraction=1 \
+world.preprocessor_fraction=0 \
+world.genrm_fraction=1 \
+world.env_replicas=1 \
+world.finetune_fraction=0

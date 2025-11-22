@@ -259,6 +259,23 @@ def calculate_stats(stats: List | Dict[Any, Any]) -> Dict[str, float]:
 
     return aggregated_stats
 
+def calculate_stats_genrm(stats: List | Dict[Any, Any]) -> Dict[str, float]:
+    # calculate genrm specific stats
+    if isinstance(stats, dict):
+        # stats is a dict of list
+        stats = dict_to_list(stats)
+
+    if not isinstance(stats, list):
+        raise TypeError(f"Expected stats to be a list, got {type(stats)}")
+
+    unique_scores = np.unique(stats)
+    # for each score, calculate count
+    aggregated_stats = {
+        f"{score}": stats.count(score)
+        for score in unique_scores        
+    }
+    return aggregated_stats
+
 
 def get_tokens_from_hf_tokenizer(tokenizer: PreTrainedTokenizer | None, prompt: Prompt, output: LLMOutput) -> list:
     if not tokenizer:

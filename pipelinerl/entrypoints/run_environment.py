@@ -1,7 +1,7 @@
 import hydra
 from omegaconf import DictConfig
 
-from pipelinerl.utils import better_crashing
+from pipelinerl.utils import better_crashing, wait_for_inference_servers
 
 
 @hydra.main(config_path="../../conf", config_name="base", version_base="1.3.2")
@@ -11,6 +11,7 @@ def hydra_entrypoint(cfg: DictConfig):
         genrm_urls = genrm_urls_str.split("+") if genrm_urls_str else []
         if genrm_urls:
             print("Using GenRMMathEnvironment")
+            wait_for_inference_servers(genrm_urls)
             environment = hydra.utils.instantiate(cfg.environment)
             this_job,  = [job for job in cfg.jobs if job["idx"] == cfg.me.job_idx]
             port = this_job["port"]
