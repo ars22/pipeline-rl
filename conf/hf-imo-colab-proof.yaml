@@ -1,0 +1,29 @@
+defaults:
+    - base
+    - _self_
+
+finetune:
+  save_checkpoint_steps: 5
+  push_to_hub: true
+  hub_model_id: hf-imo-colab/pipeline-rl-demo
+  hub_model_revision: v00.00
+  hub_ignore_patterns:
+    - "*.pt"
+    - "*.pth"
+  attempts: 4
+
+actor:
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+environment:
+  _target_: pipelinerl.domains.math.MathProofEnvironment
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - hub_id: hf-imo-colab/olympiads-proof-schema
+    split: train
+test_dataset_names:
+  - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
+    split: IMO2025
+model_path: Qwen/Qwen3-4B-Instruct-2507
