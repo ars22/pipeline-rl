@@ -176,7 +176,10 @@ class WorldMap:
 
         # TODO: support nodes with less than 8 GPUs available
         total_gpus = self.world_size * self.node_size
-        desired_actor_gpu_share = max(int(total_gpus * actor_fraction), self.gpus_per_llm)
+        # set actor fraction to 0 if in finetune debugging mode
+        desired_actor_gpu_share = (
+            max(int(total_gpus * actor_fraction), self.gpus_per_llm) if cfg.debug.mode != "finetune" else 0
+        )
         desired_preprocessor_gpu_share = (
             max(int(total_gpus * preprocessor_fraction), self.gpus_per_llm) if cfg.world.preprocessor_fraction else 0
         )

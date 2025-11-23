@@ -308,7 +308,7 @@ class FileStreamReader(StreamReader):
         self._file_path = stream_file(_file_dir, 0)
         # wait until the file is created with a delay of 3.0 seconds
         # and a logger warning
-        while not os.path.exists(self._file_path):
+        while not os.path.exists(self._file_path):            
             logger.warning(f"Waiting for {self.stream} to be created")
             time.sleep(_RECHECK_DELAY)
         self._file = open(self._file_path, "r")

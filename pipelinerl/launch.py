@@ -504,7 +504,7 @@ def debug_link_streams(cfg: DictConfig, topics: list[str]):
         target_topic_dir = stream_dir / topic
         if not os.path.exists(source_topic_dir):
             raise ValueError(f"Source topic {source_topic_dir} does not exist")
-        os.symlink(source_topic_dir, target_topic_dir)
+        os.symlink(source_topic_dir.resolve(), target_topic_dir)
         logger.info(f"Linked {source_topic_dir} to {target_topic_dir}")
 
 

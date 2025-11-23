@@ -593,6 +593,14 @@ def rl_finetuning_worker(
         before_getting_next_batch = time.time()
 
         batch = next(data_generator)
+
+        #### debug ####
+        input_ids = batch.input_ids[0]
+        attention_mask = batch.attention_mask[0]
+        tokenizer.decode(torch.masked_select(input_ids, attention_mask.bool()))
+        label_mask = batch.labels[0] != -100
+        tokenizer.decode(torch.masked_select(input_ids, label_mask))
+        #### debug ####
         is_sentinel_batch = batch.sentinel
         if local_samples[0] == target_samples_per_lead:
             assert is_sentinel_batch, "We should get a sentinel batch"
