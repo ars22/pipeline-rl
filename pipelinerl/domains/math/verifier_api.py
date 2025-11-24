@@ -327,18 +327,28 @@ async def verify_proof(
         return await loop.run_in_executor(
             None,
             lambda: client.responses.create(
-                model="openai/gpt-oss-20b",
+                model="openai/gpt-oss-120b",
                 input=prompt_text,
-                reasoning={"effort": "medium"},
+                reasoning={"effort": "high"},
                 temperature=0.0,
-                max_output_tokens=8192,
+                max_output_tokens=16384,
             ),
+            # lambda: client.chat.completions.create(
+            #     model="openai/gpt-oss-120b",
+            #     messages=[
+            #         {"role": "user", "content": prompt_text}
+            #     ],
+            #     temperature=0.0,
+            #     max_tokens=16384,
+            # ),
         )
 
     for attempt in range(1, max_retries + 1):
         try:
             response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
             output_text = getattr(response, "output_text", None) or ""
+            print(output_text)
+            # output_text = response.choices[0].delta.content
             match = re.search(r"<score>(\d+)</score>", output_text)
             if match:
                 return int(match.group(1))
@@ -405,3 +415,17 @@ class MathProofEnvironment:
             return JSONResponse(content={"status": "ok"})
 
         uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
+
+def main():
+    dataset = load_dataset("hf-imo-colab/olympiads-proof-schema", split="train")
+    data = dataset[1]
+    problem = data["problem"]
+    ref_solution = data["solution"]
+    schema = data["schema_0"]
+    prediction = data["solution"]
+    for i in range(10):
+        score = asyncio.run(verify_proof(problem, ref_solution, schema, prediction))
+        print(f"Score: {score}")
+
+if __name__ == "__main__":
+    main()
