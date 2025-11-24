@@ -347,7 +347,6 @@ async def verify_proof(
         try:
             response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
             output_text = getattr(response, "output_text", None) or ""
-            print(output_text)
             # output_text = response.choices[0].delta.content
             match = re.search(r"<score>(\d+)</score>", output_text)
             if match:
