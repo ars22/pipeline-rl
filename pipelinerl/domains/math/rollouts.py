@@ -10,7 +10,7 @@ from tapeagents.core import Prompt
 from tapeagents.llms.trainable import TrainableLLM
 
 from pipelinerl.async_llm import llm_async_generate, make_training_text
-from .verifier_api import verify_answer_rpc
+from .verifier_api import verify_answer_rpc, verify_proof
 
 class Metrics(BaseMetrics):
     penalty: float
@@ -54,61 +54,103 @@ async def generate_math_rollout(
     rewards = RewardTable(**dict(cfg.rewards))
     discount_factor = cfg.actor.discount_factor
 
-    # math_verify is a fast environment, no support for environment replicas for now
-    env_jobs = [Job(**job) for job in cfg.jobs if job["kind"] == "environment"]
-    # choose the job randomly
-    env_job = random.choice(env_jobs)
-    assert env_job.port is not None
-    answer_status = await verify_answer_rpc(
-        session=session,
-        host=env_job.hostname,
-        port=env_job.port,
-        prediction=llm_call.output.content,
-        gold=problem["answer"],
-        strict=True,
-    )
-
     trace = make_training_text(llm, llm_call)
-    # Determine reward based on answer status and finished state
-    match (answer_status, trace.finished):
-        case ("wrong", False):
-            reward = rewards.wrong_answer_not_finished
-        case ("wrong", True):
-            reward = rewards.wrong_answer_finished
-        case ("no_answer", False):
-            reward = rewards.no_answer_not_finished
-        case ("no_answer", True):
-            reward = rewards.no_answer_finished
-        case ("unparsable", False):
-            reward = rewards.unparsable_not_finished
-        case ("unparsable", True):
-            reward = rewards.unparsable_finished
-        case ("correct", False):
-            reward = rewards.correct_answer_not_finished
-        case ("correct", True):
-            reward = rewards.correct_answer_finished
-        case _:
-            raise ValueError(f"Invalid answer_status/finished combination: {answer_status}/{trace.finished}")
 
-    # Apply discount factor based on output length
-    reward *= discount_factor**llm_call.output_length_tokens
-    overlong_penalty = 0
-    if rewards.buffer_tokens > 0:
-        overlong_penalty = length_penalty(llm.parameters['max_tokens'], llm_call.output_length_tokens, rewards.buffer_tokens)
-    reward += overlong_penalty
-    trace.reward = reward
+    # ===========================================================
+    # PROOF-BASED SCORING BRANCH
+    # ===========================================================
+    if "schema" in problem:
+        score = await verify_proof(
+            problem=problem["task"],
+            ref_solution=problem["answer"],
+            schema=problem["schema"],
+            generation=llm_call.output.content,
+        )
+        # normalize score to [0, 1]
+        reward = (score / 7.0) * (discount_factor ** llm_call.output_length_tokens)
 
-    metrics = Metrics(
-        reward=reward,
-        success=answer_status == "correct",
-        no_error=answer_status != "unparsable",
-        no_answer=answer_status == "no_answer",
-        penalty=overlong_penalty,
-    )
+        # Overlong penalty if configured
+        overlong_penalty = 0
+        if rewards.buffer_tokens > 0:
+            overlong_penalty = length_penalty(
+                llm.parameters["max_tokens"],
+                llm_call.output_length_tokens,
+                rewards.buffer_tokens,
+            )
+        reward += overlong_penalty
+        trace.reward = reward
 
+        metrics = Metrics(
+            reward=reward,
+            success=score == 7,          # treat 6–7 as success
+            no_error=True,               # we don't track parse errors here
+            no_answer=False,             # proof always produces output
+            penalty=overlong_penalty,
+        )
+
+    # ===========================================================
+    # STANDARD VERIFIABLE-MATH BRANCH
+    # ===========================================================
+    else:
+        env_jobs = [Job(**job) for job in cfg.jobs if job["kind"] == "environment"]
+        env_job = random.choice(env_jobs)
+        assert env_job.port is not None
+
+        answer_status = await verify_answer_rpc(
+            session=session,
+            host=env_job.hostname,
+            port=env_job.port,
+            prediction=llm_call.output.content,
+            gold=problem["answer"],
+            strict=True,
+        )
+
+        match (answer_status, trace.finished):
+            case ("wrong", False):
+                reward = rewards.wrong_answer_not_finished
+            case ("wrong", True):
+                reward = rewards.wrong_answer_finished
+            case ("no_answer", False):
+                reward = rewards.no_answer_not_finished
+            case ("no_answer", True):
+                reward = rewards.no_answer_finished
+            case ("unparsable", False):
+                reward = rewards.unparsable_not_finished
+            case ("unparsable", True):
+                reward = rewards.unparsable_finished
+            case ("correct", False):
+                reward = rewards.correct_answer_not_finished
+            case ("correct", True):
+                reward = rewards.correct_answer_finished
+            case _:
+                raise ValueError(f"Invalid answer_status/finished combination: {answer_status}/{trace.finished}")
+
+        reward *= discount_factor ** llm_call.output_length_tokens
+        overlong_penalty = 0
+        if rewards.buffer_tokens > 0:
+            overlong_penalty = length_penalty(
+                llm.parameters["max_tokens"],
+                llm_call.output_length_tokens,
+                rewards.buffer_tokens,
+            )
+        reward += overlong_penalty
+        trace.reward = reward
+
+        metrics = Metrics(
+            reward=reward,
+            success=answer_status == "correct",
+            no_error=answer_status != "unparsable",
+            no_answer=answer_status == "no_answer",
+            penalty=overlong_penalty,
+        )
+
+    # ===========================================================
+    # COMMON RETURN BLOCK
+    # ===========================================================
     return RolloutResult(
         training_texts=[trace],
         metrics=metrics,
-        latency=latency, 
+        latency=latency,
         dataset_name=problem.get("dataset"),
     )
+

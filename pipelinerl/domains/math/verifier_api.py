@@ -218,3 +218,213 @@ class MathEnvironment:
             uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
 
 
+import re
+import asyncio
+import os
+import openai
+from datasets import load_dataset
+
+PROOF_EVALUATOR_PROMPT = """
+You are an **expert mathematics proof grader**. Your role is to evaluate the correctness,
+rigor, and completeness of a model-generated proof for a given problem using a provided
+**reference solution** and **grading schema**.
+
+---
+
+### INPUT COMPONENTS
+You will receive four sections:
+1. **Problem Statement** — the math problem to be solved.
+2. **Reference Solution** — a correct, authoritative solution.
+3. **Marking Scheme (Schema)** — a JSON list of checkpoints (`title`, `desc`, `points`).
+4. **Proof Solution** — the model-generated proof.
+
+---
+
+### YOUR TASK
+Analyze the **Proof Solution** against the **Problem**, **Reference Solution**, and **Schema**,
+determine correspondence with rubric checkpoints, and assign an integer score **0–7**.
+
+---
+
+### OUTPUT FORMAT
+Respond *only* in XML:
+
+<assessment>DETAILED_EVALUATION_TEXT</assessment>
+<errors>
+  1. description of first issue,
+  2. description of second issue,
+  ...
+</errors>
+<score>INTEGER</score>
+
+---
+
+### INPUT DATA
+
+**Problem Statement**
+{problem}
+
+**Reference Solution**
+{human_solution}
+
+**Marking Scheme**
+{marking_scheme}
+
+**Proof Solution**
+{solution}
+"""
+
+
+_openai_client = None
+
+def get_openai_client():
+    """
+    Lazily initialize and cache a OpenAI API client using OpenAI SDK interface.
+    Requires OPENAI_API_KEY to be set in environment.
+    """
+    global _openai_client
+    if _openai_client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_BASE_URL")
+        if not api_key or not base_url:
+            raise RuntimeError("Missing OPENAI_API_KEY or OPENAI_BASE_URL environment variable")
+        _openai_client = openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+        )
+    return _openai_client 
+
+# ===========================================================
+# Proof evaluator: calls Groq 120B grader via responses.create
+# ===========================================================
+async def verify_proof(
+    problem: str,
+    ref_solution: str,
+    schema: str,
+    generation: str,
+    client=None,
+    timeout_seconds: int = 60,
+    max_retries: int = 3,
+    retry_backoff: list[int] = [5, 10, 20],
+) -> int:
+    """
+    Evaluate a model-generated proof via Groq GPR model.
+    Returns an integer score [0–7].
+    Retries up to `max_retries` times if Groq API fails or hits rate limits.
+    """
+    client = client or get_openai_client()
+
+    prompt_text = PROOF_EVALUATOR_PROMPT.format(
+        problem=problem,
+        human_solution=ref_solution,
+        marking_scheme=schema,
+        solution=generation,
+    )
+
+    loop = asyncio.get_event_loop()
+
+    async def _call_openai():
+        return await loop.run_in_executor(
+            None,
+            lambda: client.responses.create(
+                model="openai/gpt-oss-120b",
+                input=prompt_text,
+                reasoning={"effort": "high"},
+                temperature=0.0,
+                max_output_tokens=16384,
+            ),
+            # lambda: client.chat.completions.create(
+            #     model="openai/gpt-oss-120b",
+            #     messages=[
+            #         {"role": "user", "content": prompt_text}
+            #     ],
+            #     temperature=0.0,
+            #     max_tokens=16384,
+            # ),
+        )
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
+            output_text = getattr(response, "output_text", None) or ""
+            # output_text = response.choices[0].delta.content
+            match = re.search(r"<score>(\d+)</score>", output_text)
+            if match:
+                return int(match.group(1))
+            else:
+                print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
+                return 0
+
+        except openai.RateLimitError as e:
+            # handle Groq 429 rate limit
+            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            print(f"[verify_proof] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
+            await asyncio.sleep(wait_time)
+
+        except asyncio.TimeoutError:
+            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            print(f"[verify_proof] Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), retrying in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+
+        except Exception as e:
+            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            print(f"[verify_proof] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+
+    print(f"[verify_proof] All {max_retries} attempts failed — returning score=0")
+    return 0
+
+class MathProofEnvironment:
+    def launch(self, port: int):
+        """
+        Serve the verification API using FastAPI.
+        """
+        app = FastAPI()
+        process_pool = ProcessPoolExecutor(max_workers=4)
+
+        @app.post("/verify_answer")
+        async def verify(request: dict):
+            """
+            Evaluate a proof-based problem.
+            Expected JSON:
+            {
+                "problem": "...",
+                "ref_solution": "...",
+                "schema": "...",
+                "generation": "..."
+            }
+            """
+            problem = request["problem"]
+            ref_solution = request["ref_solution"]
+            schema = request["schema"]
+            generation = request["generation"]
+
+            client = get_openai_client()
+            score = await verify_proof(
+                problem=problem,
+                ref_solution=ref_solution,
+                schema=schema,
+                generation=generation,
+                client=client,
+            )
+            return JSONResponse(content={"score": score})
+
+        @app.get("/health")
+        async def health():
+            return JSONResponse(content={"status": "ok"})
+
+        uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
+
+def main():
+    dataset = load_dataset("hf-imo-colab/olympiads-proof-schema", split="train")
+    data = dataset[1]
+    problem = data["problem"]
+    ref_solution = data["solution"]
+    schema = data["schema_0"]
+    prediction = data["solution"]
+    for i in range(10):
+        score = asyncio.run(verify_proof(problem, ref_solution, schema, prediction))
+        print(f"Score: {score}")
+
+if __name__ == "__main__":
+    main()
