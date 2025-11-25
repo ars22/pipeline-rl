@@ -16,7 +16,7 @@ dependencies = [
     "accelerate==1.7.0",
     "Tapeagents[finetune]==0.1.16",
     "flash-attn==2.7.2.post1",
-    "ring-flash-attn==0.1.6",
+    "ring-flash-attn==0.1.8 ",
     "math-verify[antlr4_9_3]==0.7.0",
     "orjson==3.10.16",
     "redis==5.2.1",

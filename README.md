@@ -26,6 +26,12 @@ To test your installation run:
 python -m pipelinerl.launch --config-name=guessing output_dir=tmp/results/test_run/ 
 ```
 
+For serving, test you can run the vLLM server:
+
+```sh
+vllm serve --model openai/gpt-oss-20b
+```
+
 ## Launch Slurm jobs
 
 To launch Slurm jobs, run:

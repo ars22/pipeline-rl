@@ -8,7 +8,8 @@
 # VLLM_VERSION=0.11.0 ./install.sh
 
 # Configuration
-VLLM_VERSION=${VLLM_VERSION:-0.10.1}
+VLLM_VERSION=${VLLM_VERSION:-0.10.1} # Versions greater than 0.10.1 break the FA2 installation - bump at your own risk!
+TRANSFORMERS_VERSION="4.57.3"
 
 set -e  # Exit on any error
 
@@ -37,6 +38,9 @@ uv pip install vllm==${VLLM_VERSION}
 
 echo "📚 Installing PipelineRL dependencies..."
 uv pip install -e .
+
+echo "🤖 Installing Transformers ${TRANSFORMERS_VERSION}..."
+uv pip install transformers==${TRANSFORMERS_VERSION}
 
 echo "🧪 Running installation tests..."
 python -c "
