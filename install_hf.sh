@@ -8,7 +8,7 @@
 # VLLM_VERSION=0.11.0 ./install.sh
 
 # Configuration
-VLLM_VERSION=${VLLM_VERSION:-0.8.5.post1}
+VLLM_VERSION=${VLLM_VERSION:-0.10.1}
 
 set -e  # Exit on any error
 
@@ -30,6 +30,7 @@ uv venv prl --python 3.11
 echo "🔧 Activating virtual environment and upgrading pip..."
 source prl/bin/activate
 uv pip install --upgrade pip
+uv pip install setuptools
 
 echo "⚡ Installing vLLM ${VLLM_VERSION}..."
 uv pip install vllm==${VLLM_VERSION}
@@ -58,6 +59,13 @@ try:
         print(f'⚠️  CUDA not available, created CPU tensor: {tensor}')
 except Exception as e:
     print(f'❌ PyTorch tensor creation failed: {e}')
+    sys.exit(1)
+
+try:
+    from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
+    print('✅ flash-attn available')
+except ImportError as e:
+    print(f'❌ flash-attn import failed: {e}')
     sys.exit(1)
 
 print('🎉 All tests passed!')
