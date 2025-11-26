@@ -20,7 +20,7 @@ from pipelinerl.world import Job, WorldMap
 logger = logging.getLogger(__name__)
 
 # Load .env so downstream processes inherit OPENAI_*, WANDB_*, etc.
-load_dotenv(find_dotenv(), override=False)
+load_dotenv(find_dotenv(), override=True)
 
 # All the launch commands in this file pass the environment to child processes
 os.environ["PYTHONPATH"] = f"/home/toolkit/TapeAgents"
