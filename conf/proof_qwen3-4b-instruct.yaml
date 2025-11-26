@@ -14,9 +14,9 @@ finetune:
   seq_length: 8192 #38912
   seq_parallel: 1
   max_train_steps: 100
-  save_checkpoint_steps: 5
+  save_checkpoint_steps: 50
   push_to_hub: true
-  hub_model_id: hf-imo-colab/pipeline-rl-demo
+  hub_model_id: hf-imo-colab/proof-demo # TODO: update to final model name
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
