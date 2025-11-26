@@ -30,6 +30,7 @@ uv venv prl --python 3.11
 echo "🔧 Activating virtual environment and upgrading pip..."
 source prl/bin/activate
 uv pip install --upgrade pip
+uv pip install setuptools
 
 echo "⚡ Installing vLLM ${VLLM_VERSION}..."
 uv pip install vllm==${VLLM_VERSION}
