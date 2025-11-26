@@ -42,6 +42,11 @@ sbatch --nodes=<num_nodes> run_hf.slurm --config=<config_name> --job-name=<job_n
 scripts/run_imo_proof.sh 0
 ```
 
+```sh
+python -m pipelinerl.launch --config-name=hf-imo-colab-proof-v00 output_dir=tmp/results/test_imo
+```
+
+
 # Hugging Face Hub integration
 
 ## Checkpoint uploads
