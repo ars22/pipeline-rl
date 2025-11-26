@@ -24,7 +24,7 @@ Then copy the `.env.template` to `.env` and add your Hugging Face token and endp
 cp .env.template .env
 ```
 
-This is needed for the proof-based pipeline to access the grader on Hugging Face inference endpoints.
+The endpoint is needed for the proof-based pipeline to access the grader on Hugging Face inference endpoints. Ask Lewis for access if you don't have it.
 
 ## Sample command
 
@@ -47,7 +47,7 @@ sbatch --nodes=<num_nodes> run_hf.slurm --config <config_name> --job-name <job_n
 ### Proof-based pipeline
 
 ```sh
-python -m pipelinerl.launch --config-name=proof_qwen3-4b-instruct output_dir=tmp/results/test_proof
+python -m pipelinerl.launch --config-name=proof_qwen3-4b-instruct output_dir=tmp/results/proof_qwen3-4b-instruct/ 
 ```
 
 

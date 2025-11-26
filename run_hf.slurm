@@ -14,7 +14,7 @@ module load cuda/12.9
 set -x -e
 
 source ~/.bashrc
-source prl-old/bin/activate
+source prl/bin/activate
 START_TIME=$(date +%s)
 echo "START TIME: $(date)"
 

@@ -1,3 +1,6 @@
+# --------------------
+# Config for 2+1 nodes
+# --------------------
 defaults:
     - base
     - _self_
@@ -7,16 +10,16 @@ model_path: Qwen/Qwen3-4B-Instruct-2507
 eval_every_n_versions: 0
 
 finetune:
-  attempts: 2 #16
-  train_batch_size: 4 #64
-  valid_batch_size: 4 #64
-  gradient_accumulation_passes: 8 # min on 8 GPUs
-  seq_length: 8192 #38912
-  seq_parallel: 1
+  attempts: 16
+  train_batch_size: 48
+  valid_batch_size: 48
+  gradient_accumulation_passes: 16 # min on 8 GPUs
+  seq_length: 33792
+  seq_parallel: 2
   max_train_steps: 100
   save_checkpoint_steps: 50
   push_to_hub: true
-  hub_model_id: hf-imo-colab/proof-demo # TODO: update to final model name
+  hub_model_id: hf-imo-colab/Qwen3-4B-Instruct-2507-Proof
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
@@ -24,14 +27,15 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 4096 #32768 
+    max_tokens: 32768 
     temperature: 0.8
+# Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 4096 #32768
-    temperature: 0.8 
-    top_p: 0.95
-    top_k: 50
+    max_tokens: 32768
+    temperature: 0.7 
+    top_p: 0.8
+    top_k: 20
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
@@ -66,9 +70,9 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 4
+  actor_fraction: 16
   preprocessor_fraction: 0
-  finetune_fraction: 4
+  finetune_fraction: 8
   env_replicas: 2
   actor_group_port: 9000
   environment_start_port: 7777
