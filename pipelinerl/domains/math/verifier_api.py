@@ -294,9 +294,9 @@ def get_openai_client():
         )
     return _openai_client 
 
-# ===========================================================
-# Proof evaluator: calls Groq 120B grader via responses.create
-# ===========================================================
+# =================================================
+# Proof evaluator: calls OpenAI-compatible endpoint
+# =================================================
 async def verify_proof(
     problem: str,
     ref_solution: str,
@@ -305,7 +305,7 @@ async def verify_proof(
     client=None,
     timeout_seconds: int = 500,
     max_retries: int = 3,
-    retry_backoff: list[int] = [10, 30, 60],
+    retry_backoff: list[int] = [15, 30, 60, 90, 120],
 ) -> int:
     """
     Evaluate a model-generated proof via Groq GPR model.
