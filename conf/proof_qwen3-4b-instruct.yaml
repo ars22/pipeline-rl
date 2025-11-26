@@ -13,7 +13,7 @@ finetune:
   attempts: 16
   train_batch_size: 48
   valid_batch_size: 48
-  gradient_accumulation_passes: 16 # min on 8 GPUs
+  gradient_accumulation_passes: 16
   seq_length: 33792
   seq_parallel: 2
   max_train_steps: 100
