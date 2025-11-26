@@ -303,9 +303,9 @@ async def verify_proof(
     schema: str,
     generation: str,
     client=None,
-    timeout_seconds: int = 180,
+    timeout_seconds: int = 300,
     max_retries: int = 3,
-    retry_backoff: list[int] = [5, 10, 20],
+    retry_backoff: list[int] = [10, 30, 60],
 ) -> int:
     """
     Evaluate a model-generated proof via Groq GPR model.
