@@ -8,7 +8,8 @@
 # VLLM_VERSION=0.11.0 ./install.sh
 
 # Configuration
-VLLM_VERSION=${VLLM_VERSION:-0.8.5.post1}
+VLLM_VERSION=${VLLM_VERSION:-0.10.1} # Versions greater than 0.10.1 break the FA2 installation - bump at your own risk!
+TRANSFORMERS_VERSION="4.57.3"
 
 set -e  # Exit on any error
 
@@ -38,6 +39,9 @@ uv pip install vllm==${VLLM_VERSION}
 echo "📚 Installing PipelineRL dependencies..."
 uv pip install -e .
 
+echo "🤖 Installing Transformers ${TRANSFORMERS_VERSION}..."
+uv pip install transformers==${TRANSFORMERS_VERSION}
+
 echo "🧪 Running installation tests..."
 python -c "
 import sys
@@ -59,6 +63,13 @@ try:
         print(f'⚠️  CUDA not available, created CPU tensor: {tensor}')
 except Exception as e:
     print(f'❌ PyTorch tensor creation failed: {e}')
+    sys.exit(1)
+
+try:
+    from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
+    print('✅ flash-attn available')
+except ImportError as e:
+    print(f'❌ flash-attn import failed: {e}')
     sys.exit(1)
 
 print('🎉 All tests passed!')
