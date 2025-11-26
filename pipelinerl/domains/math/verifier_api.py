@@ -303,7 +303,7 @@ async def verify_proof(
     schema: str,
     generation: str,
     client=None,
-    timeout_seconds: int = 500,
+    timeout_seconds: int = 900,
     max_retries: int = 3,
     retry_backoff: list[int] = [15, 30, 60, 90, 120],
 ) -> int:
