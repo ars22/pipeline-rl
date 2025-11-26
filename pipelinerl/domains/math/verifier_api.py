@@ -330,17 +330,9 @@ async def verify_proof(
                 model="openai/gpt-oss-120b", # TODO: make this configurable
                 input=prompt_text,
                 reasoning={"effort": "high"},
-                temperature=0.0,
-                max_output_tokens=16384,
+                temperature=1.0,
+                max_output_tokens=32768,
             ),
-            # lambda: client.chat.completions.create(
-            #     model="openai/gpt-oss-120b",
-            #     messages=[
-            #         {"role": "user", "content": prompt_text}
-            #     ],
-            #     temperature=0.0,
-            #     max_tokens=16384,
-            # ),
         )
 
     for attempt in range(1, max_retries + 1):
