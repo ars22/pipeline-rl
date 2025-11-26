@@ -303,7 +303,7 @@ async def verify_proof(
     schema: str,
     generation: str,
     client=None,
-    timeout_seconds: int = 300,
+    timeout_seconds: int = 500,
     max_retries: int = 3,
     retry_backoff: list[int] = [10, 30, 60],
 ) -> int:
@@ -327,7 +327,7 @@ async def verify_proof(
         return await loop.run_in_executor(
             None,
             lambda: client.responses.create(
-                model="openai/gpt-oss-120b",
+                model="openai/gpt-oss-120b", # TODO: make this configurable
                 input=prompt_text,
                 reasoning={"effort": "high"},
                 temperature=0.0,

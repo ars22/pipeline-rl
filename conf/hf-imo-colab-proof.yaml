@@ -2,6 +2,9 @@ defaults:
     - base
     - _self_
 
+# Uncomment to skip test set rollouts
+eval_every_n_versions: 0
+
 finetune:
   save_checkpoint_steps: 5
   push_to_hub: true

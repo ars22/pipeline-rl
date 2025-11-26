@@ -34,6 +34,14 @@ To launch Slurm jobs, run:
 sbatch --nodes=<num_nodes> run_hf.slurm --config=<config_name> --job-name=<job_name>
 ```
 
+## Recipes
+
+### Proof-based pipeline
+
+```sh
+scripts/run_imo_proof.sh 0
+```
+
 # Hugging Face Hub integration
 
 ## Checkpoint uploads
