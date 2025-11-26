@@ -294,18 +294,18 @@ def get_openai_client():
         )
     return _openai_client 
 
-# ===========================================================
-# Proof evaluator: calls Groq 120B grader via responses.create
-# ===========================================================
+# =================================================
+# Proof evaluator: calls OpenAI-compatible endpoint
+# =================================================
 async def verify_proof(
     problem: str,
     ref_solution: str,
     schema: str,
     generation: str,
     client=None,
-    timeout_seconds: int = 60,
+    timeout_seconds: int = 900,
     max_retries: int = 3,
-    retry_backoff: list[int] = [5, 10, 20],
+    retry_backoff: list[int] = [15, 30, 60, 90, 120],
 ) -> int:
     """
     Evaluate a model-generated proof via Groq GPR model.
@@ -327,20 +327,12 @@ async def verify_proof(
         return await loop.run_in_executor(
             None,
             lambda: client.responses.create(
-                model="openai/gpt-oss-120b",
+                model="openai/gpt-oss-120b", # TODO: make this configurable
                 input=prompt_text,
                 reasoning={"effort": "high"},
-                temperature=0.0,
-                max_output_tokens=16384,
+                temperature=1.0,
+                max_output_tokens=32768,
             ),
-            # lambda: client.chat.completions.create(
-            #     model="openai/gpt-oss-120b",
-            #     messages=[
-            #         {"role": "user", "content": prompt_text}
-            #     ],
-            #     temperature=0.0,
-            #     max_tokens=16384,
-            # ),
         )
 
     for attempt in range(1, max_retries + 1):

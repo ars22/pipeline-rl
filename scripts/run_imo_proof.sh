@@ -39,9 +39,6 @@ train_split=${hf_train_splits[$task_id]}
 test_dataset_path=${hf_test_datasets[$task_id]}
 test_split=${hf_test_splits[$task_id]}
 
-export OPENAI_BASE_URL=""
-export OPENAI_API_KEY=""
-
 
 export WANDB_API_KEY=""
 export WANDB_ENTITY=

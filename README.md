@@ -18,6 +18,14 @@ Install the required dependencies from the root directory as follows:
 ./install_hf.sh
 ```
 
+Then copy the `.env.template` to `.env` and add your Hugging Face token and endpoint ID:
+
+```
+cp .env.template .env
+```
+
+The endpoint is needed for the proof-based pipeline to access the grader on Hugging Face inference endpoints. Ask Lewis for access if you don't have it.
+
 ## Sample command
 
 To test your installation run:
@@ -31,8 +39,17 @@ python -m pipelinerl.launch --config-name=guessing output_dir=tmp/results/test_r
 To launch Slurm jobs, run:
 
 ```sh
-sbatch --nodes=<num_nodes> run_hf.slurm --config=<config_name> --job-name=<job_name>
+sbatch --nodes=<num_nodes> run_hf.slurm --config <config_name> --job-name <job_name>
 ```
+
+## Recipes
+
+### Proof-based pipeline
+
+```sh
+python -m pipelinerl.launch --config-name=proof_qwen3-4b-instruct output_dir=tmp/results/proof_qwen3-4b-instruct/ 
+```
+
 
 # Hugging Face Hub integration
 

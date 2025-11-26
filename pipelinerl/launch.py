@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, TextIO
 
 import hydra
+from dotenv import find_dotenv, load_dotenv
 from omegaconf import DictConfig, OmegaConf
 
 from pipelinerl.state import TrainerState
@@ -17,6 +18,9 @@ from pipelinerl.utils import terminate_with_children
 from pipelinerl.world import Job, WorldMap
 
 logger = logging.getLogger(__name__)
+
+# Load .env so downstream processes inherit OPENAI_*, WANDB_*, etc.
+load_dotenv(find_dotenv(), override=True)
 
 # All the launch commands in this file pass the environment to child processes
 os.environ["PYTHONPATH"] = f"/home/toolkit/TapeAgents"
@@ -503,6 +507,17 @@ def setup_logging(log_file: Path):
     root_logger.addHandler(file_handler)
     logger.info("Logging setup complete")
 
+def wake_up_hf_endpoint(name: str, namespace: str = "HuggingFaceH4", timeout=300):
+    from huggingface_hub import get_inference_endpoint
+    endpoint = get_inference_endpoint(name=name, namespace=namespace)
+    if endpoint.status != "running":
+        logger.info(f"Waking up Hugging Face endpoint {name}...")
+        endpoint.resume()
+        endpoint.wait(timeout=timeout)
+        logger.info(f"Endpoint {name} is now running at URL: {endpoint.url}")
+    else:
+        logger.info(f"Endpoint {name} is now running at URL: {endpoint.url}")
+
 
 @hydra.main(
     config_path="../conf/",
@@ -511,6 +526,11 @@ def setup_logging(log_file: Path):
 )
 def main(cfg: DictConfig):
     validate_config(cfg)
+
+    # Wake up endpoint if OPENAI_BASE_URL contains huggingface
+    if "huggingface" in os.environ.get("OPENAI_BASE_URL", ""):
+        endpoint_name = os.environ.get("HF_ENDPOINT_NAME")
+        wake_up_hf_endpoint(endpoint_name)
 
     exp_dir = Path(cfg.output_dir)
     config_dir = exp_dir / "conf"
