@@ -73,9 +73,7 @@ async def generate_math_rollout(
         if "reasoning_delimiters" in cfg.llm_grader
         else None
     )
-    print(f"Reasoning delimeters: {reasoning_delimiters}")
     generation_final_answer = remove_reasoning(generation_raw, reasoning_delimiters=reasoning_delimiters)
-    print(f"Generation final answer: {generation_final_answer}")
     rewards = RewardTable(**dict(cfg.rewards))
     discount_factor = cfg.actor.discount_factor
 
