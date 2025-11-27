@@ -27,7 +27,7 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 8192 #32768 
+    max_tokens: 32768 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
@@ -44,8 +44,6 @@ llm_grader:
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 2048
-  reasoning_delimiters:
-    - "</think>"
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout

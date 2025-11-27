@@ -56,8 +56,8 @@ This pipeline depends on an external LLM grader for proof verification. You can 
 
 ```yaml
 llm_grader:
-  name: openai/gpt-oss-20b          # for deployed inference endpoint
-  # name: gpt-oss-120b-twj          # for local grader server
+  name: openai/gpt-oss-20b          # for local grader server
+  # name: gpt-oss-120b-twj          # for deployed endpoint
 ```
 
 When you launch the training job, the grader server/endpoint will start automatically.
