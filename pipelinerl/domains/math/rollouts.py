@@ -65,6 +65,7 @@ async def generate_math_rollout(
             ref_solution=problem["answer"],
             schema=problem["schema"],
             generation=llm_call.output.content,
+            model=getattr(cfg.llm_grader, "name", None),
         )
         # normalize score to [0, 1]
         reward = (score / 7.0) * (discount_factor ** llm_call.output_length_tokens)
@@ -153,4 +154,3 @@ async def generate_math_rollout(
         latency=latency,
         dataset_name=problem.get("dataset"),
     )
-

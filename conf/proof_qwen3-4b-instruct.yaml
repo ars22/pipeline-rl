@@ -1,5 +1,5 @@
 # --------------------
-# Config for 2+1 nodes
+# Config for 3+1 nodes
 # --------------------
 defaults:
     - base
@@ -7,13 +7,13 @@ defaults:
 
 model_path: Qwen/Qwen3-4B-Instruct-2507
 # Uncomment to skip test set rollouts
-# eval_every_n_versions: 0
+eval_every_n_versions: 0
 
 finetune:
-  attempts: 16
-  train_batch_size: 48
-  valid_batch_size: 48
-  gradient_accumulation_passes: 16
+  attempts: 2 #16
+  train_batch_size: 1 #48
+  valid_batch_size: 1 #48
+  gradient_accumulation_passes: 4 #16
   seq_length: 33792
   seq_parallel: 2
   max_train_steps: 100
@@ -27,15 +27,22 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 32768 
+    max_tokens: 2048 #32768 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 32768
+    max_tokens: 2048 #32768
     temperature: 0.7 
     top_p: 0.8
     top_k: 20
+
+llm_grader:
+  name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
+  tp: 1
+  dp: 1
+  temperature: 1.0
+  max_output_tokens: 2048
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
@@ -44,6 +51,7 @@ actor:
     {task}
 environment:
   _target_: pipelinerl.domains.math.MathProofEnvironment
+  model_name: ${llm_grader.name}
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema
@@ -70,9 +78,9 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 16
+  actor_fraction: 4 #24
   preprocessor_fraction: 0
-  finetune_fraction: 8
+  finetune_fraction: 4 #8
   env_replicas: 2
   actor_group_port: 9000
   environment_start_port: 7777

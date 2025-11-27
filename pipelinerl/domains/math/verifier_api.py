@@ -274,6 +274,7 @@ Respond *only* in XML:
 {solution}
 """
 
+DEFAULT_LLM_GRADER_MODEL = "openai/gpt-oss-120b"
 
 _openai_client = None
 
@@ -302,6 +303,7 @@ async def verify_proof(
     ref_solution: str,
     schema: str,
     generation: str,
+    model: str | None = None,
     client=None,
     timeout_seconds: int = 900,
     max_retries: int = 3,
@@ -320,6 +322,7 @@ async def verify_proof(
         marking_scheme=schema,
         solution=generation,
     )
+    model_name = model or os.getenv("LLM_GRADER_MODEL") or DEFAULT_LLM_GRADER_MODEL
 
     loop = asyncio.get_event_loop()
 
@@ -327,7 +330,7 @@ async def verify_proof(
         return await loop.run_in_executor(
             None,
             lambda: client.responses.create(
-                model="openai/gpt-oss-120b", # TODO: make this configurable
+                model=model_name,
                 input=prompt_text,
                 reasoning={"effort": "high"},
                 temperature=1.0,
@@ -367,6 +370,9 @@ async def verify_proof(
     return 0
 
 class MathProofEnvironment:
+    def __init__(self, model_name: str | None = None):
+        self.model_name = model_name
+
     def launch(self, port: int):
         """
         Serve the verification API using FastAPI.
@@ -398,6 +404,7 @@ class MathProofEnvironment:
                 schema=schema,
                 generation=generation,
                 client=client,
+                model=self.model_name,
             )
             return JSONResponse(content={"score": score})
 
