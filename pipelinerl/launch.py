@@ -617,14 +617,16 @@ def start_llm_grader(name: str, dp: int = 1, tp: int = 1, namespace: str = "Hugg
     else:
         from huggingface_hub import get_inference_endpoint, get_token
         endpoint = get_inference_endpoint(name=name, namespace=namespace)
-        if endpoint.status != "running":
+        if endpoint.status == "running":
+            logger.info(f"LLM grader endpoint {name} is already running at URL: {endpoint.url}")
+            os.environ["OPENAI_BASE_URL"] = f"{endpoint.url}/v1"
+            os.environ["OPENAI_API_KEY"] = get_token()
+        else:
             logger.info(f"Waking up Hugging Face endpoint {name}...")
             endpoint.resume()
             endpoint.wait(timeout=timeout)
             os.environ["OPENAI_BASE_URL"] = f"{endpoint.url}/v1"
             os.environ["OPENAI_API_KEY"] = get_token()
-            logger.info(f"LLM grader endpoint {name} is now running at URL: {endpoint.url}")
-        else:
             logger.info(f"LLM grader endpoint {name} is now running at URL: {endpoint.url}")
 
 
