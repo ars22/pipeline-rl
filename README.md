@@ -18,14 +18,6 @@ Install the required dependencies from the root directory as follows:
 ./install_hf.sh
 ```
 
-Then copy the `.env.template` to `.env` and add your Hugging Face token and endpoint ID:
-
-```
-cp .env.template .env
-```
-
-The endpoint is needed for the proof-based pipeline to access the grader on Hugging Face inference endpoints. Ask Lewis for access if you don't have it.
-
 ## Sample command
 
 To test your installation run:

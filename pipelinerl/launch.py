@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import List, TextIO
 
 import hydra
-from dotenv import find_dotenv, load_dotenv
 from omegaconf import DictConfig, OmegaConf
 
 from pipelinerl.state import TrainerState
@@ -21,9 +20,6 @@ from pipelinerl.utils import terminate_with_children
 from pipelinerl.world import Job, WorldMap
 
 logger = logging.getLogger(__name__)
-
-# Load .env so downstream processes inherit OPENAI_*, WANDB_*, etc.
-# load_dotenv(find_dotenv(), override=True)
 
 # All the launch commands in this file pass the environment to child processes
 os.environ["PYTHONPATH"] = f"/home/toolkit/TapeAgents"
@@ -625,7 +621,7 @@ def start_llm_grader(name: str, dp: int = 1, tp: int = 1, namespace: str = "Hugg
             logger.info(f"Waking up Hugging Face endpoint {name}...")
             endpoint.resume()
             endpoint.wait(timeout=timeout)
-            os.environ["OPENAI_BASE_URL"] = endpoint.url
+            os.environ["OPENAI_BASE_URL"] = f"{endpoint.url}/v1"
             os.environ["OPENAI_API_KEY"] = get_token()
             logger.info(f"LLM grader endpoint {name} is now running at URL: {endpoint.url}")
         else:
