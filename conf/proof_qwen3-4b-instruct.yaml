@@ -27,7 +27,7 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 2048 #32768 
+    max_tokens: 8192 #32768 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:

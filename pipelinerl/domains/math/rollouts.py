@@ -67,6 +67,7 @@ async def generate_math_rollout(
     assert llm_call.output.content is not None
     generation_raw = llm_call.output.content
     generation_final_answer = extract_final_answer(generation_raw, reasoning_delimiters=cfg.llm_grader.reasoning_delimiters)
+    print(f"Generation final answer: {generation_final_answer}")
     rewards = RewardTable(**dict(cfg.rewards))
     discount_factor = cfg.actor.discount_factor
 

@@ -316,6 +316,10 @@ async def verify_proof(
     Returns an integer score [0–7].
     Retries up to `max_retries` times if Groq API fails or hits rate limits.
     """
+
+    if len(generation.strip()) == 0:
+        return 0  # Empty response gets score 0
+    
     client = client or get_openai_client()
 
     prompt_text = PROOF_EVALUATOR_PROMPT.format(
