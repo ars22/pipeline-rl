@@ -7,13 +7,13 @@ defaults:
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
 # Uncomment to skip test set rollouts
-eval_every_n_versions: 0
+# eval_every_n_versions: 0
 
 finetune:
-  attempts: 2 #16
-  train_batch_size: 1 #48
-  valid_batch_size: 1 #48
-  gradient_accumulation_passes: 4 #16
+  attempts: 16
+  train_batch_size: 48
+  valid_batch_size: 48
+  gradient_accumulation_passes: 16
   seq_length: 33792
   seq_parallel: 2
   max_train_steps: 100
@@ -27,7 +27,7 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 8192 #32768 
+    max_tokens: 32768 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
@@ -38,12 +38,12 @@ test_llm:
     top_k: 20
 
 llm_grader:
-  name: gpt-oss-120b-twj #openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
+  name: openai/gpt-oss-120b # or gpt-oss-120b-twj if running via inference endpoints
   dp: 4
   tp: 2
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 2048
+    max_output_tokens: 32768
   reasoning_delimiters: ["</think>"]
 
 actor:
@@ -81,9 +81,9 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 4 #16
+  actor_fraction: 16
   preprocessor_fraction: 0
-  finetune_fraction: 4 #8
+  finetune_fraction: 8
   env_replicas: 2
   actor_group_port: 9000
   environment_start_port: 7777
