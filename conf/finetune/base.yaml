@@ -118,5 +118,3 @@ llm_grader:
   name: null
   tp: 1
   dp: 1
-  temperature: 1.0
-  max_output_tokens: 4096

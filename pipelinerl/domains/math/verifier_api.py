@@ -6,6 +6,7 @@ import aiohttp
 import uvicorn
 import logging
 import signal
+import argparse
 from contextlib import contextmanager
 
 from omegaconf import DictConfig
@@ -274,8 +275,6 @@ Respond *only* in XML:
 {solution}
 """
 
-DEFAULT_LLM_GRADER_MODEL = "openai/gpt-oss-120b"
-
 _openai_client = None
 
 def get_openai_client():
@@ -322,7 +321,8 @@ async def verify_proof(
         marking_scheme=schema,
         solution=generation,
     )
-    model_name = model or os.getenv("LLM_GRADER_MODEL") or DEFAULT_LLM_GRADER_MODEL
+    if not model:
+        raise RuntimeError("verify_proof requires a grader model name; pass via cfg.llm_grader.name")
 
     loop = asyncio.get_event_loop()
 
@@ -330,7 +330,7 @@ async def verify_proof(
         return await loop.run_in_executor(
             None,
             lambda: client.responses.create(
-                model=model_name,
+                model=model,
                 input=prompt_text,
                 reasoning={"effort": "high"},
                 temperature=1.0,
@@ -415,6 +415,10 @@ class MathProofEnvironment:
         uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
 
 def main():
+    parser = argparse.ArgumentParser(description="Run proof verifier locally for debugging.")
+    parser.add_argument("--model", required=True, help="Fully qualified grader model name (e.g. openai/gpt-oss-20b)")
+    args = parser.parse_args()
+
     dataset = load_dataset("hf-imo-colab/olympiads-proof-schema", split="train")
     data = dataset[1]
     problem = data["problem"]
@@ -422,7 +426,7 @@ def main():
     schema = data["schema_0"]
     prediction = data["solution"]
     for i in range(10):
-        score = asyncio.run(verify_proof(problem, ref_solution, schema, prediction))
+        score = asyncio.run(verify_proof(problem, ref_solution, schema, prediction, model=args.model))
         print(f"Score: {score}")
 
 if __name__ == "__main__":
