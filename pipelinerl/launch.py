@@ -638,15 +638,23 @@ def start_llm_grader(name: str, dp: int = 1, tp: int = 1, namespace: str = "Hugg
 def main(cfg: DictConfig):
     validate_config(cfg)
 
+    rank = int(os.environ.get("RANK", "0"))
+
     # Spin up LLM grader if specified
     if cfg.llm_grader.name is not None:
-        start_llm_grader(cfg.llm_grader.name, dp=cfg.llm_grader.dp, tp=cfg.llm_grader.tp)
+        if rank == 0:
+            start_llm_grader(cfg.llm_grader.name, dp=cfg.llm_grader.dp, tp=cfg.llm_grader.tp)
+        else:
+            logger.info(
+                "Skipping LLM grader launch on rank %s; waiting for master to provision it",
+                rank,
+            )
 
     exp_dir = Path(cfg.output_dir)
     config_dir = exp_dir / "conf"
 
     os.makedirs(exp_dir / "launcher", exist_ok=True)
-    log_file = exp_dir / "launcher" / f"launcher_{os.environ.get('RANK', 0)}.log"
+    log_file = exp_dir / "launcher" / f"launcher_{rank}.log"
     setup_logging(log_file)
     world_map = WorldMap(cfg, verbose=True)
     cfg.jobs = [job.model_dump() for job in world_map.get_all_jobs()]
