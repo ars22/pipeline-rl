@@ -1,5 +1,5 @@
 # --------------------
-# Config for 3+1 nodes
+# Config for 2+1 nodes
 # --------------------
 defaults:
     - base
@@ -44,6 +44,8 @@ llm_grader:
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 2048
+  reasoning_delimiters:
+    - "</think>"
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout

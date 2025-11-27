@@ -46,30 +46,6 @@ export MODEL
 export DP
 export TP
 
-HEALTH_CHECK_URL=${HEALTH_CHECK_URL:-http://127.0.0.1:8000/health}
-HEALTH_CHECK_RETRIES=${HEALTH_CHECK_RETRIES:-60}
-HEALTH_CHECK_DELAY=${HEALTH_CHECK_DELAY:-10}
-
-health_check() {
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "curl is required for the health check but was not found in PATH" >&2
-    return 1
-  fi
-
-  echo "Waiting for vLLM server health at $HEALTH_CHECK_URL"
-  for (( i=1; i<=HEALTH_CHECK_RETRIES; i++ )); do
-    if curl -fsS "$HEALTH_CHECK_URL" >/dev/null; then
-      echo "vLLM health check succeeded on attempt $i"
-      return 0
-    fi
-    echo "Health check attempt $i/$HEALTH_CHECK_RETRIES failed; retrying in ${HEALTH_CHECK_DELAY}s"
-    sleep "$HEALTH_CHECK_DELAY"
-  done
-
-  echo "vLLM health check failed after $HEALTH_CHECK_RETRIES attempts" >&2
-  return 1
-}
-
 terminate_server() {
   if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" >/dev/null 2>&1; then
     echo "Stopping vLLM server (PID $SERVER_PID)"
@@ -84,11 +60,5 @@ trap 'terminate_server; exit 143' SIGTERM
 echo "Starting vllm server with model: $MODEL, DP: $DP, TP: $TP"
 vllm serve $MODEL --data-parallel-size $DP --tensor-parallel-size $TP &
 SERVER_PID=$!
-
-if ! health_check; then
-  echo "Health check failed; terminating vLLM server" >&2
-  terminate_server
-  exit 1
-fi
 
 wait "$SERVER_PID"
