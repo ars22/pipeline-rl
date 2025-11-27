@@ -626,6 +626,8 @@ def start_llm_grader(name: str, dp: int = 1, tp: int = 1, namespace: str = "Hugg
             logger.info(f"LLM grader endpoint {name} is now running at URL: {endpoint.url}")
         os.environ["OPENAI_BASE_URL"] = f"{endpoint.url}/v1"
         os.environ["OPENAI_API_KEY"] = get_token()
+        # The OpenAI client expects the repo name, so we propagate it as well
+        os.environ["HF_ENDPOINT_REPO"] = endpoint.repository
 
 
 @hydra.main(

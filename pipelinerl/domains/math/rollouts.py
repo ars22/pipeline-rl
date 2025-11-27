@@ -2,6 +2,7 @@ import time
 import random
 
 import aiohttp
+import os
 from omegaconf import DictConfig
 from pydantic import BaseModel
 from pipelinerl.rollouts import RolloutResult, BaseMetrics
@@ -80,7 +81,7 @@ async def generate_math_rollout(
             ref_solution=problem["answer"],
             schema=problem["schema"],
             generation=generation_final_answer,
-            model=getattr(cfg.llm_grader, "name", None),
+            model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
             sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
         )
         # normalize score to [0, 1]
