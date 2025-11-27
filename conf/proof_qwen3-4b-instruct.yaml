@@ -38,9 +38,12 @@ test_llm:
     top_k: 20
 
 llm_grader:
-  name: openai/gpt-oss-120b # or gpt-oss-120b-twj if running via inference endpoints
+  name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
+  dp: 4
   tp: 2
-  dp: 8
+  sampling_kwargs:
+    temperature: 1.0
+    max_output_tokens: 2048
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
@@ -50,6 +53,7 @@ actor:
 environment:
   _target_: pipelinerl.domains.math.MathProofEnvironment
   model_name: ${llm_grader.name}
+  sampling_kwargs: ${llm_grader.sampling_kwargs}
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema
