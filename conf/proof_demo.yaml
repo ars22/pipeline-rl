@@ -27,20 +27,20 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 8192 #32768 
+    max_tokens: 8192
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 8192 #32768
+    max_tokens: 8192
     temperature: 0.7 
     top_p: 0.8
     top_k: 20
 
 llm_grader:
-  name: openai/gpt-oss-120b # or gpt-oss-120b-twj if running via inference endpoints
-  dp: 1
-  tp: 8
+  name: openai/gpt-oss-20b # or gpt-oss-20b-reh if running via inference endpoints
+  dp: 8
+  tp: 1
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 32768
