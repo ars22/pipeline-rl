@@ -39,8 +39,8 @@ test_llm:
 
 llm_grader:
   name: openai/gpt-oss-120b # or gpt-oss-120b-twj if running via inference endpoints
-  dp: 4
-  tp: 2
+  dp: 1
+  tp: 8
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 32768

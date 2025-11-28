@@ -42,6 +42,32 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+def _aggregate_group_verifier_metrics(rollout_results: List[RolloutResult]) -> dict[str, float | int]:
+    runtime_values: defaultdict[str, list[float]] = defaultdict(list)
+    failure_totals: defaultdict[str, int] = defaultdict(int)
+    for result in rollout_results:
+        metrics = getattr(result, "verifier_metrics", {}) or {}
+        for key, value in metrics.items():
+            if key.startswith("verifier/failures/"):
+                failure_totals[key] += int(value)
+            else:
+                runtime_values[key].append(float(value))
+    aggregated: dict[str, float | int] = {}
+    for key, values in runtime_values.items():
+        if values:
+            aggregated[key] = sum(values) / len(values)
+    aggregated.update(failure_totals)
+    return aggregated
+
+
+def _log_group_verifier_metrics(metrics: dict[str, float | int], *, step: int | None = None):
+    if not metrics or getattr(wandb, "run", None) is None:
+        return
+    if step is None:
+        wandb.log(dict(metrics))
+    else:
+        wandb.log(dict(metrics), step=step)
+
 
 class SlidingWindowData(BaseModel):
     prompt_tokens_window: list[list[int]] = Field(
@@ -366,6 +392,20 @@ class ActorLoop:
                 self.sliding_stats[k].append(v)
         
 
+    def log_verifier_metrics_for_group(self, rollout_results: List[RolloutResult], step: int | None = None):
+        if (
+            not self.is_training
+            or not self.cfg.wandb.use_wandb
+            or not rollout_results
+        ):
+            return
+        aggregated = _aggregate_group_verifier_metrics(rollout_results)
+        if not aggregated:
+            return
+        aggregated["verifier/group_rollouts"] = len(rollout_results)
+        _log_group_verifier_metrics(aggregated, step=step)
+
+
 
     def run(self, dataset: list[tuple[str, dict]]):
         loop_start_time = time.time()
@@ -479,8 +519,9 @@ class ActorLoop:
                     f" {in_progress} groups in progress"
                 )
 
-                    
+                
                 self.update_stats(rollout_results=rollout_results)
+                self.log_verifier_metrics_for_group(rollout_results, step=finished_groups)
 
                 finished_groups += 1
                 time_to_publish_train_stats = (

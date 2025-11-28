@@ -82,15 +82,19 @@ async def generate_math_rollout(
     # ===========================================================
     # PROOF-BASED SCORING BRANCH
     # ===========================================================
+    verifier_metrics: dict[str, float | int] = {}
     if "schema" in problem:
-        score = await verify_proof(
+        verification = await verify_proof(
             problem=problem["task"],
             ref_solution=problem["answer"],
             schema=problem["schema"],
             generation=generation_final_answer,
             model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
             sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
+            log_wandb_metrics=cfg.wandb.use_wandb,
         )
+        score = verification.score
+        verifier_metrics = verification.metrics
         # normalize score to [0, 1]
         reward = (score / 7.0) * (discount_factor ** llm_call.output_length_tokens)
 
@@ -177,4 +181,5 @@ async def generate_math_rollout(
         metrics=metrics,
         latency=latency,
         dataset_name=problem.get("dataset"),
+        verifier_metrics=verifier_metrics,
     )

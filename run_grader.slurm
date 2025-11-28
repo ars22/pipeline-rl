@@ -58,7 +58,10 @@ trap 'terminate_server; exit 130' SIGINT
 trap 'terminate_server; exit 143' SIGTERM
 
 echo "Starting vllm server with model: $MODEL, DP: $DP, TP: $TP"
-vllm serve $MODEL --data-parallel-size $DP --tensor-parallel-size $TP &
+vllm serve $MODEL --data-parallel-size $DP --tensor-parallel-size $TP \
+  --enable-prefix-caching \
+  --enable-chunked-prefill \
+  --gpu_memory_utilization 0.9 &
 SERVER_PID=$!
 
 wait "$SERVER_PID"
