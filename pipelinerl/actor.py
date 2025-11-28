@@ -42,9 +42,6 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
-_verifier_metrics_bound = False
-
-
 def _aggregate_group_verifier_metrics(rollout_results: List[RolloutResult]) -> dict[str, float | int]:
     runtime_values: defaultdict[str, list[float]] = defaultdict(list)
     failure_totals: defaultdict[str, int] = defaultdict(int)
@@ -63,16 +60,10 @@ def _aggregate_group_verifier_metrics(rollout_results: List[RolloutResult]) -> d
     return aggregated
 
 
-def _log_group_verifier_metrics(metrics: dict[str, float | int], published_samples: int):
-    global _verifier_metrics_bound
+def _log_group_verifier_metrics(metrics: dict[str, float | int]):
     if not metrics or getattr(wandb, "run", None) is None:
         return
-    if not _verifier_metrics_bound:
-        wandb.define_metric("verifier/*", step_metric="verifier/reward_step")
-        _verifier_metrics_bound = True
-    payload = dict(metrics)
-    payload["verifier/reward_step"] = published_samples
-    wandb.log(payload)
+    wandb.log(dict(metrics))
 
 
 class SlidingWindowData(BaseModel):
@@ -398,7 +389,7 @@ class ActorLoop:
                 self.sliding_stats[k].append(v)
         
 
-    def log_verifier_metrics_for_group(self, rollout_results: List[RolloutResult], published_samples: int):
+    def log_verifier_metrics_for_group(self, rollout_results: List[RolloutResult]):
         if (
             not self.is_training
             or not self.cfg.wandb.use_wandb
@@ -409,7 +400,7 @@ class ActorLoop:
         if not aggregated:
             return
         aggregated["verifier/group_rollouts"] = len(rollout_results)
-        _log_group_verifier_metrics(aggregated, published_samples)
+        _log_group_verifier_metrics(aggregated)
 
 
 
@@ -527,7 +518,7 @@ class ActorLoop:
 
                 
                 self.update_stats(rollout_results=rollout_results)
-                self.log_verifier_metrics_for_group(rollout_results, published_samples)
+                self.log_verifier_metrics_for_group(rollout_results)
 
                 finished_groups += 1
                 time_to_publish_train_stats = (
