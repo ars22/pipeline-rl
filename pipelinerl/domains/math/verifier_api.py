@@ -11,6 +11,7 @@ import json
 from contextlib import contextmanager
 from typing import Any
 
+import wandb
 from omegaconf import DictConfig
 import math_verify  # Ensure math_verify is installed
 
@@ -279,6 +280,25 @@ Respond *only* in XML:
 
 _openai_client = None
 
+_VERIFIER_FAILURE_EVENTS = (
+    "rate_limit",  # openai.RateLimitError -> verifier/rate_limit
+    "timeout",  # asyncio.TimeoutError or TimeoutException -> verifier/timeout
+    "all_attempts_failed",  # Exhausted retries -> verifier/all_attempts_failed
+)
+
+
+def _should_log_verifier_metrics(log_wandb_metrics: bool | None) -> bool:
+    """
+    Decide whether to emit verifier metrics. We never call wandb.log without an active run.
+    """
+    run_active = bool(getattr(wandb, "run", None))
+    if not run_active:
+        return False
+    if log_wandb_metrics is None:
+        return True
+    return log_wandb_metrics
+
+
 def get_openai_client():
     """
     Lazily initialize and cache a OpenAI API client using OpenAI SDK interface.
@@ -310,11 +330,13 @@ async def verify_proof(
     timeout_seconds: int = 900,
     max_retries: int = 3,
     retry_backoff: list[int] = [15, 30, 60, 90, 120],
+    log_wandb_metrics: bool | None = None,
 ) -> int:
     """
     Evaluate a model-generated proof via Groq GPR model.
     Returns an integer score [0–7].
     Retries up to `max_retries` times if Groq API fails or hits rate limits.
+    Logs verifier-specific WandB metrics inline (Approach 1) when enabled.
     """
 
     if len(generation.strip()) == 0:
@@ -345,41 +367,63 @@ async def verify_proof(
             ),
         )
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
-            output_text = getattr(response, "output_text", None) or ""
-            # output_text = response.choices[0].delta.content
-            match = re.search(r"<score>(\d+)</score>", output_text)
-            if match:
-                return int(match.group(1))
-            else:
-                print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
-                return 0
+    failure_counters = {key: 0 for key in _VERIFIER_FAILURE_EVENTS}
+    log_metrics = _should_log_verifier_metrics(log_wandb_metrics)
+    exhausted_retries = False
 
-        except openai.RateLimitError as e:
-            # handle Groq 429 rate limit
-            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-            print(f"[verify_proof] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
-            await asyncio.sleep(wait_time)
+    try:
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
+                output_text = getattr(response, "output_text", None) or ""
+                match = re.search(r"<score>(\d+)</score>", output_text)
+                if match:
+                    return int(match.group(1))
+                else:
+                    print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
+                    return 0
 
-        except asyncio.TimeoutError:
-            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-            print(f"[verify_proof] Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), retrying in {wait_time}s...")
-            await asyncio.sleep(wait_time)
+            except openai.RateLimitError as e:
+                wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+                failure_counters["rate_limit"] += 1
+                print(f"[verify_proof] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
+                await asyncio.sleep(wait_time)
 
-        except Exception as e:
-            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-            print(f"[verify_proof] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
-            await asyncio.sleep(wait_time)
+            except (asyncio.TimeoutError, TimeoutException):
+                wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+                failure_counters["timeout"] += 1
+                print(
+                    f"[verify_proof] Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), "
+                    f"retrying in {wait_time}s..."
+                )
+                await asyncio.sleep(wait_time)
 
-    print(f"[verify_proof] All {max_retries} attempts failed — returning score=0")
-    return 0
+            except Exception as e:
+                wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+                print(f"[verify_proof] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+
+        exhausted_retries = True
+        print(f"[verify_proof] All {max_retries} attempts failed — returning score=0")
+        return 0
+    finally:
+        if exhausted_retries:
+            failure_counters["all_attempts_failed"] += 1
+        if log_metrics:
+            payload = {f"verifier/{k}": v for k, v in failure_counters.items() if v}
+            if payload:
+                wandb.log(payload)
 
 class MathProofEnvironment:
-    def __init__(self, model_name: str | None = None, sampling_kwargs: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        model_name: str | None = None,
+        sampling_kwargs: dict[str, Any] | None = None,
+        use_wandb: bool | None = True,
+    ):
         self.model_name = model_name
         self.sampling_kwargs = sampling_kwargs
+        self.use_wandb = use_wandb
 
     def launch(self, port: int):
         """
@@ -414,6 +458,7 @@ class MathProofEnvironment:
                 client=client,
                 model=self.model_name,
                 sampling_kwargs=self.sampling_kwargs,
+                log_wandb_metrics=self.use_wandb,
             )
             return JSONResponse(content={"score": score})
 

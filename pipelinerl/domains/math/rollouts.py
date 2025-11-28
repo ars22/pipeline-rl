@@ -90,6 +90,7 @@ async def generate_math_rollout(
             generation=generation_final_answer,
             model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
             sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
+            log_wandb_metrics=cfg.wandb.use_wandb,
         )
         # normalize score to [0, 1]
         reward = (score / 7.0) * (discount_factor ** llm_call.output_length_tokens)

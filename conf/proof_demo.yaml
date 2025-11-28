@@ -5,21 +5,21 @@ defaults:
     - base
     - _self_
 
-model_path: Qwen/Qwen3-4B-Instruct-2507
+model_path: Qwen/Qwen3-4B-Thinking-2507
 # Uncomment to skip test set rollouts
 # eval_every_n_versions: 0
 
 finetune:
-  attempts: 16
-  train_batch_size: 48
-  valid_batch_size: 48
-  gradient_accumulation_passes: 16
+  attempts: 4
+  train_batch_size: 4
+  valid_batch_size: 4
+  gradient_accumulation_passes: 4
   seq_length: 33792
   seq_parallel: 2
   max_train_steps: 100
   save_checkpoint_steps: 50
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Instruct-2507-Proof
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
@@ -44,6 +44,7 @@ llm_grader:
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 32768
+  reasoning_delimiters: ["</think>"]
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
@@ -80,9 +81,9 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 16
+  actor_fraction: 4
   preprocessor_fraction: 0
-  finetune_fraction: 8
+  finetune_fraction: 4
   env_replicas: 2
   actor_group_port: 9000
   environment_start_port: 7777
