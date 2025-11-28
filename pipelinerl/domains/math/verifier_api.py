@@ -327,7 +327,7 @@ async def verify_proof(
     model: str | None = None,
     sampling_kwargs: dict[str, Any] | None = None,
     client=None,
-    timeout_seconds: int = 900,
+    timeout_seconds: int = 50,
     max_retries: int = 3,
     retry_backoff: list[int] = [15, 30, 60, 90, 120],
     log_wandb_metrics: bool | None = None,
@@ -385,7 +385,7 @@ async def verify_proof(
                     if output_tokens is None and isinstance(usage, dict):
                         output_tokens = usage.get("output_tokens")
                 if log_metrics:
-                    runtime_metrics = {"verifier/latency_seconds": latency_seconds}
+                    runtime_metrics = {"verifier/latency_sec_per_request": latency_seconds}
                     if output_tokens is not None:
                         runtime_metrics["verifier/output_tokens"] = output_tokens
                         if latency_seconds > 0:
