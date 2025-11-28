@@ -11,8 +11,8 @@ eval_every_n_versions: 0
 
 finetune:
   attempts: 4
-  train_batch_size: 4
-  valid_batch_size: 4
+  train_batch_size: 1
+  valid_batch_size: 1
   gradient_accumulation_passes: 4
   seq_length: 33792
   seq_parallel: 2

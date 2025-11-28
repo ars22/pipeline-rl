@@ -10,6 +10,7 @@ import argparse
 import json
 from contextlib import contextmanager
 from typing import Any
+from itertools import count
 
 import wandb
 from omegaconf import DictConfig
@@ -279,6 +280,8 @@ Respond *only* in XML:
 """
 
 _openai_client = None
+_verifier_step_counter = count()
+_verifier_metrics_bound = False
 
 _VERIFIER_FAILURE_EVENTS = (
     "rate_limit",  # openai.RateLimitError -> verifier/rate_limit
@@ -297,6 +300,19 @@ def _should_log_verifier_metrics(log_wandb_metrics: bool | None) -> bool:
     if log_wandb_metrics is None:
         return True
     return log_wandb_metrics
+
+
+def _next_reward_step() -> int:
+    """
+    Return the sequential index of the current reward batch and make sure verifier metrics
+    use it as their x-axis in WandB.
+    """
+    global _verifier_metrics_bound
+    if getattr(wandb, "run", None) and not _verifier_metrics_bound:
+        # Tell WandB to use verifier/reward_step as the x-axis for all verifier/* series
+        wandb.define_metric("verifier/*", step_metric="verifier/reward_step")
+        _verifier_metrics_bound = True
+    return next(_verifier_step_counter)
 
 
 def get_openai_client():
@@ -327,7 +343,7 @@ async def verify_proof(
     model: str | None = None,
     sampling_kwargs: dict[str, Any] | None = None,
     client=None,
-    timeout_seconds: int = 50,
+    timeout_seconds: int = 25,
     max_retries: int = 3,
     retry_backoff: list[int] = [15, 30, 60, 90, 120],
     log_wandb_metrics: bool | None = None,
@@ -385,7 +401,7 @@ async def verify_proof(
                     if output_tokens is None and isinstance(usage, dict):
                         output_tokens = usage.get("output_tokens")
                 if log_metrics:
-                    runtime_metrics = {"verifier/latency_sec_per_request": latency_seconds}
+                    runtime_metrics = {"verifier/latency_seconds": latency_seconds}
                     if output_tokens is not None:
                         runtime_metrics["verifier/output_tokens"] = output_tokens
                         if latency_seconds > 0:
@@ -425,7 +441,9 @@ async def verify_proof(
         if exhausted_retries:
             failure_counters["all_attempts_failed"] += 1
         if log_metrics:
+            reward_step = _next_reward_step()
             payload = dict(runtime_metrics)
+            payload["verifier/reward_step"] = reward_step
             payload.update({f"verifier/{k}": v for k, v in failure_counters.items() if v})
             if payload:
                 wandb.log(payload)
