@@ -60,10 +60,13 @@ def _aggregate_group_verifier_metrics(rollout_results: List[RolloutResult]) -> d
     return aggregated
 
 
-def _log_group_verifier_metrics(metrics: dict[str, float | int]):
+def _log_group_verifier_metrics(metrics: dict[str, float | int], *, step: int | None = None):
     if not metrics or getattr(wandb, "run", None) is None:
         return
-    wandb.log(dict(metrics))
+    if step is None:
+        wandb.log(dict(metrics))
+    else:
+        wandb.log(dict(metrics), step=step)
 
 
 class SlidingWindowData(BaseModel):
@@ -389,7 +392,7 @@ class ActorLoop:
                 self.sliding_stats[k].append(v)
         
 
-    def log_verifier_metrics_for_group(self, rollout_results: List[RolloutResult]):
+    def log_verifier_metrics_for_group(self, rollout_results: List[RolloutResult], step: int | None = None):
         if (
             not self.is_training
             or not self.cfg.wandb.use_wandb
@@ -400,7 +403,7 @@ class ActorLoop:
         if not aggregated:
             return
         aggregated["verifier/group_rollouts"] = len(rollout_results)
-        _log_group_verifier_metrics(aggregated)
+        _log_group_verifier_metrics(aggregated, step=step)
 
 
 
@@ -518,7 +521,7 @@ class ActorLoop:
 
                 
                 self.update_stats(rollout_results=rollout_results)
-                self.log_verifier_metrics_for_group(rollout_results)
+                self.log_verifier_metrics_for_group(rollout_results, step=finished_groups)
 
                 finished_groups += 1
                 time_to_publish_train_stats = (

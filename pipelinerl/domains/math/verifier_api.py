@@ -392,7 +392,7 @@ async def verify_proof(
                 if output_tokens is None and isinstance(usage, dict):
                     output_tokens = usage.get("output_tokens")
             if collect_metrics:
-                runtime_metrics = {"verifier/runtime/latency_seconds": latency_seconds}
+                runtime_metrics = {"verifier/runtime/latency_per_request": latency_seconds}
                 if output_tokens is not None:
                     runtime_metrics["verifier/runtime/output_tokens"] = output_tokens
                     if latency_seconds > 0:
