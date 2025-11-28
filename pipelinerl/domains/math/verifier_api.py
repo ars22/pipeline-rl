@@ -6,7 +6,10 @@ import aiohttp
 import uvicorn
 import logging
 import signal
+import argparse
+import json
 from contextlib import contextmanager
+from typing import Any
 
 from omegaconf import DictConfig
 import math_verify  # Ensure math_verify is installed
@@ -274,7 +277,6 @@ Respond *only* in XML:
 {solution}
 """
 
-
 _openai_client = None
 
 def get_openai_client():
@@ -302,6 +304,8 @@ async def verify_proof(
     ref_solution: str,
     schema: str,
     generation: str,
+    model: str | None = None,
+    sampling_kwargs: dict[str, Any] | None = None,
     client=None,
     timeout_seconds: int = 900,
     max_retries: int = 3,
@@ -312,6 +316,10 @@ async def verify_proof(
     Returns an integer score [0–7].
     Retries up to `max_retries` times if Groq API fails or hits rate limits.
     """
+
+    if len(generation.strip()) == 0:
+        return 0  # Empty response gets score 0
+    
     client = client or get_openai_client()
 
     prompt_text = PROOF_EVALUATOR_PROMPT.format(
@@ -320,6 +328,9 @@ async def verify_proof(
         marking_scheme=schema,
         solution=generation,
     )
+    if not model:
+        raise RuntimeError("verify_proof requires a grader model name; pass via cfg.llm_grader.name")
+    api_kwargs = dict(sampling_kwargs) if sampling_kwargs else {}
 
     loop = asyncio.get_event_loop()
 
@@ -327,11 +338,10 @@ async def verify_proof(
         return await loop.run_in_executor(
             None,
             lambda: client.responses.create(
-                model="openai/gpt-oss-120b", # TODO: make this configurable
+                model=model,
                 input=prompt_text,
                 reasoning={"effort": "high"},
-                temperature=1.0,
-                max_output_tokens=32768,
+                **api_kwargs,
             ),
         )
 
@@ -367,6 +377,10 @@ async def verify_proof(
     return 0
 
 class MathProofEnvironment:
+    def __init__(self, model_name: str | None = None, sampling_kwargs: dict[str, Any] | None = None):
+        self.model_name = model_name
+        self.sampling_kwargs = sampling_kwargs
+
     def launch(self, port: int):
         """
         Serve the verification API using FastAPI.
@@ -398,6 +412,8 @@ class MathProofEnvironment:
                 schema=schema,
                 generation=generation,
                 client=client,
+                model=self.model_name,
+                sampling_kwargs=self.sampling_kwargs,
             )
             return JSONResponse(content={"score": score})
 
@@ -408,6 +424,16 @@ class MathProofEnvironment:
         uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
 
 def main():
+    parser = argparse.ArgumentParser(description="Run proof verifier locally for debugging.")
+    parser.add_argument("--model", required=True, help="Fully qualified grader model name (e.g. openai/gpt-oss-20b)")
+    parser.add_argument(
+        "--sampling-kwargs",
+        default=None,
+        help="JSON dict of sampling params forwarded to the grader (e.g. '{\"temperature\": 0.8}')",
+    )
+    args = parser.parse_args()
+    sampling_kwargs = json.loads(args.sampling_kwargs) if args.sampling_kwargs else None
+
     dataset = load_dataset("hf-imo-colab/olympiads-proof-schema", split="train")
     data = dataset[1]
     problem = data["problem"]
@@ -415,7 +441,16 @@ def main():
     schema = data["schema_0"]
     prediction = data["solution"]
     for i in range(10):
-        score = asyncio.run(verify_proof(problem, ref_solution, schema, prediction))
+        score = asyncio.run(
+            verify_proof(
+                problem,
+                ref_solution,
+                schema,
+                prediction,
+                model=args.model,
+                sampling_kwargs=sampling_kwargs,
+            )
+        )
         print(f"Score: {score}")
 
 if __name__ == "__main__":

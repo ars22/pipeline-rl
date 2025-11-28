@@ -113,3 +113,12 @@ rl:
   temperature: ${...llm.parameters.temperature}
   aggregate_loss: sum
   overlong_filtering: false
+
+llm_grader:
+  name: null
+  tp: 1
+  dp: 1
+  sampling_kwargs:
+    temperature: 1.0
+    max_output_tokens: 4096
+  reasoning_delimiters: []

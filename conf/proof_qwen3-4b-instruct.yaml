@@ -37,6 +37,14 @@ test_llm:
     top_p: 0.8
     top_k: 20
 
+llm_grader:
+  name: openai/gpt-oss-120b # or gpt-oss-120b-twj if running via inference endpoints
+  dp: 4
+  tp: 2
+  sampling_kwargs:
+    temperature: 1.0
+    max_output_tokens: 32768
+
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
@@ -44,6 +52,8 @@ actor:
     {task}
 environment:
   _target_: pipelinerl.domains.math.MathProofEnvironment
+  model_name: ${llm_grader.name}
+  sampling_kwargs: ${llm_grader.sampling_kwargs}
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema

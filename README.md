@@ -15,16 +15,18 @@
 Install the required dependencies from the root directory as follows:
 
 ```sh
-./install_hf.sh
+# Dependencies for training
+./install.sh
+
+# Dependencies for local LLM grader server (optional)
+./install_grader.sh
 ```
 
-Then copy the `.env.template` to `.env` and add your Hugging Face token and endpoint ID:
+Then make sure you are authenticated with the Hugging Face Hub:
 
+```sh
+huggingface-cli login
 ```
-cp .env.template .env
-```
-
-The endpoint is needed for the proof-based pipeline to access the grader on Hugging Face inference endpoints. Ask Lewis for access if you don't have it.
 
 ## Sample command
 
@@ -44,11 +46,21 @@ sbatch --nodes=<num_nodes> run_hf.slurm --config <config_name> --job-name <job_n
 
 ## Recipes
 
-### Proof-based pipeline
+### Proof-verification pipeline
 
 ```sh
 python -m pipelinerl.launch --config-name=proof_qwen3-4b-instruct output_dir=tmp/results/proof_qwen3-4b-instruct/ 
 ```
+
+This pipeline depends on an external LLM grader for proof verification. You can either run the grader locally on the Hugging Face cluster or by calling a deployed inference endpoint. The choice is determined by the `llm_grader.name` field in the config:
+
+```yaml
+llm_grader:
+  name: openai/gpt-oss-20b          # for local grader server
+  # name: gpt-oss-120b-twj          # for deployed endpoint
+```
+
+When you launch the training job, the grader server/endpoint will start automatically.
 
 
 # Hugging Face Hub integration
