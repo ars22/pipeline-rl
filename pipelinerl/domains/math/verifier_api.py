@@ -1,5 +1,4 @@
 import time
-import requests
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
 import aiohttp
@@ -9,11 +8,9 @@ import signal
 import argparse
 import json
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any
-from itertools import count
 
-import wandb
-from omegaconf import DictConfig
 import math_verify  # Ensure math_verify is installed
 
 from fastapi import FastAPI
@@ -280,8 +277,6 @@ Respond *only* in XML:
 """
 
 _openai_client = None
-_verifier_step_counter = count()
-_verifier_metrics_bound = False
 
 _VERIFIER_FAILURE_EVENTS = (
     "rate_limit",  # openai.RateLimitError -> verifier/rate_limit
@@ -290,29 +285,28 @@ _VERIFIER_FAILURE_EVENTS = (
 )
 
 
-def _should_log_verifier_metrics(log_wandb_metrics: bool | None) -> bool:
-    """
-    Decide whether to emit verifier metrics. We never call wandb.log without an active run.
-    """
-    run_active = bool(getattr(wandb, "run", None))
-    if not run_active:
-        return False
-    if log_wandb_metrics is None:
+@dataclass
+class ProofVerificationResult:
+    score: int
+    metrics: dict[str, float | int] = field(default_factory=dict)
+
+
+def _should_collect_metrics(collect_flag: bool | None) -> bool:
+    if collect_flag is None:
         return True
-    return log_wandb_metrics
+    return collect_flag
 
 
-def _next_reward_step() -> int:
-    """
-    Return the sequential index of the current reward batch and make sure verifier metrics
-    use it as their x-axis in WandB.
-    """
-    global _verifier_metrics_bound
-    if getattr(wandb, "run", None) and not _verifier_metrics_bound:
-        # Tell WandB to use verifier/reward_step as the x-axis for all verifier/* series
-        wandb.define_metric("verifier/*", step_metric="verifier/reward_step")
-        _verifier_metrics_bound = True
-    return next(_verifier_step_counter)
+def _attach_failure_metrics(
+    base_metrics: dict[str, float | int],
+    failure_counters: dict[str, int],
+    should_collect: bool,
+) -> dict[str, float | int]:
+    if not should_collect:
+        return {}
+    metrics = dict(base_metrics)
+    metrics.update({f"verifier/failures/{k}": v for k, v in failure_counters.items() if v})
+    return metrics
 
 
 def get_openai_client():
@@ -347,18 +341,18 @@ async def verify_proof(
     max_retries: int = 3,
     retry_backoff: list[int] = [15, 30, 60, 90, 120],
     log_wandb_metrics: bool | None = None,
-) -> int:
+) -> ProofVerificationResult:
     """
     Evaluate a model-generated proof via Groq GPR model.
-    Returns an integer score [0–7].
-    Retries up to `max_retries` times if Groq API fails or hits rate limits.
-    Logs verifier-specific WandB metrics inline (Approach 1) when enabled.
+    Returns a ProofVerificationResult that includes the integer score [0–7] and optional runtime metrics.
+    Retries up to `max_retries` times if the OpenAI-compatible endpoint fails or hits rate limits.
     """
 
     if len(generation.strip()) == 0:
-        return 0  # Empty response gets score 0
+        return ProofVerificationResult(score=0)  # Empty response gets score 0
     
     client = client or get_openai_client()
+    collect_metrics = _should_collect_metrics(log_wandb_metrics)
 
     prompt_text = PROOF_EVALUATOR_PROMPT.format(
         problem=problem,
@@ -384,69 +378,66 @@ async def verify_proof(
         )
 
     failure_counters = {key: 0 for key in _VERIFIER_FAILURE_EVENTS}
-    log_metrics = _should_log_verifier_metrics(log_wandb_metrics)
-    exhausted_retries = False
     runtime_metrics: dict[str, float | int] = {}
 
-    try:
-        for attempt in range(1, max_retries + 1):
-            attempt_start = time.perf_counter()
-            try:
-                response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
-                latency_seconds = time.perf_counter() - attempt_start
-                usage = getattr(response, "usage", None)
-                output_tokens = None
-                if usage is not None:
-                    output_tokens = getattr(usage, "output_tokens", None)
-                    if output_tokens is None and isinstance(usage, dict):
-                        output_tokens = usage.get("output_tokens")
-                if log_metrics:
-                    runtime_metrics = {"verifier/latency_seconds": latency_seconds}
-                    if output_tokens is not None:
-                        runtime_metrics["verifier/output_tokens"] = output_tokens
-                        if latency_seconds > 0:
-                            runtime_metrics["verifier/output_tokens_per_second"] = output_tokens / latency_seconds
-                output_text = getattr(response, "output_text", None) or ""
-                match = re.search(r"<score>(\d+)</score>", output_text)
-                if match:
-                    return int(match.group(1))
-                else:
-                    print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
-                    return 0
-
-            except openai.RateLimitError as e:
-                wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-                failure_counters["rate_limit"] += 1
-                print(f"[verify_proof] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
-                await asyncio.sleep(wait_time)
-
-            except (asyncio.TimeoutError, TimeoutException):
-                wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-                failure_counters["timeout"] += 1
-                print(
-                    f"[verify_proof] Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), "
-                    f"retrying in {wait_time}s..."
+    for attempt in range(1, max_retries + 1):
+        attempt_start = time.perf_counter()
+        try:
+            response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
+            latency_seconds = time.perf_counter() - attempt_start
+            usage = getattr(response, "usage", None)
+            output_tokens = None
+            if usage is not None:
+                output_tokens = getattr(usage, "output_tokens", None)
+                if output_tokens is None and isinstance(usage, dict):
+                    output_tokens = usage.get("output_tokens")
+            if collect_metrics:
+                runtime_metrics = {"verifier/runtime/latency_seconds": latency_seconds}
+                if output_tokens is not None:
+                    runtime_metrics["verifier/runtime/output_tokens"] = output_tokens
+                    if latency_seconds > 0:
+                        runtime_metrics["verifier/runtime/output_tokens_per_second"] = output_tokens / latency_seconds
+            output_text = getattr(response, "output_text", None) or ""
+            match = re.search(r"<score>(\d+)</score>", output_text)
+            if match:
+                score = int(match.group(1))
+                return ProofVerificationResult(
+                    score=score,
+                    metrics=_attach_failure_metrics(runtime_metrics, failure_counters, collect_metrics),
                 )
-                await asyncio.sleep(wait_time)
+            else:
+                print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
+                return ProofVerificationResult(
+                    score=0,
+                    metrics=_attach_failure_metrics(runtime_metrics, failure_counters, collect_metrics),
+                )
 
-            except Exception as e:
-                wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-                print(f"[verify_proof] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
-                await asyncio.sleep(wait_time)
+        except openai.RateLimitError as e:
+            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            failure_counters["rate_limit"] += 1
+            print(f"[verify_proof] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
+            await asyncio.sleep(wait_time)
 
-        exhausted_retries = True
-        print(f"[verify_proof] All {max_retries} attempts failed — returning score=0")
-        return 0
-    finally:
-        if exhausted_retries:
-            failure_counters["all_attempts_failed"] += 1
-        if log_metrics:
-            reward_step = _next_reward_step()
-            payload = dict(runtime_metrics)
-            payload["verifier/reward_step"] = reward_step
-            payload.update({f"verifier/{k}": v for k, v in failure_counters.items() if v})
-            if payload:
-                wandb.log(payload)
+        except (asyncio.TimeoutError, TimeoutException):
+            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            failure_counters["timeout"] += 1
+            print(
+                f"[verify_proof] Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), "
+                f"retrying in {wait_time}s..."
+            )
+            await asyncio.sleep(wait_time)
+
+        except Exception as e:
+            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            print(f"[verify_proof] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+
+    print(f"[verify_proof] All {max_retries} attempts failed — returning score=0")
+    failure_counters["all_attempts_failed"] += 1
+    return ProofVerificationResult(
+        score=0,
+        metrics=_attach_failure_metrics(runtime_metrics, failure_counters, collect_metrics),
+    )
 
 class MathProofEnvironment:
     def __init__(
@@ -484,7 +475,7 @@ class MathProofEnvironment:
             generation = request["generation"]
 
             client = get_openai_client()
-            score = await verify_proof(
+            verification = await verify_proof(
                 problem=problem,
                 ref_solution=ref_solution,
                 schema=schema,
@@ -494,7 +485,7 @@ class MathProofEnvironment:
                 sampling_kwargs=self.sampling_kwargs,
                 log_wandb_metrics=self.use_wandb,
             )
-            return JSONResponse(content={"score": score})
+            return JSONResponse(content={"score": verification.score})
 
         @app.get("/health")
         async def health():
@@ -520,7 +511,7 @@ def main():
     schema = data["schema_0"]
     prediction = data["solution"]
     for i in range(10):
-        score = asyncio.run(
+        verification = asyncio.run(
             verify_proof(
                 problem,
                 ref_solution,
@@ -530,7 +521,7 @@ def main():
                 sampling_kwargs=sampling_kwargs,
             )
         )
-        print(f"Score: {score}")
+        print(f"Score: {verification.score}")
 
 if __name__ == "__main__":
     main()

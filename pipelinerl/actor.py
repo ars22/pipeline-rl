@@ -8,6 +8,7 @@ from queue import Empty
 import random
 import time
 from collections import defaultdict
+from itertools import count
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 
@@ -41,6 +42,40 @@ from .utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+_verifier_reward_step_counter = count()
+_verifier_metrics_bound = False
+
+
+def _aggregate_group_verifier_metrics(rollout_results: List[RolloutResult]) -> dict[str, float | int]:
+    runtime_values: defaultdict[str, list[float]] = defaultdict(list)
+    failure_totals: defaultdict[str, int] = defaultdict(int)
+    for result in rollout_results:
+        metrics = getattr(result, "verifier_metrics", {}) or {}
+        for key, value in metrics.items():
+            if key.startswith("verifier/failures/"):
+                failure_totals[key] += int(value)
+            else:
+                runtime_values[key].append(float(value))
+    aggregated: dict[str, float | int] = {}
+    for key, values in runtime_values.items():
+        if values:
+            aggregated[key] = sum(values) / len(values)
+    aggregated.update(failure_totals)
+    return aggregated
+
+
+def _log_group_verifier_metrics(metrics: dict[str, float | int]):
+    global _verifier_metrics_bound
+    if not metrics or getattr(wandb, "run", None) is None:
+        return
+    if not _verifier_metrics_bound:
+        wandb.define_metric("verifier/*", step_metric="verifier/reward_step")
+        _verifier_metrics_bound = True
+    reward_step = next(_verifier_reward_step_counter)
+    payload = dict(metrics)
+    payload["verifier/reward_step"] = reward_step
+    wandb.log(payload)
 
 
 class SlidingWindowData(BaseModel):
@@ -366,6 +401,20 @@ class ActorLoop:
                 self.sliding_stats[k].append(v)
         
 
+    def log_verifier_metrics_for_group(self, rollout_results: List[RolloutResult]):
+        if (
+            not self.is_training
+            or not self.cfg.wandb.use_wandb
+            or not rollout_results
+        ):
+            return
+        aggregated = _aggregate_group_verifier_metrics(rollout_results)
+        if not aggregated:
+            return
+        aggregated["verifier/group_rollouts"] = len(rollout_results)
+        _log_group_verifier_metrics(aggregated)
+
+
 
     def run(self, dataset: list[tuple[str, dict]]):
         loop_start_time = time.time()
@@ -479,8 +528,9 @@ class ActorLoop:
                     f" {in_progress} groups in progress"
                 )
 
-                    
+                
                 self.update_stats(rollout_results=rollout_results)
+                self.log_verifier_metrics_for_group(rollout_results)
 
                 finished_groups += 1
                 time_to_publish_train_stats = (
