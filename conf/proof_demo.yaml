@@ -1,6 +1,6 @@
-# --------------------
-# Config for 2+1 nodes
-# --------------------
+# -----------------
+# Config for 1 node
+# -----------------
 defaults:
     - base
     - _self_
@@ -84,6 +84,6 @@ world:
   actor_fraction: 4
   preprocessor_fraction: 0
   finetune_fraction: 4
-  env_replicas: 2
+  env_replicas: 1
   actor_group_port: 9000
   environment_start_port: 7777
