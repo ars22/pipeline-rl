@@ -388,7 +388,6 @@ async def verify_proof(
             lambda: client.responses.create(
                 model=model,
                 input=prompt_text,
-                reasoning={"effort": "medium"}, # TODO: make this configurable
                 **api_kwargs,
             ),
         )

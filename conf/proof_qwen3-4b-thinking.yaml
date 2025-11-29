@@ -44,6 +44,8 @@ llm_grader:
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 32768
+    reasoning:
+      effort: medium
   reasoning_delimiters: ["</think>"]
 
 actor:
