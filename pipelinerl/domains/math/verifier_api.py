@@ -278,13 +278,6 @@ Respond *only* in XML:
 
 _openai_client = None
 
-_VERIFIER_FAILURE_EVENTS = (
-    "rate_limit",  # openai.RateLimitError -> verifier/rate_limit
-    "timeout",  # asyncio.TimeoutError or TimeoutException -> verifier/timeout
-    "all_attempts_failed",  # Exhausted retries -> verifier/all_attempts_failed
-)
-
-
 @dataclass
 class ProofVerificationResult:
     score: int
@@ -297,15 +290,33 @@ def _should_collect_metrics(collect_flag: bool | None) -> bool:
     return collect_flag
 
 
-def _attach_failure_metrics(
+def _merge_metrics(
     base_metrics: dict[str, float | int],
-    failure_counters: dict[str, int],
+    rollout_metrics: dict[str, float | int],
     should_collect: bool,
 ) -> dict[str, float | int]:
     if not should_collect:
         return {}
     metrics = dict(base_metrics)
-    metrics.update({f"verifier/failures/{k}": v for k, v in failure_counters.items() if v})
+    metrics.update(rollout_metrics)
+    return metrics
+
+
+def _build_rollout_metrics(success: bool, failure_causes: list[str]) -> dict[str, int]:
+    if success:
+        return {"verifier/rollouts/success": 1}
+
+    metrics: dict[str, int] = {"verifier/rollouts/failure": 1}
+    if failure_causes:
+        unique_causes = set(failure_causes)
+        if unique_causes == {"timeout"}:
+            metrics["verifier/failures/timeout"] = 1
+            return metrics
+        if unique_causes == {"rate_limit"}:
+            metrics["verifier/failures/rate_limit"] = 1
+            return metrics
+
+    metrics["verifier/failures/all_attempts_failed"] = 1
     return metrics
 
 
@@ -377,7 +388,7 @@ async def verify_proof(
             ),
         )
 
-    failure_counters = {key: 0 for key in _VERIFIER_FAILURE_EVENTS}
+    attempt_failure_causes: list[str] = []
     runtime_metrics: dict[str, float | int] = {}
 
     for attempt in range(1, max_retries + 1):
@@ -399,28 +410,29 @@ async def verify_proof(
                         runtime_metrics["verifier/runtime/output_tokens_per_second"] = output_tokens / latency_seconds
             output_text = getattr(response, "output_text", None) or ""
             match = re.search(r"<score>(\d+)</score>", output_text)
+            rollout_metrics = _build_rollout_metrics(success=True, failure_causes=attempt_failure_causes)
             if match:
                 score = int(match.group(1))
                 return ProofVerificationResult(
                     score=score,
-                    metrics=_attach_failure_metrics(runtime_metrics, failure_counters, collect_metrics),
+                    metrics=_merge_metrics(runtime_metrics, rollout_metrics, collect_metrics),
                 )
             else:
                 print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
                 return ProofVerificationResult(
                     score=0,
-                    metrics=_attach_failure_metrics(runtime_metrics, failure_counters, collect_metrics),
+                    metrics=_merge_metrics(runtime_metrics, rollout_metrics, collect_metrics),
                 )
 
         except openai.RateLimitError as e:
             wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-            failure_counters["rate_limit"] += 1
+            attempt_failure_causes.append("rate_limit")
             print(f"[verify_proof] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
             await asyncio.sleep(wait_time)
 
         except (asyncio.TimeoutError, TimeoutException):
             wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-            failure_counters["timeout"] += 1
+            attempt_failure_causes.append("timeout")
             print(
                 f"[verify_proof] Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), "
                 f"retrying in {wait_time}s..."
@@ -429,14 +441,15 @@ async def verify_proof(
 
         except Exception as e:
             wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            attempt_failure_causes.append("other")
             print(f"[verify_proof] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
             await asyncio.sleep(wait_time)
 
     print(f"[verify_proof] All {max_retries} attempts failed — returning score=0")
-    failure_counters["all_attempts_failed"] += 1
+    rollout_metrics = _build_rollout_metrics(success=False, failure_causes=attempt_failure_causes)
     return ProofVerificationResult(
         score=0,
-        metrics=_attach_failure_metrics(runtime_metrics, failure_counters, collect_metrics),
+        metrics=_merge_metrics(runtime_metrics, rollout_metrics, collect_metrics),
     )
 
 class MathProofEnvironment:
