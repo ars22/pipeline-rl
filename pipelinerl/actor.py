@@ -311,6 +311,7 @@ class ActorLoop:
         self.is_training = is_training
         self.is_scheduling_paused = False
         self.debug_mode = bool(cfg.debug.mode)
+        self.verifier_metrics_step = 0
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
@@ -392,7 +393,7 @@ class ActorLoop:
                 self.sliding_stats[k].append(v)
         
 
-    def log_verifier_metrics_for_group(self, rollout_results: List[RolloutResult], step: int | None = None):
+    def log_verifier_metrics_for_group(self, rollout_results: List[RolloutResult]) -> None:
         if (
             not self.is_training
             or not self.cfg.wandb.use_wandb
@@ -403,7 +404,9 @@ class ActorLoop:
         if not aggregated:
             return
         aggregated["verifier/group_rollouts"] = len(rollout_results)
-        _log_group_verifier_metrics(aggregated, step=step)
+        self.verifier_metrics_step += 1
+        _log_group_verifier_metrics(aggregated, step=self.verifier_metrics_step)
+        return
 
 
 
@@ -521,7 +524,7 @@ class ActorLoop:
 
                 
                 self.update_stats(rollout_results=rollout_results)
-                self.log_verifier_metrics_for_group(rollout_results, step=finished_groups)
+                self.log_verifier_metrics_for_group(rollout_results)
 
                 finished_groups += 1
                 time_to_publish_train_stats = (
