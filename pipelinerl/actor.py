@@ -44,19 +44,19 @@ logger = logging.getLogger(__name__)
 
 def _aggregate_group_verifier_metrics(rollout_results: List[RolloutResult]) -> dict[str, float | int]:
     runtime_values: defaultdict[str, list[float]] = defaultdict(list)
-    failure_totals: defaultdict[str, int] = defaultdict(int)
+    count_totals: defaultdict[str, int] = defaultdict(int)
     for result in rollout_results:
         metrics = getattr(result, "verifier_metrics", {}) or {}
         for key, value in metrics.items():
-            if key.startswith("verifier/failures/"):
-                failure_totals[key] += int(value)
+            if key.startswith("verifier/failures/") or key.startswith("verifier/rollouts/"):
+                count_totals[key] += int(value)
             else:
                 runtime_values[key].append(float(value))
     aggregated: dict[str, float | int] = {}
     for key, values in runtime_values.items():
         if values:
             aggregated[key] = sum(values) / len(values)
-    aggregated.update(failure_totals)
+    aggregated.update(count_totals)
     return aggregated
 
 
