@@ -293,11 +293,9 @@ def _should_collect_metrics(collect_flag: bool | None) -> bool:
 def _merge_metrics(
     base_metrics: dict[str, float | int],
     rollout_metrics: dict[str, float | int],
-    should_collect_runtime: bool,
 ) -> dict[str, float | int]:
     metrics = dict(rollout_metrics)
-    if should_collect_runtime:
-        metrics.update(base_metrics)
+    metrics.update(base_metrics)
     return metrics
 
 
@@ -367,7 +365,7 @@ async def verify_proof(
         rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_generation"])
         return ProofVerificationResult(
             score=0,
-            metrics=_merge_metrics({}, rollout_metrics, collect_metrics),
+            metrics=_merge_metrics({}, rollout_metrics),
         )
 
     client = client or get_openai_client()
@@ -422,13 +420,13 @@ async def verify_proof(
                 score = int(match.group(1))
                 return ProofVerificationResult(
                     score=score,
-                    metrics=_merge_metrics(runtime_metrics, rollout_metrics, collect_metrics),
+                    metrics=_merge_metrics(runtime_metrics, rollout_metrics),
                 )
             else:
                 print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
                 return ProofVerificationResult(
                     score=0,
-                    metrics=_merge_metrics(runtime_metrics, rollout_metrics, collect_metrics),
+                    metrics=_merge_metrics(runtime_metrics, rollout_metrics),
                 )
 
         except openai.RateLimitError as e:
@@ -456,7 +454,7 @@ async def verify_proof(
     rollout_metrics = _build_rollout_metrics(success=False, failure_causes=attempt_failure_causes)
     return ProofVerificationResult(
         score=0,
-        metrics=_merge_metrics(runtime_metrics, rollout_metrics, collect_metrics),
+        metrics=_merge_metrics(runtime_metrics, rollout_metrics),
     )
 
 class MathProofEnvironment:
