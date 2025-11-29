@@ -18,7 +18,7 @@ finetune:
   seq_parallel: 1
   save_checkpoint_steps: 50
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof-8K
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof-16K
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
