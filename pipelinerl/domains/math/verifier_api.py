@@ -348,9 +348,9 @@ async def verify_proof(
     model: str | None = None,
     sampling_kwargs: dict[str, Any] | None = None,
     client=None,
-    timeout_seconds: int = 10, #900,
+    timeout_seconds: int = 900,
     max_retries: int = 3,
-    retry_backoff: list[int] = [5], #[15, 30, 60, 90, 120],
+    retry_backoff: list[int] = [15, 30, 60, 90, 120],
     log_wandb_metrics: bool | None = None,
 ) -> ProofVerificationResult:
     """
