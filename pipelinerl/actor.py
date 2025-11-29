@@ -57,6 +57,15 @@ def _aggregate_group_verifier_metrics(rollout_results: List[RolloutResult]) -> d
         if values:
             aggregated[key] = sum(values) / len(values)
     aggregated.update(count_totals)
+
+    total_rollouts = len(rollout_results)
+    if total_rollouts:
+        failure_keys = [key for key in aggregated.keys() if key.startswith("verifier/failures/")]
+        for failure_key in failure_keys:
+            frac_key = f"{failure_key}_frac"
+            aggregated[frac_key] = aggregated[failure_key] / total_rollouts
+            del aggregated[failure_key]
+
     return aggregated
 
 
