@@ -14,7 +14,7 @@ finetune:
   train_batch_size: 32
   valid_batch_size: 32
   gradient_accumulation_passes: 8
-  seq_length: 10240
+  seq_length: 18432
   seq_parallel: 1
   save_checkpoint_steps: 50
   push_to_hub: true
