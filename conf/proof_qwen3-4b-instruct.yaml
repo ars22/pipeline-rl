@@ -11,12 +11,11 @@ model_path: Qwen/Qwen3-4B-Instruct-2507
 
 finetune:
   attempts: 8
-  train_batch_size: 48
-  valid_batch_size: 48
+  train_batch_size: 32
+  valid_batch_size: 32
   gradient_accumulation_passes: 8
   seq_length: 10240
-  seq_parallel: 2
-  max_train_steps: -1
+  seq_parallel: 1
   save_checkpoint_steps: 50
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Instruct-2507-Proof-8K
@@ -38,9 +37,9 @@ test_llm:
     top_k: 20
 
 llm_grader:
-  name: openai/gpt-oss-120b # or gpt-oss-120b-twj if running via inference endpoints
-  dp: 1
-  tp: 8
+  name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
+  dp: 8
+  tp: 1
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 16384
