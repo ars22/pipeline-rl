@@ -293,12 +293,11 @@ def _should_collect_metrics(collect_flag: bool | None) -> bool:
 def _merge_metrics(
     base_metrics: dict[str, float | int],
     rollout_metrics: dict[str, float | int],
-    should_collect: bool,
+    should_collect_runtime: bool,
 ) -> dict[str, float | int]:
-    if not should_collect:
-        return {}
-    metrics = dict(base_metrics)
-    metrics.update(rollout_metrics)
+    metrics = dict(rollout_metrics)
+    if should_collect_runtime:
+        metrics.update(base_metrics)
     return metrics
 
 
@@ -314,6 +313,9 @@ def _build_rollout_metrics(success: bool, failure_causes: list[str]) -> dict[str
             return metrics
         if unique_causes == {"rate_limit"}:
             metrics["verifier/failures/rate_limit"] = 1
+            return metrics
+        if unique_causes == {"no_generation"}:
+            metrics["verifier/failures/no_generation"] = 1
             return metrics
 
     metrics["verifier/failures/all_attempts_failed"] = 1
@@ -359,11 +361,16 @@ async def verify_proof(
     Retries up to `max_retries` times if the OpenAI-compatible endpoint fails or hits rate limits.
     """
 
-    if len(generation.strip()) == 0:
-        return ProofVerificationResult(score=0)  # Empty response gets score 0
-    
-    client = client or get_openai_client()
     collect_metrics = _should_collect_metrics(log_wandb_metrics)
+
+    if len(generation.strip()) == 0:
+        rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_generation"])
+        return ProofVerificationResult(
+            score=0,
+            metrics=_merge_metrics({}, rollout_metrics, collect_metrics),
+        )
+
+    client = client or get_openai_client()
 
     prompt_text = PROOF_EVALUATOR_PROMPT.format(
         problem=problem,
