@@ -45,7 +45,6 @@ llm_grader:
     max_output_tokens: 16384
     reasoning:
       effort: medium
-  reasoning_delimiters: ["</think>"]
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
