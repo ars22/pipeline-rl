@@ -17,7 +17,6 @@ import uvloop
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
 from tapeagents.llms import TrainableLLM
-from typing import Dict, List
 
 import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
@@ -42,21 +41,34 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
-def _aggregate_group_verifier_metrics(rollout_results: List[RolloutResult]) -> dict[str, float | int]:
+def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> dict[str, float | int]:
     runtime_values: defaultdict[str, list[float]] = defaultdict(list)
-    failure_totals: defaultdict[str, int] = defaultdict(int)
+    count_totals: defaultdict[str, int] = defaultdict(int)
     for result in rollout_results:
         metrics = getattr(result, "verifier_metrics", {}) or {}
         for key, value in metrics.items():
-            if key.startswith("verifier/failures/"):
-                failure_totals[key] += int(value)
+            if key.startswith("verifier/failures/") or key.startswith("verifier/rollouts/"):
+                count_totals[key] += int(value)
             else:
                 runtime_values[key].append(float(value))
     aggregated: dict[str, float | int] = {}
     for key, values in runtime_values.items():
         if values:
             aggregated[key] = sum(values) / len(values)
-    aggregated.update(failure_totals)
+    aggregated.update(count_totals)
+
+    total_rollouts = len(rollout_results)
+    if total_rollouts:
+        normalized_keys = [
+            key
+            for key in list(aggregated.keys())
+            if key.startswith("verifier/failures/") or key.startswith("verifier/rollouts/")
+        ]
+        for count_key in normalized_keys:
+            frac_key = f"{count_key}_frac"
+            aggregated[frac_key] = aggregated[count_key] / total_rollouts
+            del aggregated[count_key]
+
     return aggregated
 
 
@@ -311,6 +323,7 @@ class ActorLoop:
         self.is_training = is_training
         self.is_scheduling_paused = False
         self.debug_mode = bool(cfg.debug.mode)
+        self.verifier_metrics_step = 0
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
@@ -355,7 +368,7 @@ class ActorLoop:
         self.model_versions_list = []
         self.sliding_stats = defaultdict(list)
     
-    def compute_domain_agnostic_metrics(self, result: RolloutResult) -> Dict[str, float]:
+    def compute_domain_agnostic_metrics(self, result: RolloutResult) -> dict[str, float]:
         metrics = {}
         
         metrics['overflow'] = all([not training_text.finished for training_text in result.training_texts ])
@@ -365,7 +378,7 @@ class ActorLoop:
         
         return metrics
 
-    def update_stats(self, rollout_results: List[RolloutResult]):
+    def update_stats(self, rollout_results: list[RolloutResult]):
         for result in rollout_results:
             assert result.model_version is not None
             assert isinstance(result.metrics, BaseMetrics), "Metrics should be an instance of BaseMetrics"
@@ -392,7 +405,7 @@ class ActorLoop:
                 self.sliding_stats[k].append(v)
         
 
-    def log_verifier_metrics_for_group(self, rollout_results: List[RolloutResult], step: int | None = None):
+    def log_verifier_metrics_for_group(self, rollout_results: list[RolloutResult]) -> None:
         if (
             not self.is_training
             or not self.cfg.wandb.use_wandb
@@ -403,7 +416,9 @@ class ActorLoop:
         if not aggregated:
             return
         aggregated["verifier/group_rollouts"] = len(rollout_results)
-        _log_group_verifier_metrics(aggregated, step=step)
+        self.verifier_metrics_step += 1
+        _log_group_verifier_metrics(aggregated, step=self.verifier_metrics_step)
+        return
 
 
 
@@ -521,7 +536,7 @@ class ActorLoop:
 
                 
                 self.update_stats(rollout_results=rollout_results)
-                self.log_verifier_metrics_for_group(rollout_results, step=finished_groups)
+                self.log_verifier_metrics_for_group(rollout_results)
 
                 finished_groups += 1
                 time_to_publish_train_stats = (
@@ -557,7 +572,7 @@ class ActorLoop:
                     logger.info(f"Finished {expected_rollouts} rollouts, stopping actor loop")
                     break
 
-    def publish_stats(self, stats_writer: StreamWriter, loop_stats: Dict):
+    def publish_stats(self, stats_writer: StreamWriter, loop_stats: dict):
         split_name = "test_" if not self.is_training else ""
 
         stats = defaultdict(float)
