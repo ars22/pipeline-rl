@@ -14,11 +14,11 @@ finetune:
   train_batch_size: 32
   valid_batch_size: 32
   gradient_accumulation_passes: 8
-  seq_length: 26624
-  seq_parallel: 1
+  seq_length: 34816
+  seq_parallel: 2
   save_checkpoint_steps: 50
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof-24K
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof-32K
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
@@ -26,12 +26,12 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 24576 
+    max_tokens: 32768 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 24576
+    max_tokens: 32768
     temperature: 0.8 
     top_p: 0.95
     top_k: 20
