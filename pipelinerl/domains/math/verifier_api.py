@@ -315,6 +315,9 @@ def _build_rollout_metrics(success: bool, failure_causes: list[str]) -> dict[str
         if unique_causes == {"no_generation"}:
             metrics["verifier/failures/no_generation"] = 1
             return metrics
+        if unique_causes == {"no_score_tag"}:
+            metrics["verifier/failures/no_score_tag"] = 1
+            return metrics
 
     metrics["verifier/failures/all_attempts_failed"] = 1
     return metrics
@@ -414,14 +417,15 @@ async def verify_proof(
                         runtime_metrics["verifier/runtime/output_tokens_per_second"] = output_tokens / latency_seconds
             output_text = getattr(response, "output_text", None) or ""
             match = re.search(r"<score>(\d+)</score>", output_text)
-            rollout_metrics = _build_rollout_metrics(success=True, failure_causes=attempt_failure_causes)
             if match:
+                rollout_metrics = _build_rollout_metrics(success=True, failure_causes=attempt_failure_causes)
                 score = int(match.group(1))
                 return ProofVerificationResult(
                     score=score,
                     metrics=_merge_metrics(runtime_metrics, rollout_metrics),
                 )
             else:
+                rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_score_tag"])
                 print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
                 return ProofVerificationResult(
                     score=0,
