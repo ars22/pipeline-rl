@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=imo-grader-mn
 #SBATCH --qos=high
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --exclusive
 #SBATCH --gres=gpu:8
@@ -110,69 +111,7 @@ if [[ -z "$HEAD_NODE_IP" ]]; then
   exit 1
 fi
 
-count_device_list() {
-  local value="${1:-}"
-  value="${value// /}"
-  value="${value//[[:alpha:]]/}"
-  value="${value//[():]/}"
-  if [[ -z "$value" ]]; then
-    echo 0
-    return
-  fi
-  if [[ "$value" =~ ^[0-9]+$ ]]; then
-    echo "$value"
-    return
-  fi
-  local total=0
-  local part
-  local IFS=","
-  read -ra parts <<< "$value"
-  for part in "${parts[@]}"; do
-    [[ -z "$part" ]] && continue
-    if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-      local start="${BASH_REMATCH[1]}"
-      local end="${BASH_REMATCH[2]}"
-      if (( end >= start )); then
-        total=$((total + end - start + 1))
-      fi
-    elif [[ "$part" =~ ^[0-9]+$ ]]; then
-      total=$((total + 1))
-    fi
-  done
-  echo "$total"
-}
-
-detect_gpus_per_node() {
-  local count=""
-  if command -v srun >/dev/null 2>&1 && command -v nvidia-smi >/dev/null 2>&1; then
-    count=$(srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" \
-      bash -c 'nvidia-smi --query-gpu=index --format=csv,noheader | wc -l' 2>/dev/null | tail -n1 | tr -d '[:space:]') || count=""
-  fi
-
-  if ! (( ${count:-0} > 0 )) && command -v nvidia-smi >/dev/null 2>&1; then
-    count=$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l | tr -d '[:space:]') || count=""
-  fi
-
-  if ! (( ${count:-0} > 0 )); then
-    if [[ -n "${SLURM_GPUS_PER_NODE:-}" ]]; then
-      count=$(count_device_list "${SLURM_GPUS_PER_NODE}")
-    elif [[ -n "${SLURM_GPUS_ON_NODE:-}" ]]; then
-      count=$(count_device_list "${SLURM_GPUS_ON_NODE}")
-    elif [[ -n "${SLURM_STEP_GPUS:-}" ]]; then
-      count=$(count_device_list "${SLURM_STEP_GPUS}")
-    elif [[ -n "${SLURM_JOB_GPUS:-}" ]]; then
-      count=$(count_device_list "${SLURM_JOB_GPUS}")
-    fi
-  fi
-
-  if ! (( ${count:-0} > 0 )); then
-    count=$(count_device_list "${CUDA_VISIBLE_DEVICES:-}")
-  fi
-
-  echo "${count:-0}"
-}
-
-NUM_GPUS_PER_NODE=$(detect_gpus_per_node)
+NUM_GPUS_PER_NODE=$(srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" nvidia-smi -L | wc -l)
 
 if ! (( NUM_GPUS_PER_NODE > 0 )); then
   echo "ERROR: Unable to detect GPUs per node" >&2
@@ -224,24 +163,6 @@ echo "All nodes:"
 echo "$NODES"
 echo "vLLM log: $VLLM_LOG"
 echo "================================================================"
-
-RAY_CLI_BIN=$(srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" bash -lc 'command -v ray || true' | head -n1 | tr -d '[:space:]')
-if [[ -z "$RAY_CLI_BIN" ]]; then
-  echo "ERROR: Unable to locate the 'ray' CLI on compute node $HEAD_NODE" >&2
-  exit 1
-fi
-
-RAY_BIN_DIR=$(dirname "$RAY_CLI_BIN")
-if srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" test -x "${RAY_BIN_DIR}/python3" >/dev/null 2>&1; then
-  RAY_PYTHON_BIN="${RAY_BIN_DIR}/python3"
-elif srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" test -x "${RAY_BIN_DIR}/python" >/dev/null 2>&1; then
-  RAY_PYTHON_BIN="${RAY_BIN_DIR}/python"
-else
-  RAY_PYTHON_BIN="python3"
-fi
-
-echo "Ray CLI detected at: $RAY_CLI_BIN"
-echo "Ray Python interpreter: $RAY_PYTHON_BIN"
 
 CLEANED_UP=0
 SRUN_HEAD_PID=""
@@ -317,37 +238,16 @@ fi
 
 echo "Waiting for Ray cluster to register $TOTAL_GPUS GPUs..."
 for attempt in {1..60}; do
-  CURRENT_GPUS=$(
-    srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" "$RAY_PYTHON_BIN" - <<'PY' 2>/dev/null
-import logging
-import os
-try:
-    import ray
-except ModuleNotFoundError:
-    print("IMPORT_ERROR")
-    raise SystemExit(0)
-try:
-    ray.init(address=os.environ["RAY_ADDRESS"], logging_level=logging.ERROR)
-    print(int(ray.cluster_resources().get("GPU", 0)))
-except Exception:
-    print(0)
-PY
-  )
-  CURRENT_GPUS=$(echo "$CURRENT_GPUS" | tail -n1 | tr -d '[:space:]')
+  CURRENT_GPUS=$(python3 -c "import ray; ray.init(); print(int(ray.cluster_resources().get('GPU', 0)))" 2>/dev/null || echo "0")
 
-  if [[ "$CURRENT_GPUS" == "IMPORT_ERROR" ]]; then
-    echo "WARNING: Ray Python module unavailable in $RAY_PYTHON_BIN; skipping GPU readiness check."
-    CURRENT_GPUS=$TOTAL_GPUS
-  fi
+  echo "Ray cluster status: $CURRENT_GPUS / $TOTAL_GPUS GPUs ready (attempt $attempt/60)"
 
-  echo "Ray cluster status: ${CURRENT_GPUS:-0} / $TOTAL_GPUS GPUs ready (attempt $attempt/60)"
-
-  if [[ "${CURRENT_GPUS:-0}" -ge "$TOTAL_GPUS" ]]; then
-    echo "✓ Ray cluster ready with $CURRENT_GPUS GPUs."
+  if [ "$CURRENT_GPUS" -ge "$TOTAL_GPUS" ]; then
+    echo "✓ Ray cluster ready with $TOTAL_GPUS GPUs!"
     break
   fi
 
-  if [[ "$attempt" -eq 60 ]]; then
+  if [ $attempt -eq 60 ]; then
     echo "ERROR: Ray cluster failed to report $TOTAL_GPUS GPUs within timeout." >&2
     exit 1
   fi
