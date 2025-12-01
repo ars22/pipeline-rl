@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=imo-grader-mn
 #SBATCH --qos=high
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
 #SBATCH --exclusive
 #SBATCH --gres=gpu:8
