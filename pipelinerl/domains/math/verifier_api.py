@@ -312,8 +312,8 @@ def _build_rollout_metrics(success: bool, failure_causes: list[str]) -> dict[str
         if unique_causes == {"rate_limit"}:
             metrics["verifier/failures/rate_limit"] = 1
             return metrics
-        if unique_causes == {"no_generation"}:
-            metrics["verifier/failures/no_generation"] = 1
+        if unique_causes == {"no_input"}:
+            metrics["verifier/failures/no_input"] = 1
             return metrics
         if unique_causes == {"no_score_tag"}:
             metrics["verifier/failures/no_score_tag"] = 1
@@ -365,7 +365,7 @@ async def verify_proof(
     collect_metrics = _should_collect_metrics(log_wandb_metrics)
 
     if len(generation.strip()) == 0:
-        rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_generation"])
+        rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_input"])
         return ProofVerificationResult(
             score=0,
             metrics=_merge_metrics({}, rollout_metrics),
