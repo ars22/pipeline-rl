@@ -539,7 +539,7 @@ def _ensure_grader_cleanup_hooks():
     _GRADER_CLEANUP_REGISTERED = True
 
 
-def _wait_for_slurm_nodes(job_id: str, timeout: int = 600, poll_interval: int = 5) -> str:
+def _wait_for_slurm_nodes(job_id: str, timeout: int = 900, poll_interval: int = 5) -> str:
     """Poll Slurm until a job is assigned to a node."""
     deadline = time.time() + timeout
     while time.time() < deadline:
