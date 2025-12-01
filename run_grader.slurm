@@ -10,11 +10,10 @@
 #SBATCH --requeue
 #SBATCH --time=3-00:00:00
 
-# Multi-node aware vLLM grader that mirrors the IMOBench multi-node launcher.
-# Uses a Ray backend so the job can scale beyond a single node when requested.
+# Multi-node grader launch script
 
 module load cuda/12.9
-set -x -euo pipefail
+set -x -e
 
 source ~/.bashrc
 source grader/bin/activate
@@ -30,7 +29,6 @@ usage() {
 MODEL=""
 DP=1
 TP=1
-CPUS_PER_NODE_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -44,10 +42,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tp)
       TP="${2:-}"
-      shift 2
-      ;;
-    --cpus-per-node)
-      CPUS_PER_NODE_OVERRIDE="${2:-}"
       shift 2
       ;;
     *)
@@ -128,33 +122,6 @@ count_device_list() {
   echo "$total"
 }
 
-extract_count_field() {
-  local field="${1:-}"
-  field="${field// /}"
-  if [[ -z "$field" ]]; then
-    echo ""
-    return
-  fi
-  local token
-  local IFS=","
-  read -ra parts <<< "$field"
-  for token in "${parts[@]}"; do
-    if [[ "$token" =~ ^([0-9]+)\(x[0-9]+\)$ ]]; then
-      echo "${BASH_REMATCH[1]}"
-      return
-    fi
-    if [[ "$token" =~ ^([0-9]+)$ ]]; then
-      echo "${BASH_REMATCH[1]}"
-      return
-    fi
-  done
-  if [[ "$field" =~ ([0-9]+) ]]; then
-    echo "${BASH_REMATCH[1]}"
-  else
-    echo ""
-  fi
-}
-
 detect_gpus_per_node() {
   local count=""
   if command -v srun >/dev/null 2>&1 && command -v nvidia-smi >/dev/null 2>&1; then
@@ -185,69 +152,10 @@ detect_gpus_per_node() {
   echo "${count:-0}"
 }
 
-CPU_DETECTION_SOURCE=""
-detect_cpus_per_node() {
-  local value=""
-
-  value=$(extract_count_field "${SLURM_CPUS_ON_NODE:-}")
-  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
-    CPU_DETECTION_SOURCE="SLURM_CPUS_ON_NODE=${SLURM_CPUS_ON_NODE}"
-    echo "$value"
-    return
-  fi
-
-  value=$(extract_count_field "${SLURM_JOB_CPUS_PER_NODE:-}")
-  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
-    CPU_DETECTION_SOURCE="SLURM_JOB_CPUS_PER_NODE=${SLURM_JOB_CPUS_PER_NODE}"
-    echo "$value"
-    return
-  fi
-
-  value=$(extract_count_field "${SLURM_CPUS_PER_TASK:-}")
-  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 1 )); then
-    CPU_DETECTION_SOURCE="SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK}"
-    echo "$value"
-    return
-  fi
-
-  value=$(srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" nproc 2>/dev/null | tail -n1 | tr -d '[:space:]')
-  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
-    CPU_DETECTION_SOURCE="srun nproc on $HEAD_NODE"
-    echo "$value"
-    return
-  fi
-
-  value=$(nproc 2>/dev/null | tr -d '[:space:]')
-  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
-    CPU_DETECTION_SOURCE="local nproc"
-    echo "$value"
-    return
-  fi
-
-  CPU_DETECTION_SOURCE="fallback default"
-  echo 1
-}
-
 NUM_GPUS_PER_NODE=$(detect_gpus_per_node)
 
 if ! (( NUM_GPUS_PER_NODE > 0 )); then
   echo "ERROR: Unable to detect GPUs per node" >&2
-  exit 1
-fi
-
-if [[ -n "$CPUS_PER_NODE_OVERRIDE" ]]; then
-  if ! [[ "$CPUS_PER_NODE_OVERRIDE" =~ ^[0-9]+$ ]] || (( CPUS_PER_NODE_OVERRIDE < 1 )); then
-    echo "ERROR: --cpus-per-node must be a positive integer" >&2
-    exit 1
-  fi
-  CPUS_PER_NODE=$CPUS_PER_NODE_OVERRIDE
-  CPU_DETECTION_SOURCE="user override"
-else
-  CPUS_PER_NODE=$(detect_cpus_per_node)
-fi
-
-if ! (( CPUS_PER_NODE > 0 )); then
-  echo "ERROR: Unable to determine CPUs per node" >&2
   exit 1
 fi
 
@@ -289,7 +197,6 @@ echo "DP: $DP | TP: $TP | Requested GPUs: $REQUIRED_GPUS"
 echo "Nodes: $NUM_NODES"
 echo "GPUs per node: $NUM_GPUS_PER_NODE"
 echo "Total GPUs: $TOTAL_GPUS"
-echo "CPUs per node: $CPUS_PER_NODE (${CPU_DETECTION_SOURCE})"
 echo "Head node: $HEAD_NODE (IP: $HEAD_NODE_IP)"
 echo "All nodes:"
 echo "$NODES"
