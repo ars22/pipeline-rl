@@ -130,7 +130,7 @@ LOG_DIR=/fsx/h4/logs
 mkdir -p "$LOG_DIR"
 VLLM_LOG="${LOG_DIR}/imo-grader-${SLURM_JOB_ID}-vllm.log"
 
-CPUS_PER_NODE=${SLURM_CPUS_PER_TASK:-$(nproc)}
+CPUS_PER_NODE=88
 
 export MODEL
 export DP
@@ -255,8 +255,7 @@ vllm serve "$MODEL" \
   --tensor-parallel-size $TP \
   --enable-prefix-caching \
   --enable-chunked-prefill \
-  --gpu-memory-utilization 0.9 \
-  --disable-log-requests \
+  --gpu-memory-utilization 0.9
   &> "$VLLM_LOG" &
 VLLM_PID=$!
 
