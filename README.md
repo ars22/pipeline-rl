@@ -64,8 +64,19 @@ llm_grader:
   # name: gpt-oss-120b-twj          # for deployed endpoint
 ```
 
-When you launch the training job, the grader server/endpoint will start automatically.
+When you launch the training job, the grader server/endpoint will start automatically. 
 
+To debug the grader, allocate one or more nodes:
+
+```sh
+salloc --nodes=1 --gres=gpu:8 --qos=high --time=02:00:00 --job-name=prl-grader --partition=hopper-prod
+```
+
+Then run the grader server manually:
+
+```sh
+srun --nodes=1 --ntasks=1 --overlap bash run_grader_multinode.slurm --model Qwen/Qwen3-0.6B --dp 8
+```
 
 # Hugging Face Hub integration
 
