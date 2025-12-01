@@ -130,18 +130,7 @@ LOG_DIR=/fsx/h4/logs
 mkdir -p "$LOG_DIR"
 VLLM_LOG="${LOG_DIR}/imo-grader-${SLURM_JOB_ID}-vllm.log"
 
-if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
-  CPUS_PER_NODE=${SLURM_CPUS_PER_TASK}
-else
-  CPUS_PER_NODE=$(srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" nproc 2>/dev/null | tail -n1 | tr -d '[:space:]')
-  if [[ -z "$CPUS_PER_NODE" ]]; then
-    CPUS_PER_NODE=$(nproc)
-  fi
-fi
-
-if ! (( CPUS_PER_NODE > 0 )); then
-  CPUS_PER_NODE=1
-fi
+CPUS_PER_NODE=${SLURM_CPUS_PER_TASK:-$(nproc)}
 
 export MODEL
 export DP
