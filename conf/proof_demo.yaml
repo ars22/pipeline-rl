@@ -38,6 +38,7 @@ test_llm:
 
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-20b-reh if running via inference endpoints
+  num_nodes: 1
   dp: 8
   tp: 1
   sampling_kwargs:

@@ -116,6 +116,7 @@ rl:
 
 llm_grader:
   name: null
+  num_nodes: 1
   tp: 1
   dp: 1
   sampling_kwargs:

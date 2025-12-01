@@ -578,12 +578,13 @@ def _wait_for_vllm_health(url: str, retries: int = 60, delay: int = 10, timeout:
     raise RuntimeError(f"vLLM health check failed after {retries} attempts: {last_error}")
 
 
-def start_llm_grader(name: str, dp: int = 1, tp: int = 1, namespace: str = "HuggingFaceH4", timeout=300):
+def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, namespace: str = "HuggingFaceH4", timeout=300):
     if "/" in name:
         logger.info(f"Starting local LLM grader {name}...")
         cmd = [
             "sbatch",
             "--parsable",
+            f"--nodes={num_nodes}",
             "run_grader.slurm",
             "--model",
             name,
@@ -643,7 +644,7 @@ def main(cfg: DictConfig):
     # Spin up LLM grader if specified
     if cfg.llm_grader.name is not None:
         if rank == 0:
-            start_llm_grader(cfg.llm_grader.name, dp=cfg.llm_grader.dp, tp=cfg.llm_grader.tp)
+            start_llm_grader(cfg.llm_grader.name, num_nodes=cfg.llm_grader.num_nodes, dp=cfg.llm_grader.dp, tp=cfg.llm_grader.tp)
         else:
             logger.info(
                 "Skipping LLM grader launch on rank %s; waiting for master to provision it",

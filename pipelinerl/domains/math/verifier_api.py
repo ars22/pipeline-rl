@@ -416,6 +416,7 @@ async def verify_proof(
                     if latency_seconds > 0:
                         runtime_metrics["verifier/runtime/output_tokens_per_second"] = output_tokens / latency_seconds
             output_text = getattr(response, "output_text", None) or ""
+            print(f"[verify_proof] Judge response: {output_text}")
             match = re.search(r"<score>(\d+)</score>", output_text)
             if match:
                 rollout_metrics = _build_rollout_metrics(success=True, failure_causes=attempt_failure_causes)
