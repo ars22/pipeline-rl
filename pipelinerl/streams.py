@@ -256,10 +256,7 @@ class FileStreamWriter(StreamWriter):
         _file_dir = stream_dir(self.stream.exp_path, self.stream.topic, self.stream.instance, self.stream.partition)
         os.makedirs(_file_dir, exist_ok=True)
         self._file_path = stream_file(_file_dir, 0)
-        binary_mode = {"a": "ab", "w": "wb"}.get(self.mode)
-        if binary_mode is None:
-            raise ValueError(f"Unsupported file stream mode {self.mode}")
-        self._file = open(self._file_path, binary_mode)
+        self._file = open(self._file_path, self.mode)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -275,8 +272,8 @@ class FileStreamWriter(StreamWriter):
                 if isinstance(value, torch.Tensor):
                     data_dict[key] = value.numpy()
             data = data_dict
-        record = orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY) + b"\n"
-        self._file.write(record)
+        self._file.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY).decode("utf-8"))
+        self._file.write("\n")
         self._file.flush()
 
 
