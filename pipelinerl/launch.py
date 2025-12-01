@@ -581,10 +581,20 @@ def _wait_for_vllm_health(url: str, retries: int = 60, delay: int = 10, timeout:
 def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, namespace: str = "HuggingFaceH4", timeout=300):
     if "/" in name:
         logger.info(f"Starting local LLM grader {name}...")
+        job_name = None
+        current_job_id = os.environ.get("SLURM_JOB_ID")
+        if current_job_id:
+            job_name = f"{current_job_id}-grader"
+            logger.info("Submitting local LLM grader with job name %s", job_name)
+
         cmd = [
             "sbatch",
             "--parsable",
             f"--nodes={num_nodes}",
+        ]
+        if job_name:
+            cmd.append(f"--job-name={job_name}")
+        cmd += [
             "run_grader.slurm",
             "--model",
             name,
