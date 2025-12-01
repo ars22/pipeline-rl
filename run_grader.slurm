@@ -30,6 +30,7 @@ usage() {
 MODEL=""
 DP=1
 TP=1
+CPUS_PER_NODE_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -43,6 +44,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tp)
       TP="${2:-}"
+      shift 2
+      ;;
+    --cpus-per-node)
+      CPUS_PER_NODE_OVERRIDE="${2:-}"
       shift 2
       ;;
     *)
@@ -123,6 +128,33 @@ count_device_list() {
   echo "$total"
 }
 
+extract_count_field() {
+  local field="${1:-}"
+  field="${field// /}"
+  if [[ -z "$field" ]]; then
+    echo ""
+    return
+  fi
+  local token
+  local IFS=","
+  read -ra parts <<< "$field"
+  for token in "${parts[@]}"; do
+    if [[ "$token" =~ ^([0-9]+)\(x[0-9]+\)$ ]]; then
+      echo "${BASH_REMATCH[1]}"
+      return
+    fi
+    if [[ "$token" =~ ^([0-9]+)$ ]]; then
+      echo "${BASH_REMATCH[1]}"
+      return
+    fi
+  done
+  if [[ "$field" =~ ([0-9]+) ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo ""
+  fi
+}
+
 detect_gpus_per_node() {
   local count=""
   if command -v srun >/dev/null 2>&1 && command -v nvidia-smi >/dev/null 2>&1; then
@@ -153,10 +185,69 @@ detect_gpus_per_node() {
   echo "${count:-0}"
 }
 
+CPU_DETECTION_SOURCE=""
+detect_cpus_per_node() {
+  local value=""
+
+  value=$(extract_count_field "${SLURM_CPUS_ON_NODE:-}")
+  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+    CPU_DETECTION_SOURCE="SLURM_CPUS_ON_NODE=${SLURM_CPUS_ON_NODE}"
+    echo "$value"
+    return
+  fi
+
+  value=$(extract_count_field "${SLURM_JOB_CPUS_PER_NODE:-}")
+  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+    CPU_DETECTION_SOURCE="SLURM_JOB_CPUS_PER_NODE=${SLURM_JOB_CPUS_PER_NODE}"
+    echo "$value"
+    return
+  fi
+
+  value=$(extract_count_field "${SLURM_CPUS_PER_TASK:-}")
+  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 1 )); then
+    CPU_DETECTION_SOURCE="SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK}"
+    echo "$value"
+    return
+  fi
+
+  value=$(srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" nproc 2>/dev/null | tail -n1 | tr -d '[:space:]')
+  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+    CPU_DETECTION_SOURCE="srun nproc on $HEAD_NODE"
+    echo "$value"
+    return
+  fi
+
+  value=$(nproc 2>/dev/null | tr -d '[:space:]')
+  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+    CPU_DETECTION_SOURCE="local nproc"
+    echo "$value"
+    return
+  fi
+
+  CPU_DETECTION_SOURCE="fallback default"
+  echo 1
+}
+
 NUM_GPUS_PER_NODE=$(detect_gpus_per_node)
 
 if ! (( NUM_GPUS_PER_NODE > 0 )); then
   echo "ERROR: Unable to detect GPUs per node" >&2
+  exit 1
+fi
+
+if [[ -n "$CPUS_PER_NODE_OVERRIDE" ]]; then
+  if ! [[ "$CPUS_PER_NODE_OVERRIDE" =~ ^[0-9]+$ ]] || (( CPUS_PER_NODE_OVERRIDE < 1 )); then
+    echo "ERROR: --cpus-per-node must be a positive integer" >&2
+    exit 1
+  fi
+  CPUS_PER_NODE=$CPUS_PER_NODE_OVERRIDE
+  CPU_DETECTION_SOURCE="user override"
+else
+  CPUS_PER_NODE=$(detect_cpus_per_node)
+fi
+
+if ! (( CPUS_PER_NODE > 0 )); then
+  echo "ERROR: Unable to determine CPUs per node" >&2
   exit 1
 fi
 
@@ -173,7 +264,18 @@ mkdir -p "$LOG_DIR"
 VLLM_LOG="${LOG_DIR}/imo-grader-${SLURM_JOB_ID}-vllm.log"
 RAY_PORT=${RAY_PORT:-6379}
 VLLM_PORT=${VLLM_PORT:-8000}
-CPUS_PER_NODE=${SLURM_CPUS_PER_TASK:-$(nproc)}
+if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
+  CPUS_PER_NODE=${SLURM_CPUS_PER_TASK}
+else
+  CPUS_PER_NODE=$(srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" nproc 2>/dev/null | tail -n1 | tr -d '[:space:]')
+  if [[ -z "$CPUS_PER_NODE" ]]; then
+    CPUS_PER_NODE=$(nproc)
+  fi
+fi
+
+if ! (( CPUS_PER_NODE > 0 )); then
+  CPUS_PER_NODE=1
+fi
 
 export MODEL
 export DP
@@ -187,11 +289,30 @@ echo "DP: $DP | TP: $TP | Requested GPUs: $REQUIRED_GPUS"
 echo "Nodes: $NUM_NODES"
 echo "GPUs per node: $NUM_GPUS_PER_NODE"
 echo "Total GPUs: $TOTAL_GPUS"
+echo "CPUs per node: $CPUS_PER_NODE (${CPU_DETECTION_SOURCE})"
 echo "Head node: $HEAD_NODE (IP: $HEAD_NODE_IP)"
 echo "All nodes:"
 echo "$NODES"
 echo "vLLM log: $VLLM_LOG"
 echo "================================================================"
+
+RAY_CLI_BIN=$(srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" bash -lc 'command -v ray || true' | head -n1 | tr -d '[:space:]')
+if [[ -z "$RAY_CLI_BIN" ]]; then
+  echo "ERROR: Unable to locate the 'ray' CLI on compute node $HEAD_NODE" >&2
+  exit 1
+fi
+
+RAY_BIN_DIR=$(dirname "$RAY_CLI_BIN")
+if srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" test -x "${RAY_BIN_DIR}/python3" >/dev/null 2>&1; then
+  RAY_PYTHON_BIN="${RAY_BIN_DIR}/python3"
+elif srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" test -x "${RAY_BIN_DIR}/python" >/dev/null 2>&1; then
+  RAY_PYTHON_BIN="${RAY_BIN_DIR}/python"
+else
+  RAY_PYTHON_BIN="python3"
+fi
+
+echo "Ray CLI detected at: $RAY_CLI_BIN"
+echo "Ray Python interpreter: $RAY_PYTHON_BIN"
 
 CLEANED_UP=0
 SRUN_HEAD_PID=""
@@ -267,18 +388,28 @@ fi
 
 echo "Waiting for Ray cluster to register $TOTAL_GPUS GPUs..."
 for attempt in {1..60}; do
-  CURRENT_GPUS=$(python3 - <<'PY'
+  CURRENT_GPUS=$(
+    srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" "$RAY_PYTHON_BIN" - <<'PY' 2>/dev/null
 import logging
 import os
-import ray
+try:
+    import ray
+except ModuleNotFoundError:
+    print("IMPORT_ERROR")
+    raise SystemExit(0)
 try:
     ray.init(address=os.environ["RAY_ADDRESS"], logging_level=logging.ERROR)
     print(int(ray.cluster_resources().get("GPU", 0)))
 except Exception:
     print(0)
 PY
-)
+  )
   CURRENT_GPUS=$(echo "$CURRENT_GPUS" | tail -n1 | tr -d '[:space:]')
+
+  if [[ "$CURRENT_GPUS" == "IMPORT_ERROR" ]]; then
+    echo "WARNING: Ray Python module unavailable in $RAY_PYTHON_BIN; skipping GPU readiness check."
+    CURRENT_GPUS=$TOTAL_GPUS
+  fi
 
   echo "Ray cluster status: ${CURRENT_GPUS:-0} / $TOTAL_GPUS GPUs ready (attempt $attempt/60)"
 
