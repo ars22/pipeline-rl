@@ -594,6 +594,8 @@ def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, na
         ]
         if job_name:
             cmd.append(f"--job-name={job_name}")
+            # Ensure the grader Slurm job is torn down if the parent job stops.
+            cmd.append(f"--dependency=afterany:{current_job_id}")
         cmd += [
             "run_grader.slurm",
             "--model",
