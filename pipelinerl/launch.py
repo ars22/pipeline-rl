@@ -8,6 +8,7 @@ import sys
 import time
 import signal
 import urllib.request
+import re
 from pathlib import Path
 from typing import List, TextIO
 
@@ -610,7 +611,10 @@ def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, na
         _GRADER_JOB_ID = job_id
         _ensure_grader_cleanup_hooks()
         nodes = _wait_for_slurm_nodes(job_id, timeout=timeout)
-        node = nodes.split("+")[0]
+        node_candidates = [part for part in re.split(r"[,+\s]+", nodes) if part]
+        if not node_candidates:
+            raise RuntimeError(f"Unable to determine head node from Slurm node list: {nodes}")
+        node = node_candidates[0]
         os.environ["OPENAI_BASE_URL"] = f"http://{node}:8000/v1"
         os.environ["OPENAI_API_KEY"] = "grader"
         health_url = f"http://{node}:8000/health"
