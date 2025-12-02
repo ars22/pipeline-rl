@@ -8,9 +8,15 @@
 #SBATCH --partition=hopper-prod
 #SBATCH --output=/fsx/h4/logs/%x-%j.out
 #SBATCH --error=/fsx/h4/logs/%x-%j.err
-#SBATCH --time=3:00:00
+#SBATCH --time=1:00:00
 
 # Multi-node grader launch script that uses Ray for distributed vLLM serving
+
+# Attempt to fix problem with DP=8
+export VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE=shm
+export VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM=0
+export VLLM_USE_RAY_WRAPPED_PP_COMM=0
+
 
 # compilation does not play nice with Ray
 export TORCH_COMPILE_DISABLE=1
@@ -255,8 +261,10 @@ vllm serve "$MODEL" \
   --distributed-executor-backend ray \
   --data-parallel-size $DP \
   --tensor-parallel-size $TP \
-  --enable-prefix-caching \
-  --enable-chunked-prefill \
+  --no-enable-prefix-caching \
+  --max-cudagraph-capture-size 2048 \
+  --max-num-batched-tokens 8192 \
+  --max-model-len 32768 \
   --gpu-memory-utilization 0.9
   &> "$VLLM_LOG" &
 VLLM_PID=$!

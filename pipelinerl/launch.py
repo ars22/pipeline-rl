@@ -585,8 +585,6 @@ def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, na
         current_job_id = os.environ.get("SLURM_JOB_ID")
         if current_job_id:
             job_name = f"{current_job_id}-grader"
-            logger.info("Submitting local LLM grader with job name %s", job_name)
-
         cmd = [
             "sbatch",
             "--parsable",
@@ -607,7 +605,7 @@ def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, na
         job_id = submission.stdout.strip().split(";")[0]
         if not job_id:
             raise RuntimeError("sbatch did not return a job id for the LLM grader submission")
-        logger.info(f"Submitted local LLM grader as Slurm job {job_id}")
+        logger.info(f"Submitted local LLM grader with Slurm job ID: {job_id}")
         global _GRADER_JOB_ID
         _GRADER_JOB_ID = job_id
         _ensure_grader_cleanup_hooks()
