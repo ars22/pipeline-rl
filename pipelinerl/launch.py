@@ -590,9 +590,8 @@ def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, na
         cmd = [
             "sbatch",
             "--parsable",
-            f"--nodes={num_nodes}",
-            f"--dependency=afterany:{current_job_id}"
-        ]
+            f"--nodes={num_nodes}"
+            ]
         if job_name:
             cmd.append(f"--job-name={job_name}")
         cmd += [
