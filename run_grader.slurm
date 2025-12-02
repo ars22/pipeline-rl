@@ -13,9 +13,9 @@
 # Multi-node grader launch script that uses Ray for distributed vLLM serving
 
 # Attempt to fix problem with DP=8
-export VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE=shm
-export VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM=0
-export VLLM_USE_RAY_WRAPPED_PP_COMM=0
+# export VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE=shm
+# export VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM=0
+# export VLLM_USE_RAY_WRAPPED_PP_COMM=0
 
 
 # compilation does not play nice with Ray
@@ -134,6 +134,28 @@ if (( REQUIRED_GPUS > TOTAL_GPUS )); then
   exit 1
 fi
 
+if (( DP < NUM_NODES )); then
+  echo "ERROR: Requested DP (${DP}) must be >= number of nodes (${NUM_NODES})" >&2
+  exit 1
+fi
+
+if (( DP % NUM_NODES != 0 )); then
+  echo "ERROR: Requested DP (${DP}) must be divisible by number of nodes (${NUM_NODES}) to evenly distribute replicas" >&2
+  exit 1
+fi
+
+MAX_DP_PER_NODE=$((NUM_GPUS_PER_NODE / TP))
+if (( MAX_DP_PER_NODE == 0 )); then
+  echo "ERROR: Tensor parallel size (${TP}) exceeds GPUs per node (${NUM_GPUS_PER_NODE})" >&2
+  exit 1
+fi
+
+DP_LOCAL_PER_NODE=$((DP / NUM_NODES))
+if (( DP_LOCAL_PER_NODE > MAX_DP_PER_NODE )); then
+  echo "ERROR: DP per node (${DP_LOCAL_PER_NODE}) exceeds capacity (${MAX_DP_PER_NODE}) for TP=${TP}" >&2
+  exit 1
+fi
+
 LOG_DIR=/fsx/h4/logs
 mkdir -p "$LOG_DIR"
 VLLM_LOG="${LOG_DIR}/imo-grader-${SLURM_JOB_ID}-vllm.log"
@@ -144,11 +166,12 @@ export MODEL
 export DP
 export TP
 export VLLM_API_KEY="grader"
+export VLLM_HOST_IP="$HEAD_NODE_IP"
 
 echo "================================================================"
 echo "LLM Grader multi-node launch configuration"
 echo "Model: $MODEL"
-echo "DP: $DP | TP: $TP | Requested GPUs: $REQUIRED_GPUS"
+echo "DP: $DP (per node: $DP_LOCAL_PER_NODE) | TP: $TP | Requested GPUs: $REQUIRED_GPUS"
 echo "Nodes: $NUM_NODES"
 echo "GPUs per node: $NUM_GPUS_PER_NODE"
 echo "Total GPUs: $TOTAL_GPUS"
@@ -259,7 +282,10 @@ vllm serve "$MODEL" \
   --host 0.0.0.0 \
   --port $VLLM_PORT \
   --distributed-executor-backend ray \
+  --data-parallel-backend ray \
+  --data-parallel-address "$HEAD_NODE_IP" \
   --data-parallel-size $DP \
+  --data-parallel-size-local $DP_LOCAL_PER_NODE \
   --tensor-parallel-size $TP \
   --no-enable-prefix-caching \
   --max-cudagraph-capture-size 2048 \
