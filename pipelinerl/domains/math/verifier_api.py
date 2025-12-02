@@ -299,27 +299,32 @@ def _merge_metrics(
     return metrics
 
 
-def _build_rollout_metrics(success: bool, failure_causes: list[str]) -> dict[str, int]:
+def _build_rollout_metrics(success: bool, failure_causes: list[str], num_retries: int = 0) -> dict[str, int]:
+    metrics: dict[str, int] = {}
     if success:
-        return {"verifier/rollouts/success": 1}
+        metrics["verifier/rollouts/success"] = 1
+    else:
+        metrics["verifier/rollouts/failure"] = 1
+        failure_metric_recorded = False
+        if failure_causes:
+            unique_causes = set(failure_causes)
+            if unique_causes == {"timeout"}:
+                metrics["verifier/failures/timeout"] = 1
+                failure_metric_recorded = True
+            elif unique_causes == {"rate_limit"}:
+                metrics["verifier/failures/rate_limit"] = 1
+                failure_metric_recorded = True
+            elif unique_causes == {"no_input"}:
+                metrics["verifier/failures/no_input"] = 1
+                failure_metric_recorded = True
+            elif unique_causes == {"no_score_tag"}:
+                metrics["verifier/failures/no_score_tag"] = 1
+                failure_metric_recorded = True
+        if not failure_metric_recorded:
+            metrics["verifier/failures/all_attempts_failed"] = 1
 
-    metrics: dict[str, int] = {"verifier/rollouts/failure": 1}
-    if failure_causes:
-        unique_causes = set(failure_causes)
-        if unique_causes == {"timeout"}:
-            metrics["verifier/failures/timeout"] = 1
-            return metrics
-        if unique_causes == {"rate_limit"}:
-            metrics["verifier/failures/rate_limit"] = 1
-            return metrics
-        if unique_causes == {"no_input"}:
-            metrics["verifier/failures/no_input"] = 1
-            return metrics
-        if unique_causes == {"no_score_tag"}:
-            metrics["verifier/failures/no_score_tag"] = 1
-            return metrics
-
-    metrics["verifier/failures/all_attempts_failed"] = 1
+    if num_retries > 0:
+        metrics["verifier/failures/num_retries"] = num_retries
     return metrics
 
 
@@ -365,7 +370,7 @@ async def verify_proof(
     collect_metrics = _should_collect_metrics(log_wandb_metrics)
 
     if len(generation.strip()) == 0:
-        rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_input"])
+        rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_input"], num_retries=0)
         return ProofVerificationResult(
             score=0,
             metrics=_merge_metrics({}, rollout_metrics),
@@ -396,6 +401,7 @@ async def verify_proof(
         )
 
     attempt_failure_causes: list[str] = []
+    num_retries = 0
     runtime_metrics: dict[str, float | int] = {}
 
     for attempt in range(1, max_retries + 1):
@@ -419,14 +425,22 @@ async def verify_proof(
             print(f"[verify_proof] Judge response: {output_text}")
             match = re.search(r"<score>(\d+)</score>", output_text)
             if match:
-                rollout_metrics = _build_rollout_metrics(success=True, failure_causes=attempt_failure_causes)
+                rollout_metrics = _build_rollout_metrics(
+                    success=True,
+                    failure_causes=attempt_failure_causes,
+                    num_retries=num_retries,
+                )
                 score = int(match.group(1))
                 return ProofVerificationResult(
                     score=score,
                     metrics=_merge_metrics(runtime_metrics, rollout_metrics),
                 )
             else:
-                rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_score_tag"])
+                rollout_metrics = _build_rollout_metrics(
+                    success=False,
+                    failure_causes=["no_score_tag"],
+                    num_retries=num_retries,
+                )
                 print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
                 return ProofVerificationResult(
                     score=0,
@@ -436,12 +450,16 @@ async def verify_proof(
         except openai.RateLimitError as e:
             wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
             attempt_failure_causes.append("rate_limit")
+            if attempt < max_retries:
+                num_retries += 1
             print(f"[verify_proof] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
             await asyncio.sleep(wait_time)
 
         except (asyncio.TimeoutError, TimeoutException):
             wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
             attempt_failure_causes.append("timeout")
+            if attempt < max_retries:
+                num_retries += 1
             print(
                 f"[verify_proof] Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), "
                 f"retrying in {wait_time}s..."
@@ -451,11 +469,17 @@ async def verify_proof(
         except Exception as e:
             wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
             attempt_failure_causes.append("other")
+            if attempt < max_retries:
+                num_retries += 1
             print(f"[verify_proof] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
             await asyncio.sleep(wait_time)
 
     print(f"[verify_proof] All {max_retries} attempts failed — returning score=0")
-    rollout_metrics = _build_rollout_metrics(success=False, failure_causes=attempt_failure_causes)
+    rollout_metrics = _build_rollout_metrics(
+        success=False,
+        failure_causes=attempt_failure_causes,
+        num_retries=num_retries,
+    )
     return ProofVerificationResult(
         score=0,
         metrics=_merge_metrics(runtime_metrics, rollout_metrics),
