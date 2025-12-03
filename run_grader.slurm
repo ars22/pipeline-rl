@@ -12,12 +12,6 @@
 
 # Multi-node grader launch script that uses Ray for distributed vLLM serving
 
-# Attempt to fix problem with DP=8
-# export VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE=shm
-# export VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM=0
-# export VLLM_USE_RAY_WRAPPED_PP_COMM=0
-
-
 # compilation does not play nice with Ray
 export TORCH_COMPILE_DISABLE=1
 
