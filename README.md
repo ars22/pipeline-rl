@@ -64,8 +64,45 @@ llm_grader:
   # name: gpt-oss-120b-twj          # for deployed endpoint
 ```
 
-When you launch the training job, the grader server/endpoint will start automatically.
+When you launch the training job, the grader server/endpoint will start automatically. You can configure the sampling parameters for the grader in the `llm_grader.sampling_kwargs` field:
 
+```yaml
+llm_grader:
+  name: openai/gpt-oss-20b
+  sampling_kwargs:
+    temperature: 1.0
+    max_output_tokens: 32768
+    reasoning:
+        effort: medium
+  reasoning_delimiters: ["</think>"]
+```
+
+The `reasoning_delimiters` field specifies where the split the model's response so that only the final answer is extracted for verification. Note that for the Responses API, `max_output_tokens` is the total number of tokens (prompt + output), so make sure to set it high enough to accommodate the full response. 
+
+For the Slurm deployment, you can tune the number of nodes and data/tensor paralleism as follows:
+
+```yaml
+llm_grader:
+  name: openai/gpt-oss-20b
+  num_nodes: 2                      # number of nodes for the grader server
+  dp: 16                            # data parallelism
+  tp: 1                             # tensor parallelism
+```
+
+> [!NOTE]
+> Make sure that `dp * tp` matches the total number of GPUs allocated to the grader server (e.g., for 2 nodes with 8 GPUs each, use `dp:16` and `tp:1` or `dp:8` and `tp:2` etc).
+
+To debug the grader, allocate one or more nodes:
+
+```sh
+salloc --nodes=1 --gres=gpu:8 --qos=high --time=02:00:00 --job-name=prl-grader --partition=hopper-prod
+```
+
+Then run the grader server manually:
+
+```sh
+srun --nodes=1 --ntasks=1 --overlap bash run_grader_multinode.slurm --model Qwen/Qwen3-0.6B --dp 8
+```
 
 # Hugging Face Hub integration
 

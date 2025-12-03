@@ -8,6 +8,7 @@ import sys
 import time
 import signal
 import urllib.request
+import re
 from pathlib import Path
 from typing import List, TextIO
 
@@ -539,7 +540,7 @@ def _ensure_grader_cleanup_hooks():
     _GRADER_CLEANUP_REGISTERED = True
 
 
-def _wait_for_slurm_nodes(job_id: str, timeout: int = 600, poll_interval: int = 5) -> str:
+def _wait_for_slurm_nodes(job_id: str, timeout: int = 300, poll_interval: int = 5) -> str:
     """Poll Slurm until a job is assigned to a node."""
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -578,12 +579,21 @@ def _wait_for_vllm_health(url: str, retries: int = 60, delay: int = 10, timeout:
     raise RuntimeError(f"vLLM health check failed after {retries} attempts: {last_error}")
 
 
-def start_llm_grader(name: str, dp: int = 1, tp: int = 1, namespace: str = "HuggingFaceH4", timeout=300):
+def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, namespace: str = "HuggingFaceH4", timeout=900):
     if "/" in name:
         logger.info(f"Starting local LLM grader {name}...")
+        job_name = None
+        current_job_id = os.environ.get("SLURM_JOB_ID")
+        if current_job_id:
+            job_name = f"{current_job_id}-grader"
         cmd = [
             "sbatch",
             "--parsable",
+            f"--nodes={num_nodes}"
+            ]
+        if job_name:
+            cmd.append(f"--job-name={job_name}")
+        cmd += [
             "run_grader.slurm",
             "--model",
             name,
@@ -596,12 +606,15 @@ def start_llm_grader(name: str, dp: int = 1, tp: int = 1, namespace: str = "Hugg
         job_id = submission.stdout.strip().split(";")[0]
         if not job_id:
             raise RuntimeError("sbatch did not return a job id for the LLM grader submission")
-        logger.info(f"Submitted local LLM grader as Slurm job {job_id}")
+        logger.info(f"Submitted local LLM grader with Slurm job ID: {job_id}")
         global _GRADER_JOB_ID
         _GRADER_JOB_ID = job_id
         _ensure_grader_cleanup_hooks()
         nodes = _wait_for_slurm_nodes(job_id, timeout=timeout)
-        node = nodes.split("+")[0]
+        node_candidates = [part for part in re.split(r"[,+\s]+", nodes) if part]
+        if not node_candidates:
+            raise RuntimeError(f"Unable to determine head node from Slurm node list: {nodes}")
+        node = node_candidates[0]
         os.environ["OPENAI_BASE_URL"] = f"http://{node}:8000/v1"
         os.environ["OPENAI_API_KEY"] = "grader"
         health_url = f"http://{node}:8000/health"
@@ -643,7 +656,7 @@ def main(cfg: DictConfig):
     # Spin up LLM grader if specified
     if cfg.llm_grader.name is not None:
         if rank == 0:
-            start_llm_grader(cfg.llm_grader.name, dp=cfg.llm_grader.dp, tp=cfg.llm_grader.tp)
+            start_llm_grader(cfg.llm_grader.name, num_nodes=cfg.llm_grader.num_nodes, dp=cfg.llm_grader.dp, tp=cfg.llm_grader.tp)
         else:
             logger.info(
                 "Skipping LLM grader launch on rank %s; waiting for master to provision it",
