@@ -72,7 +72,7 @@ vllm_config:
   use_v1: false
   vllm_kwargs:
     dtype: bfloat16
-    gpu-memory-utilization: 0.95
+    gpu-memory-utilization: 0.9
     num-scheduler-steps: 16
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
