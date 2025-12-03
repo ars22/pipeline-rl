@@ -412,16 +412,22 @@ async def verify_proof(
             latency_seconds = time.perf_counter() - attempt_start
             usage = getattr(response, "usage", None)
             output_tokens = None
+            input_tokens = None
             if usage is not None:
                 output_tokens = getattr(usage, "output_tokens", None)
+                input_tokens = getattr(usage, "input_tokens", None)
                 if output_tokens is None and isinstance(usage, dict):
                     output_tokens = usage.get("output_tokens")
+                if input_tokens is None and isinstance(usage, dict):
+                    input_tokens = usage.get("input_tokens")
             if collect_metrics:
                 runtime_metrics = {"verifier/runtime/latency_per_request": latency_seconds}
                 if output_tokens is not None:
                     runtime_metrics["verifier/runtime/output_tokens"] = output_tokens
                     if latency_seconds > 0:
                         runtime_metrics["verifier/runtime/output_tokens_per_second"] = output_tokens / latency_seconds
+                if input_tokens is not None:
+                    runtime_metrics["verifier/runtime/input_tokens"] = input_tokens
             output_text = getattr(response, "output_text", None) or ""
             match = re.search(r"<score>(\d+)</score>", output_text)
             if match:
