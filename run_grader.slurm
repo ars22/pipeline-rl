@@ -286,7 +286,7 @@ vllm serve "$MODEL" \
   --no-enable-prefix-caching \
   --max-cudagraph-capture-size 2048 \
   --max-num-batched-tokens 8192 \
-  --max-model-len 32768 \
+  --max-model-len 65536 \
   --gpu-memory-utilization 0.9
   &> "$VLLM_LOG" &
 VLLM_PID=$!
