@@ -324,6 +324,7 @@ class ActorLoop:
         self.is_scheduling_paused = False
         self.debug_mode = bool(cfg.debug.mode)
         self.verifier_metrics_step = 0
+        self._last_verifier_timestep: float | None = None
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
@@ -404,6 +405,16 @@ class ActorLoop:
             for k, v in sliding_window_stats.items():
                 self.sliding_stats[k].append(v)
         
+    def _measure_verifier_group_runtime(self) -> float | None:
+        """
+        Track wall-clock seconds required to finish scoring a group of rollouts.
+        """
+        now = time.perf_counter()
+        last = self._last_verifier_timestep
+        self._last_verifier_timestep = now
+        if last is None:
+            return None
+        return now - last
 
     def log_verifier_metrics_for_group(self, rollout_results: list[RolloutResult]) -> None:
         if (
@@ -413,6 +424,9 @@ class ActorLoop:
         ):
             return
         aggregated = _aggregate_group_verifier_metrics(rollout_results)
+        sec_per_step = self._measure_verifier_group_runtime()
+        if sec_per_step is not None:
+            aggregated["verifier/runtime/sec_per_step"] = sec_per_step
         if not aggregated:
             return
         aggregated["verifier/group_rollouts"] = len(rollout_results)
