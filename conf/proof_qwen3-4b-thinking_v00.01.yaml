@@ -10,17 +10,17 @@ model_path: Qwen/Qwen3-4B-Thinking-2507
 # eval_every_n_versions: 0
 
 finetune:
-  attempts: 8
+  attempts: 16
   train_batch_size: 32
   valid_batch_size: 32
-  gradient_accumulation_passes: 8
+  gradient_accumulation_passes: 16
   seq_length: 39680
   seq_parallel: 2
   learning_rate: 1.0e-6
   save_checkpoint_steps: 50
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof-38K
-  hub_model_revision: v00.00
+  hub_model_revision: v00.01
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
