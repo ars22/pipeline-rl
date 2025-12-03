@@ -276,6 +276,7 @@ echo "Server command log: $VLLM_LOG"
 # Notes:
 # - async scheduling not compatible with Ray backend
 # - we use a large max-num-batched-tokens to improve throughput for long inputs / outputs
+# - setting gpu-memory-utilization to values >0.85 can lead to OOMs
 # TODO: expose more of these as config args.
 vllm serve "$MODEL" \
   --host 0.0.0.0 \
@@ -290,7 +291,7 @@ vllm serve "$MODEL" \
   --enable-chunked-prefill \
   --max-cudagraph-capture-size 2048 \
   --max-num-batched-tokens 65536 \
-  --gpu-memory-utilization 0.9
+  --gpu-memory-utilization 0.85
   &> "$VLLM_LOG" &
 VLLM_PID=$!
 
