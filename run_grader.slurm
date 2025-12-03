@@ -284,8 +284,10 @@ vllm serve "$MODEL" \
   --data-parallel-size-local $DP_LOCAL_PER_NODE \
   --tensor-parallel-size $TP \
   --no-enable-prefix-caching \
-  --max-cudagraph-capture-size 4096 \
+  --enable-chunked-prefill \
+  --max-cudagraph-capture-size 2048 \
   --max-num-batched-tokens 65536 \
+  --max-num-seqs 1024 \
   --gpu-memory-utilization 0.85
   &> "$VLLM_LOG" &
 VLLM_PID=$!
