@@ -433,7 +433,10 @@ class ActorLoop:
             aggregated["verifier/runtime/sec_per_step"] = sec_per_step
         if not aggregated:
             return
-        aggregated["verifier/group_rollouts"] = len(rollout_results)
+        aggregated["verifier/group_size"] = len(rollout_results)
+        success_frac = aggregated.get("verifier/rollouts/success_frac")
+        if success_frac is not None:
+            aggregated["verifier/group_size_eff"] = aggregated["verifier/group_size"] * success_frac
         self.verifier_metrics_step += 1
         _log_group_verifier_metrics(aggregated, step=self.verifier_metrics_step)
         return
