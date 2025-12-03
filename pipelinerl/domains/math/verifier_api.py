@@ -390,6 +390,7 @@ async def verify_proof(
 
     loop = asyncio.get_event_loop()
 
+    # TODO: add support for chat completions API for other graders
     async def _call_openai():
         return await loop.run_in_executor(
             None,

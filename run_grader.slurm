@@ -278,6 +278,8 @@ done
 echo "Launching vLLM server on Ray backend..."
 echo "Server command log: $VLLM_LOG"
 
+# Optimised for gpt-oss models: https://docs.vllm.ai/projects/recipes/en/latest/OpenAI/GPT-OSS.html
+# Note: async scheduling not compatible with Ray backend
 vllm serve "$MODEL" \
   --host 0.0.0.0 \
   --port $VLLM_PORT \
