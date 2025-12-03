@@ -50,6 +50,7 @@ llm_grader:
   reasoning_delimiters: ["</think>"]
 
 actor:
+  rollout_workers: 4
   llm_max_rollouts: 128
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
@@ -89,6 +90,6 @@ world:
   actor_fraction: 16
   preprocessor_fraction: 0
   finetune_fraction: 8
-  env_replicas: 1
+  env_replicas: 4
   actor_group_port: 9000
   environment_start_port: 7777
