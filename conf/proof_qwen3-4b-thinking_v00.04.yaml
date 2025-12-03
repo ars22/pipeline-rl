@@ -75,7 +75,7 @@ vllm_config:
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
-    max-num-batched-tokens: ${eval:${llm.parameters.max_tokens} * 2}
+    max-num-batched-tokens: 77824
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
     tensor-parallel-size: 1
