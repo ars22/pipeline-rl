@@ -14,25 +14,25 @@ finetune:
   train_batch_size: 32
   valid_batch_size: 32
   gradient_accumulation_passes: 16
-  seq_length: 39680
+  seq_length: 49920
   seq_parallel: 2
   learning_rate: 1.0e-6
   save_checkpoint_steps: 50
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: v00.01
+  hub_model_revision: v00.03
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
 
 llm:
   parameters:
-    max_tokens: 38912 
+    max_tokens: 49152 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 38912
+    max_tokens: 49152
     temperature: 0.8 
     top_p: 0.95
     top_k: 20
@@ -44,7 +44,7 @@ llm_grader:
   tp: 1
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 38912
+    max_output_tokens: 49152
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
