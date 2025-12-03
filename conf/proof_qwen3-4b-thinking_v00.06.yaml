@@ -20,7 +20,7 @@ finetune:
   save_checkpoint_steps: 50
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: v00.05
+  hub_model_revision: v00.06
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -40,8 +40,8 @@ test_llm:
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   num_nodes: 2
-  dp: 16
-  tp: 1
+  dp: 8
+  tp: 2
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 49152
@@ -81,7 +81,7 @@ vllm_config:
     enable-chunked-prefill: ""
     enable-prefix-caching: ""
     return-tokens-as-token-ids: ""
-    tensor-parallel-size: 1
+    tensor-parallel-size: 2
     pipeline-parallel-size: 1
     generation-config: vllm
 
