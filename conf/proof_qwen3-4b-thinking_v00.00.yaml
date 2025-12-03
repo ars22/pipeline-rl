@@ -14,11 +14,12 @@ finetune:
   train_batch_size: 32
   valid_batch_size: 32
   gradient_accumulation_passes: 8
-  seq_length: 34816
+  seq_length: 39680
   seq_parallel: 2
+  learning_rate: 1.0e-6
   save_checkpoint_steps: 50
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof-32K
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof-38K
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
@@ -26,24 +27,24 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 32768 
+    max_tokens: 38912 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 32768
+    max_tokens: 38912
     temperature: 0.8 
     top_p: 0.95
     top_k: 20
 
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
-  num_nodes: 1
-  dp: 8
+  num_nodes: 2
+  dp: 16
   tp: 1
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 32768
+    max_output_tokens: 38912
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
@@ -83,7 +84,7 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 8
+  actor_fraction: 16
   preprocessor_fraction: 0
   finetune_fraction: 8
   env_replicas: 1

@@ -195,5 +195,6 @@ slurm*.err
 
 tmp/
 scratch/
+runs/
 
 AGENTS.md
