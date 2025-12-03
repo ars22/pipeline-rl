@@ -7,7 +7,7 @@ defaults:
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
 # Uncomment to skip test set rollouts
-# eval_every_n_versions: 0
+eval_every_n_versions: 0
 
 finetune:
   attempts: 16
