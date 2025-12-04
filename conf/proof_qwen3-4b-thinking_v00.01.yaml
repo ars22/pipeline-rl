@@ -44,7 +44,7 @@ llm_grader:
   tp: 2
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 65536
+    max_output_tokens: 81920
     reasoning:
       effort: high
   reasoning_delimiters: ["</think>"]
