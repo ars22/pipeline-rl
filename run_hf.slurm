@@ -113,7 +113,7 @@ srun -w "$HOSTLIST_STR" --ntasks-per-node=1 \
     export MASTER_PORT=$MASTER_PORT
     echo "[$(hostname -s)] RANK=$RANK WORLD_SIZE=$WORLD_SIZE MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT ALL_ADDR=$ALL_ADDR"
     python -m pipelinerl.launch --config-name=$CONFIG_NAME \
-      output_dir=tmp/results/$JOB_NAME
+      output_dir=runs/$JOB_NAME
     '
 
 END_TIME=$(date +%s)

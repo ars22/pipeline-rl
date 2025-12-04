@@ -273,7 +273,11 @@ echo "Launching vLLM server on Ray backend..."
 echo "Server command log: $VLLM_LOG"
 
 # Optimised for gpt-oss models: https://docs.vllm.ai/projects/recipes/en/latest/OpenAI/GPT-OSS.html
-# Note: async scheduling not compatible with Ray backend
+# Notes:
+# - async scheduling not compatible with Ray backend
+# - we use a large max-num-batched-tokens to improve throughput for long inputs / outputs
+# - setting gpu-memory-utilization to values >0.85 can lead to OOMs
+# TODO: expose more of these as config args.
 vllm serve "$MODEL" \
   --host 0.0.0.0 \
   --port $VLLM_PORT \
@@ -284,10 +288,11 @@ vllm serve "$MODEL" \
   --data-parallel-size-local $DP_LOCAL_PER_NODE \
   --tensor-parallel-size $TP \
   --no-enable-prefix-caching \
+  --enable-chunked-prefill \
   --max-cudagraph-capture-size 2048 \
-  --max-num-batched-tokens 8192 \
-  --max-model-len 65536 \
-  --gpu-memory-utilization 0.9
+  --max-num-batched-tokens 65536 \
+  --max-num-seqs 16 \
+  --gpu-memory-utilization 0.85
   &> "$VLLM_LOG" &
 VLLM_PID=$!
 

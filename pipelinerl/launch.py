@@ -557,6 +557,24 @@ def _wait_for_slurm_nodes(job_id: str, timeout: int = 300, poll_interval: int = 
     raise TimeoutError(f"Timed out waiting for node assignment for Slurm job {job_id}")
 
 
+def _expand_slurm_node_list(nodes: str) -> list[str]:
+    """Expand a Slurm node-list string into concrete hostnames."""
+    try:
+        result = subprocess.run(
+            ["scontrol", "show", "hostnames", nodes],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Unable to expand Slurm node list {nodes}: {exc}") from exc
+
+    hostnames = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not hostnames:
+        raise RuntimeError(f"Slurm returned no hostnames for node list {nodes}")
+    return hostnames
+
+
 def _wait_for_vllm_health(url: str, retries: int = 60, delay: int = 10, timeout: int = 5) -> None:
     """Poll the vLLM health endpoint until it responds successfully."""
     logger.info("Waiting for vLLM server health at %s", url)
@@ -611,14 +629,14 @@ def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, na
         _GRADER_JOB_ID = job_id
         _ensure_grader_cleanup_hooks()
         nodes = _wait_for_slurm_nodes(job_id, timeout=timeout)
-        node_candidates = [part for part in re.split(r"[,+\s]+", nodes) if part]
+        node_candidates = _expand_slurm_node_list(nodes)
         if not node_candidates:
             raise RuntimeError(f"Unable to determine head node from Slurm node list: {nodes}")
         node = node_candidates[0]
         os.environ["OPENAI_BASE_URL"] = f"http://{node}:8000/v1"
         os.environ["OPENAI_API_KEY"] = "grader"
         health_url = f"http://{node}:8000/health"
-        health_retries = int(os.environ.get("HEALTH_CHECK_RETRIES", "60"))
+        health_retries = int(os.environ.get("HEALTH_CHECK_RETRIES", "90"))
         health_delay = int(os.environ.get("HEALTH_CHECK_DELAY", "10"))
         _wait_for_vllm_health(health_url, retries=health_retries, delay=health_delay)
         logger.info(
