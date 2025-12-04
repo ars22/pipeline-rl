@@ -50,7 +50,7 @@ llm_grader:
   reasoning_delimiters: ["</think>"]
 
 actor:
-  llm_max_rollouts: 32
+  llm_max_rollouts: 16 # Larger values exhaust the KV cache
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
@@ -76,7 +76,8 @@ vllm_config:
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
-    max-num-batched-tokens: 8192
+    max-num-batched-tokens: 16384
+    enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
     tensor-parallel-size: 1
