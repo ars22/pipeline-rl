@@ -51,6 +51,7 @@ llm_grader:
 
 actor:
   llm_max_rollouts: 16 # Larger values exhaust the KV cache
+  shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
@@ -80,13 +81,13 @@ vllm_config:
     enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
-    tensor-parallel-size: 1
+    tensor-parallel-size: 2
     pipeline-parallel-size: 1
     generation-config: vllm
 
 world:
   replicas: 1
-  actor_fraction: 32
+  actor_fraction: 48
   preprocessor_fraction: 0
   finetune_fraction: 32
   env_replicas: 1
