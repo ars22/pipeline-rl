@@ -1,5 +1,5 @@
 # --------------------
-# Config for 2+1 nodes
+# Config for 4+2 nodes
 # --------------------
 defaults:
     - base
@@ -10,11 +10,11 @@ model_path: Qwen/Qwen3-4B-Thinking-2507
 # eval_every_n_versions: 0
 
 finetune:
-  attempts: 8
-  train_batch_size: 32
-  valid_batch_size: 32
-  gradient_accumulation_passes: 8
-  seq_length: 39680
+  attempts: 16
+  train_batch_size: 48
+  valid_batch_size: 48
+  gradient_accumulation_passes: 16
+  seq_length: 49920
   seq_parallel: 2
   learning_rate: 1.0e-6
   save_checkpoint_steps: 50
@@ -27,24 +27,24 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 38912 
+    max_tokens: 49152 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 38912
+    max_tokens: 49152
     temperature: 0.8 
     top_p: 0.95
     top_k: 20
 
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
-  num_nodes: 2
-  dp: 16
-  tp: 1
+  num_nodes: 3
+  dp: 8
+  tp: 2
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 38912
+    max_output_tokens: 65536
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
@@ -75,7 +75,7 @@ vllm_config:
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
-    max-num-batched-tokens: 1024
+    max-num-batched-tokens: 8192
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
     tensor-parallel-size: 1
@@ -84,9 +84,9 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 16
+  actor_fraction: 32
   preprocessor_fraction: 0
-  finetune_fraction: 8
+  finetune_fraction: 16
   env_replicas: 1
   actor_group_port: 9000
   environment_start_port: 7777
