@@ -1,26 +1,26 @@
 # --------------------
-# Config for 4+4 nodes
+# Config for 4+2 nodes
 # --------------------
 defaults:
     - base
     - _self_
 
-model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
+model_path: Qwen/Qwen3-4B-Thinking-2507
 # Uncomment to skip test set rollouts
 # eval_every_n_versions: 0
 
 finetune:
   attempts: 16
-  train_batch_size: 16
-  valid_batch_size: 16
-  gradient_accumulation_passes: 32
+  train_batch_size: 32
+  valid_batch_size: 32
+  gradient_accumulation_passes: 16
   seq_length: 49920
-  seq_parallel: 4
+  seq_parallel: 2
   learning_rate: 1.0e-6
   save_checkpoint_steps: 50
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-30B-A3B-Thinking-2507-Proof
-  hub_model_revision: v00.00
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
+  hub_model_revision: v00.03
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -81,15 +81,15 @@ vllm_config:
     enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
-    tensor-parallel-size: 2
+    tensor-parallel-size: 1
     pipeline-parallel-size: 1
     generation-config: vllm
 
 world:
   replicas: 1
-  actor_fraction: 48
+  actor_fraction: 32
   preprocessor_fraction: 0
-  finetune_fraction: 32
+  finetune_fraction: 16
   env_replicas: 1
   actor_group_port: 9000
   environment_start_port: 7777
