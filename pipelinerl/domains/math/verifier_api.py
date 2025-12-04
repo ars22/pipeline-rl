@@ -424,8 +424,6 @@ async def verify_proof(
                 runtime_metrics = {"verifier/runtime/latency_per_request": latency_seconds}
                 if output_tokens is not None:
                     runtime_metrics["verifier/runtime/output_tokens"] = output_tokens
-                    if latency_seconds > 0:
-                        runtime_metrics["verifier/runtime/output_tokens_per_second"] = output_tokens / latency_seconds
                 if input_tokens is not None:
                     runtime_metrics["verifier/runtime/input_tokens"] = input_tokens
             output_text = getattr(response, "output_text", None) or ""
