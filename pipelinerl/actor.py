@@ -55,7 +55,6 @@ def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> d
     for key, values in runtime_values.items():
         if values:
             mean_value = sum(values) / len(values)
-            aggregated[key] = mean_value
             aggregated[f"{key}_mean"] = mean_value
             aggregated[f"{key}_min"] = min(values)
             aggregated[f"{key}_max"] = max(values)

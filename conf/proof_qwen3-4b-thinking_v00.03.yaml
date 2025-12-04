@@ -40,11 +40,11 @@ test_llm:
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   num_nodes: 2
-  dp: 16
-  tp: 1
+  dp: 8
+  tp: 2
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 49152
+    max_output_tokens: 65536
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
