@@ -3,7 +3,8 @@
     "allow": [
       "Bash(grep:*)",
       "Bash(tail:*)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

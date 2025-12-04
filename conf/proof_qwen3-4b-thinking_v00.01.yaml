@@ -20,7 +20,7 @@ finetune:
   save_checkpoint_steps: 50
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: v00.00
+  hub_model_revision: v00.01
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -46,7 +46,7 @@ llm_grader:
     temperature: 1.0
     max_output_tokens: 65536
     reasoning:
-      effort: medium
+      effort: high
   reasoning_delimiters: ["</think>"]
 
 actor:
