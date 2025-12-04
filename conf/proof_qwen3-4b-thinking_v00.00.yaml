@@ -11,8 +11,8 @@ model_path: Qwen/Qwen3-4B-Thinking-2507
 
 finetune:
   attempts: 16
-  train_batch_size: 48
-  valid_batch_size: 48
+  train_batch_size: 32
+  valid_batch_size: 32
   gradient_accumulation_passes: 16
   seq_length: 49920
   seq_parallel: 2
@@ -39,8 +39,8 @@ test_llm:
 
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
-  num_nodes: 3
-  dp: 12
+  num_nodes: 2
+  dp: 8
   tp: 2
   sampling_kwargs:
     temperature: 1.0
