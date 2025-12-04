@@ -40,7 +40,7 @@ test_llm:
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   num_nodes: 3
-  dp: 8
+  dp: 12
   tp: 2
   sampling_kwargs:
     temperature: 1.0
