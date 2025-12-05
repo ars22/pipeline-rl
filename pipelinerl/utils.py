@@ -23,7 +23,6 @@ import wandb
 from wandb.sdk import wandb_run
 
 logger = logging.getLogger(__name__)
-_CONFIG_UPLOAD_CACHE: set[str] = set()
 _REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
 
 
@@ -51,13 +50,9 @@ def _resolve_selected_config_file(cfg: DictConfig) -> tuple[Path | None, str, bo
 
 def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
     """Upload the active Hydra config file to W&B."""
-    cache_key = getattr(run, "id", None) or str(id(run))
-    if cache_key in _CONFIG_UPLOAD_CACHE:
-        return
     config_path, logical_name, used_fallback = _resolve_selected_config_file(cfg)
     if config_path is None or not config_path.exists():
         logger.warning("Unable to locate config '%s' to upload to W&B", logical_name)
-        _CONFIG_UPLOAD_CACHE.add(cache_key)
         return
     try:
         wandb.save(
@@ -69,7 +64,6 @@ def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
             logger.info("Uploaded composed config from %s to W&B as %s", config_path, logical_name)
         else:
             logger.info("Uploaded config file %s to W&B", config_path.name)
-        _CONFIG_UPLOAD_CACHE.add(cache_key)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to upload config %s to W&B: %s", config_path, exc)
 
