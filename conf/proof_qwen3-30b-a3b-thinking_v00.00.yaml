@@ -43,9 +43,9 @@ llm_grader:
     num_nodes: 2
     data-parallel-size: 8
     tensor-parallel-size: 2
-    max-num-batched-tokens: 8192
+    max-num-batched-tokens: 65536
     max-num-seqs: 16
-    max-model-len: 32768
+    max-model-len: 131072
     gpu-memory-utilization: 0.85
   sampling_kwargs:
     temperature: 1.0
