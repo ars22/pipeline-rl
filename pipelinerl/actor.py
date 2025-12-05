@@ -41,6 +41,33 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+
+_WANDB_VERIFIER_TABLE = None
+_WANDB_VERIFIER_TABLE_COLUMNS = ["prompt", "reasoning", "output", "score"]
+
+
+def _get_wandb_verifier_table():
+    global _WANDB_VERIFIER_TABLE
+    if getattr(wandb, "run", None) is None:
+        return None
+    if _WANDB_VERIFIER_TABLE is None:
+        _WANDB_VERIFIER_TABLE = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS, log_mode="MUTABLE")
+    return _WANDB_VERIFIER_TABLE
+
+
+def _log_verifier_table_entry(entry: dict[str, str | int]):
+    table = _get_wandb_verifier_table()
+    if table is None:
+        return
+    table.add_data(
+        entry.get("prompt", ""),
+        entry.get("reasoning", ""),
+        entry.get("output_text", ""),
+        entry.get("score", 0),
+    )
+    wandb.log({"tables/verifier": table})
+
+
 def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> dict[str, float | int]:
     runtime_values: defaultdict[str, list[float]] = defaultdict(list)
     count_totals: defaultdict[str, int] = defaultdict(int)
@@ -551,6 +578,12 @@ class ActorLoop:
                     f" to {self.data_stream}, total {published_samples} samples so far, {samples_in_queue} samples in the result queue,"
                     f" {in_progress} groups in progress"
                 )
+
+                if self.cfg.wandb.use_wandb:
+                    for result in rollout_results:
+                        entry = getattr(result, "verifier_table_entry", None)
+                        if entry:
+                            _log_verifier_table_entry(entry)
 
                 
                 self.update_stats(rollout_results=rollout_results)

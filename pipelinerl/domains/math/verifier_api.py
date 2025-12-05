@@ -17,8 +17,6 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from functools import partial
 
-import wandb
-
 import pipelinerl.countdown_utils
 
 logging.basicConfig(
@@ -284,10 +282,7 @@ _openai_client = None
 class ProofVerificationResult:
     score: int
     metrics: dict[str, float | int] = field(default_factory=dict)
-
-
-_WANDB_VERIFIER_TABLE = None
-_WANDB_VERIFIER_TABLE_COLUMNS = ["prompt", "reasoning", "output", "score"]
+    table_entry: dict[str, str | int] | None = None
 
 
 def _extract_text_from_content_blocks(content: Any) -> list[str]:
@@ -337,27 +332,6 @@ def _extract_reasoning_from_response(response: Any) -> str:
         if reasoning_fallback:
             reasoning_chunks.extend(_extract_text_from_content_blocks(reasoning_fallback))
     return "\n\n".join(chunk for chunk in reasoning_chunks if chunk)
-
-
-def _get_wandb_verifier_table():
-    global _WANDB_VERIFIER_TABLE
-    if wandb is None or getattr(wandb, "run", None) is None:
-        return None
-    if _WANDB_VERIFIER_TABLE is None:
-        _WANDB_VERIFIER_TABLE = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS, log_mode="MUTABLE")
-    return _WANDB_VERIFIER_TABLE
-
-
-def _log_verifier_table_entry(prompt: str, response: Any, output_text: str, score: int):
-    """
-    Append the latest grader call details to a WandB table for later debugging.
-    """
-    table = _get_wandb_verifier_table()
-    if table is None:
-        return
-    reasoning_text = _extract_reasoning_from_response(response)
-    table.add_data(prompt, reasoning_text, output_text, score)
-    wandb.log({"verifier/grader_table": table})
 
 
 def _should_collect_metrics(collect_flag: bool | None) -> bool:
@@ -506,13 +480,15 @@ async def verify_proof(
             match = re.search(r"<score>(\d+)</score>", output_text)
             if match:
                 score = int(match.group(1))
+                table_entry = None
                 if collect_metrics:
-                    _log_verifier_table_entry(
-                        prompt=prompt_text,
-                        response=response,
-                        output_text=output_text,
-                        score=score,
-                    )
+                    reasoning_text = _extract_reasoning_from_response(response)
+                    table_entry = {
+                        "prompt": prompt_text,
+                        "reasoning": reasoning_text,
+                        "output_text": output_text,
+                        "score": score,
+                    }
                 rollout_metrics = _build_rollout_metrics(
                     success=True,
                     failure_causes=attempt_failure_causes,
@@ -521,15 +497,18 @@ async def verify_proof(
                 return ProofVerificationResult(
                     score=score,
                     metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+                    table_entry=table_entry,
                 )
             else:
+                table_entry = None
                 if collect_metrics:
-                    _log_verifier_table_entry(
-                        prompt=prompt_text,
-                        response=response,
-                        output_text=output_text,
-                        score=0,
-                    )
+                    reasoning_text = _extract_reasoning_from_response(response)
+                    table_entry = {
+                        "prompt": prompt_text,
+                        "reasoning": reasoning_text,
+                        "output_text": output_text,
+                        "score": 0,
+                    }
                 rollout_metrics = _build_rollout_metrics(
                     success=False,
                     failure_causes=["no_score_tag"],
@@ -539,6 +518,7 @@ async def verify_proof(
                 return ProofVerificationResult(
                     score=0,
                     metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+                    table_entry=table_entry,
                 )
 
         except openai.RateLimitError as e:

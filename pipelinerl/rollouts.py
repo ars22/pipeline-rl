@@ -65,3 +65,4 @@ class RolloutResult(BaseModel):
     dataset_name: str | None = None
     group_id: str | None = None
     verifier_metrics: dict[str, float | int] = Field(default_factory=dict)
+    verifier_table_entry: dict[str, str | int] | None = None
