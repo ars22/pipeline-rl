@@ -1,4 +1,4 @@
-"""Tests for the streams module, particularly handling of corrupted stream files."""
+"""Tests for the streams module, particularly handling of corrupted stream files we encountered with runs like conf/proof_qwen3-4b-thinking_v00.00.yaml"""
 
 import json
 import os
@@ -36,7 +36,8 @@ class TestFileStreamReaderCorruptedLine:
     """
     Tests for FileStreamReader handling of corrupted lines.
 
-    These tests reproduce the exact production failure pattern where garbage data
+    These tests reproduce the exact failure pattern we saw in the 
+    streams/weight_update_request/0/0/0.jsonl logs where garbage data
     like "54244}\\n" appeared mid-file, causing the reader to fail.
     """
 
@@ -68,9 +69,9 @@ class TestFileStreamReaderCorruptedLine:
 
     def test_skip_corrupted_line_and_continue(self, temp_exp_path):
         """
-        Reproduce the exact production failure and verify recovery.
+        Reproduce the exact failure and verify recovery.
 
-        From the production logs, the corruption pattern was:
+        From the stream logs, the corruption pattern was:
         - Valid JSON lines
         - Garbage line: "54244}\\n"
         - More valid JSON lines
@@ -80,7 +81,7 @@ class TestFileStreamReaderCorruptedLine:
         import pipelinerl.streams as streams_module
         streams_module._backend = "files"
 
-        # Create the exact corruption pattern from production
+        # Create the exact corruption pattern from logs
         _file_dir = stream_dir(temp_exp_path, "weight_update_request", instance=0, partition=0)
         os.makedirs(_file_dir, exist_ok=True)
         file_path = stream_file(_file_dir, 0)
@@ -93,7 +94,7 @@ class TestFileStreamReaderCorruptedLine:
             # Write a weight update success
             f.write('{"kind":"weight_update_success","version":4096,"timestamp":1764875551.565069}\n')
 
-            # The EXACT corruption pattern from production logs
+            # The exact corruption pattern from logs
             f.write('54244}\n')  # This is the garbage line
 
             # Valid data after corruption
@@ -111,7 +112,7 @@ class TestFileStreamReaderCorruptedLine:
         with FileStreamReader(spec, max_retries=1) as reader:  # skip_corrupted=True by default, fast retries for test
             for item in reader.read():
                 results.append(item)
-                if len(results) >= 20:  # Safety limit
+                if len(results) >= 13:  # Expected count: 10 + 1 + 2 valid lines
                     break
 
         # Verify we read ALL valid data including after the corruption
@@ -158,7 +159,7 @@ class TestFileStreamReaderCorruptedLine:
             with pytest.raises(json.JSONDecodeError):
                 for item in reader.read():
                     results.append(item)
-                    if len(results) >= 20:
+                    if len(results) >= 12:  # More than expected before corruption (11)
                         break
 
         # Should have read all valid data before corruption
