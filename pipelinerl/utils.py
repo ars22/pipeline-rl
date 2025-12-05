@@ -27,26 +27,9 @@ logger = logging.getLogger(__name__)
 _REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
 
 
-def _get_config_name_from_argv() -> str | None:
-    """Extract --config-name value from command line arguments."""
-    for arg in sys.argv:
-        if arg.startswith("--config-name="):
-            return arg.split("=", 1)[1]
-    return None
-
-
 def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
-    """Upload the active Hydra config file to W&B."""
-    config_name = _get_config_name_from_argv()
-    if config_name is None:
-        logger.debug("Skipping config upload to W&B: --config-name not found in argv")
-        return
-
-    rel_path = Path(config_name)
-    if rel_path.suffix != ".yaml":
-        rel_path = rel_path.with_suffix(".yaml")
-
-    config_path = (_REPO_CONF_DIR / rel_path).resolve()
+    """Upload the experiment config file to W&B."""
+    config_path = Path(cfg.output_dir) / "conf" / "exp_config.yaml"
     if not config_path.exists():
         logger.warning("Config file %s does not exist, skipping upload", config_path)
         return
@@ -57,7 +40,7 @@ def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
             base_path=str(config_path.parent),
             policy="now",
         )
-        logger.info("Uploaded config file %s to W&B", rel_path.name)
+        logger.info("Uploaded config file %s to W&B", config_path.name)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to upload config %s to W&B: %s", config_path, exc)
 
