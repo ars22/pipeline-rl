@@ -8,7 +8,7 @@ from pathlib import Path
 import traceback
 from typing import Dict, Mapping, List, Any, Union
 import numpy as np
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 import psutil
 import requests
 from importlib.metadata import distributions
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 _REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
 
 
-def _resolve_selected_config_file(cfg: DictConfig) -> tuple[Path | None, str, bool]:
+def _resolve_selected_config_file(cfg: DictConfig) -> tuple[Path, str]:
     """Locate the config file referenced via --config-name."""
     hydra_cfg = getattr(cfg, "hydra", None)
     job_cfg_name = None
@@ -37,33 +37,23 @@ def _resolve_selected_config_file(cfg: DictConfig) -> tuple[Path | None, str, bo
         rel_path = rel_path.with_suffix(".yaml")
     config_path = (_REPO_CONF_DIR / rel_path).resolve()
     logical_name = rel_path.name
-    if config_path.exists():
-        return config_path, logical_name, False
-    exp_config = Path(str(cfg.output_dir)) / "conf" / "exp_config.yaml"
-    if exp_config.exists():
-        return exp_config.resolve(), logical_name, True
-    hydra_config = Path(str(cfg.output_dir)) / ".hydra" / "config.yaml"
-    if hydra_config.exists():
-        return hydra_config.resolve(), logical_name, True
-    return None, logical_name, False
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"Config file '{config_path}' does not exist. Ensure --config-name points to a file in { _REPO_CONF_DIR }."
+        )
+    return config_path, logical_name
 
 
 def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
     """Upload the active Hydra config file to W&B."""
-    config_path, logical_name, used_fallback = _resolve_selected_config_file(cfg)
-    if config_path is None or not config_path.exists():
-        logger.warning("Unable to locate config '%s' to upload to W&B", logical_name)
-        return
+    config_path, logical_name = _resolve_selected_config_file(cfg)
     try:
         wandb.save(
             str(config_path),
             base_path=str(config_path.parent),
             policy="now",
         )
-        if used_fallback:
-            logger.info("Uploaded composed config from %s to W&B as %s", config_path, logical_name)
-        else:
-            logger.info("Uploaded config file %s to W&B", config_path.name)
+        logger.info("Uploaded config file %s to W&B", logical_name)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to upload config %s to W&B: %s", config_path, exc)
 
