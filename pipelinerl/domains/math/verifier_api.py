@@ -287,19 +287,19 @@ class ProofVerificationResult:
 
 def _extract_reasoning_from_response(response: Any) -> str:
     """
-    Extract reasoning text from an OpenAI Responses API Response object.
+    Extract reasoning content from an OpenAI Responses API Response object.
 
     The Response object has an `output` list containing output items.
     For reasoning models, this includes items with type="reasoning" that have
-    a `summary` list of text objects.
+    a `content` list of text objects.
 
     See: https://platform.openai.com/docs/api-reference/responses/object
     """
     reasoning_chunks: list[str] = []
     for item in response.output or []:
         if getattr(item, "type", None) == "reasoning":
-            for summary_item in getattr(item, "summary", []) or []:
-                text = getattr(summary_item, "text", None)
+            for content_item in getattr(item, "content", []) or []:
+                text = getattr(content_item, "text", None)
                 if text:
                     reasoning_chunks.append(text)
     return "\n\n".join(reasoning_chunks)
