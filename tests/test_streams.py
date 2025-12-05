@@ -164,7 +164,3 @@ class TestFileStreamReaderCorruptedLine:
 
         # Should have read all valid data before corruption
         assert len(results) == 11  # 10 samples_processed + 1 weight_update_success
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
