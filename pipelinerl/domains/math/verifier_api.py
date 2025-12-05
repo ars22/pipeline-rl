@@ -289,48 +289,47 @@ def _extract_text_from_content_blocks(content: Any) -> list[str]:
     """
     WandB logging helper that normalizes different response SDK content shapes into plain strings.
     """
+    def _as_list(value: Any) -> list[Any]:
+        if not value:
+            return []
+        return list(value) if isinstance(value, (list, tuple)) else [value]
+
+    def _get(obj: Any, key: str) -> Any:
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
     texts: list[str] = []
-    if content is None:
-        return texts
-    if isinstance(content, str):
-        texts.append(content)
-        return texts
-    if isinstance(content, dict):
-        text_value = content.get("text")
-        if text_value:
-            texts.append(str(text_value))
-        return texts
-    if isinstance(content, (list, tuple)):
-        for item in content:
-            texts.extend(_extract_text_from_content_blocks(item))
-        return texts
-    text_attr = getattr(content, "text", None)
-    if text_attr:
-        texts.append(str(text_attr))
-        return texts
-    nested_content = getattr(content, "content", None)
-    if nested_content:
-        texts.extend(_extract_text_from_content_blocks(nested_content))
+    for block in _as_list(content):
+        text_obj = _get(block, "text")
+        if not text_obj:
+            continue
+        if isinstance(text_obj, str):
+            texts.append(text_obj)
+            continue
+        value = text_obj.get("value") if isinstance(text_obj, dict) else getattr(text_obj, "value", None)
+        if value:
+            texts.append(str(value))
     return texts
 
 
 def _extract_reasoning_from_response(response: Any) -> str:
+    def _as_list(value: Any) -> list[Any]:
+        if not value:
+            return []
+        return list(value) if isinstance(value, (list, tuple)) else [value]
+
+    def _get(obj: Any, key: str) -> Any:
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
     reasoning_chunks: list[str] = []
-    outputs = getattr(response, "output", None)
-    if outputs:
-        for item in outputs:
-            if isinstance(item, dict):
-                item_type = item.get("type")
-                if item_type == "reasoning":
-                    reasoning_chunks.extend(_extract_text_from_content_blocks(item.get("content")))
+    for output in _as_list(getattr(response, "output", None)):
+        for block in _as_list(_get(output, "content")):
+            if _get(block, "type") != "reasoning":
                 continue
-            item_type = getattr(item, "type", None) or getattr(item, "object", None)
-            if item_type == "reasoning":
-                reasoning_chunks.extend(_extract_text_from_content_blocks(getattr(item, "content", None)))
+            reasoning_chunks.extend(_extract_text_from_content_blocks(_get(block, "content")))
+
     if not reasoning_chunks:
-        reasoning_fallback = getattr(response, "reasoning", None)
-        if reasoning_fallback:
-            reasoning_chunks.extend(_extract_text_from_content_blocks(reasoning_fallback))
+        reasoning_chunks.extend(_extract_text_from_content_blocks(_get(response, "reasoning")))
+
     return "\n\n".join(chunk for chunk in reasoning_chunks if chunk)
 
 
