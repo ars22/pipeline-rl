@@ -69,6 +69,10 @@ When you launch the training job, the grader server/endpoint will start automati
 ```yaml
 llm_grader:
   name: openai/gpt-oss-20b
+  vllm_kwargs:
+    num_nodes: 1
+    dp: 8
+    tp: 1
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 32768
@@ -79,14 +83,19 @@ llm_grader:
 
 The `reasoning_delimiters` field specifies where the split the model's response so that only the final answer is extracted for verification. Note that for the Responses API, `max_output_tokens` is the total number of tokens (prompt + output), so make sure to set it high enough to accommodate the full response. 
 
-For the Slurm deployment, you can tune the number of nodes and data/tensor paralleism as follows:
+For the Slurm deployment, you can tune `llm_grader.vllm_kwargs` (number of nodes, data/tensor parallelism, and vLLM resource limits) as follows:
 
 ```yaml
 llm_grader:
   name: openai/gpt-oss-20b
-  num_nodes: 2                      # number of nodes for the grader server
-  dp: 16                            # data parallelism
-  tp: 1                             # tensor parallelism
+  vllm_kwargs:
+    num_nodes: 2                    # number of nodes for the grader server
+    dp: 16                          # data parallelism
+    tp: 1                           # tensor parallelism
+    max-num-batched-tokens: 8192    # tokenizer budget per batch
+    max-num-seqs: 16                # concurrent sequences
+    max-model-len: 32768            # prompt + output budget
+    gpu-memory-utilization: 0.85    # fraction of GPU memory vLLM can use
 ```
 
 > [!NOTE]
@@ -101,7 +110,7 @@ salloc --nodes=1 --gres=gpu:8 --qos=high --time=02:00:00 --job-name=prl-grader -
 Then run the grader server manually:
 
 ```sh
-srun --nodes=1 --ntasks=1 --overlap bash run_grader_multinode.slurm --model Qwen/Qwen3-0.6B --dp 8
+srun --nodes=1 --ntasks=1 --overlap bash run_grader.slurm --model Qwen/Qwen3-0.6B --dp 8
 ```
 
 # Hugging Face Hub integration

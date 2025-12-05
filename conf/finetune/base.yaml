@@ -116,9 +116,14 @@ rl:
 
 llm_grader:
   name: null
-  num_nodes: 1
-  tp: 1
-  dp: 1
+  vllm_kwargs:
+    num_nodes: 1
+    tp: 1
+    dp: 1
+    max-num-batched-tokens: 8192
+    max-num-seqs: 16
+    max-model-len: 32768
+    gpu-memory-utilization: 0.85
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 4096

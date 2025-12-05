@@ -25,7 +25,7 @@ START_TIME=$(date +%s)
 echo "START TIME: $(date)"
 
 usage() {
-  echo "Usage: sbatch run_grader_multinode.slurm --model MODEL [--dp DATA_PARALLEL] [--tp TENSOR_PARALLEL] [--ray-port PORT] [--vllm-port PORT]" >&2
+  echo "Usage: sbatch run_grader.slurm --model MODEL [--dp DATA_PARALLEL] [--tp TENSOR_PARALLEL] [--ray-port PORT] [--vllm-port PORT] [--max-num-batched-tokens TOKENS] [--max-num-seqs SEQS] [--max-model-len TOKENS] [--gpu-memory-utilization FRACTION]" >&2
   exit 1
 }
 
@@ -34,6 +34,10 @@ DP=1
 TP=1
 RAY_PORT=${RAY_PORT:-6379}
 VLLM_PORT=${VLLM_PORT:-8000}
+MAX_NUM_BATCHED_TOKENS=8192
+MAX_NUM_SEQS=16
+MAX_MODEL_LEN=32768
+GPU_MEMORY_UTILIZATION=0.85
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -55,6 +59,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --vllm-port)
       VLLM_PORT="${2:-}"
+      shift 2
+      ;;
+    --max-num-batched-tokens)
+      MAX_NUM_BATCHED_TOKENS="${2:-}"
+      shift 2
+      ;;
+    --max-num-seqs)
+      MAX_NUM_SEQS="${2:-}"
+      shift 2
+      ;;
+    --max-model-len)
+      MAX_MODEL_LEN="${2:-}"
+      shift 2
+      ;;
+    --gpu-memory-utilization)
+      GPU_MEMORY_UTILIZATION="${2:-}"
       shift 2
       ;;
     *)
@@ -80,10 +100,33 @@ if ! [[ "$RAY_PORT" =~ ^[0-9]+$ ]] || ! [[ "$VLLM_PORT" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+if ! [[ "$MAX_NUM_BATCHED_TOKENS" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --max-num-batched-tokens must be a positive integer" >&2
+  exit 1
+fi
+
+if ! [[ "$MAX_NUM_SEQS" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --max-num-seqs must be a positive integer" >&2
+  exit 1
+fi
+
+if ! [[ "$MAX_MODEL_LEN" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --max-model-len must be a positive integer" >&2
+  exit 1
+fi
+
+if ! [[ "$GPU_MEMORY_UTILIZATION" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "ERROR: --gpu-memory-utilization must be a positive number" >&2
+  exit 1
+fi
+
 DP=$((DP))
 TP=$((TP))
 RAY_PORT=$((RAY_PORT))
 VLLM_PORT=$((VLLM_PORT))
+MAX_NUM_BATCHED_TOKENS=$((MAX_NUM_BATCHED_TOKENS))
+MAX_NUM_SEQS=$((MAX_NUM_SEQS))
+MAX_MODEL_LEN=$((MAX_MODEL_LEN))
 
 if (( DP < 1 || TP < 1 )); then
   echo "ERROR: --dp and --tp must be >= 1" >&2
@@ -173,6 +216,10 @@ echo "Head node: $HEAD_NODE (IP: $HEAD_NODE_IP)"
 echo "Ray port: $RAY_PORT"
 echo "vLLM port: $VLLM_PORT"
 echo "CPUs per node: $CPUS_PER_NODE"
+echo "Max num batched tokens: $MAX_NUM_BATCHED_TOKENS"
+echo "Max num seqs: $MAX_NUM_SEQS"
+echo "Max model len: $MAX_MODEL_LEN"
+echo "GPU memory utilization: $GPU_MEMORY_UTILIZATION"
 echo "All nodes:"
 echo "$NODES"
 echo "vLLM log: $VLLM_LOG"
@@ -290,9 +337,10 @@ vllm serve "$MODEL" \
   --no-enable-prefix-caching \
   --enable-chunked-prefill \
   --max-cudagraph-capture-size 2048 \
-  --max-num-batched-tokens 65536 \
-  --max-num-seqs 16 \
-  --gpu-memory-utilization 0.85
+  --max-num-batched-tokens $MAX_NUM_BATCHED_TOKENS \
+  --max-num-seqs $MAX_NUM_SEQS \
+  --max-model-len $MAX_MODEL_LEN \
+  --gpu-memory-utilization $GPU_MEMORY_UTILIZATION
   &> "$VLLM_LOG" &
 VLLM_PID=$!
 
