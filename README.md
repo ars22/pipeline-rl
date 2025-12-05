@@ -71,8 +71,8 @@ llm_grader:
   name: openai/gpt-oss-20b
   vllm_kwargs:
     num_nodes: 1
-    dp: 8
-    tp: 1
+    data-parallel-size: 8
+    tensor-parallel-size: 1
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 32768
@@ -90,8 +90,8 @@ llm_grader:
   name: openai/gpt-oss-20b
   vllm_kwargs:
     num_nodes: 2                    # number of nodes for the grader server
-    dp: 16                          # data parallelism
-    tp: 1                           # tensor parallelism
+    data-parallel-size: 16          # data parallelism
+    tensor-parallel-size: 1         # tensor parallelism
     max-num-batched-tokens: 8192    # tokenizer budget per batch
     max-num-seqs: 16                # concurrent sequences
     max-model-len: 32768            # prompt + output budget
@@ -99,7 +99,7 @@ llm_grader:
 ```
 
 > [!NOTE]
-> Make sure that `dp * tp` matches the total number of GPUs allocated to the grader server (e.g., for 2 nodes with 8 GPUs each, use `dp:16` and `tp:1` or `dp:8` and `tp:2` etc).
+> Make sure that `data-parallel-size * tensor-parallel-size` matches the total number of GPUs allocated to the grader server (e.g., for 2 nodes with 8 GPUs each, use `data-parallel-size:16` and `tensor-parallel-size:1` or `data-parallel-size:8` and `tensor-parallel-size:2`, etc).
 
 To debug the grader, allocate one or more nodes:
 
@@ -110,7 +110,7 @@ salloc --nodes=1 --gres=gpu:8 --qos=high --time=02:00:00 --job-name=prl-grader -
 Then run the grader server manually:
 
 ```sh
-srun --nodes=1 --ntasks=1 --overlap bash run_grader.slurm --model Qwen/Qwen3-0.6B --dp 8
+srun --nodes=1 --ntasks=1 --overlap bash run_grader.slurm --model Qwen/Qwen3-0.6B --data-parallel-size 8
 ```
 
 # Hugging Face Hub integration

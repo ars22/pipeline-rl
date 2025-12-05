@@ -118,8 +118,8 @@ llm_grader:
   name: null
   vllm_kwargs:
     num_nodes: 1
-    tp: 1
-    dp: 1
+    tensor-parallel-size: 1
+    data-parallel-size: 1
     max-num-batched-tokens: 8192
     max-num-seqs: 16
     max-model-len: 32768

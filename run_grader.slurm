@@ -25,13 +25,13 @@ START_TIME=$(date +%s)
 echo "START TIME: $(date)"
 
 usage() {
-  echo "Usage: sbatch run_grader.slurm --model MODEL [--dp DATA_PARALLEL] [--tp TENSOR_PARALLEL] [--ray-port PORT] [--vllm-port PORT] [--max-num-batched-tokens TOKENS] [--max-num-seqs SEQS] [--max-model-len TOKENS] [--gpu-memory-utilization FRACTION]" >&2
+  echo "Usage: sbatch run_grader.slurm --model MODEL [--data-parallel-size DATA_PARALLEL] [--tensor-parallel-size TENSOR_PARALLEL] [--ray-port PORT] [--vllm-port PORT] [--max-num-batched-tokens TOKENS] [--max-num-seqs SEQS] [--max-model-len TOKENS] [--gpu-memory-utilization FRACTION]" >&2
   exit 1
 }
 
 MODEL=""
-DP=1
-TP=1
+DATA_PARALLEL_SIZE=1
+TENSOR_PARALLEL_SIZE=1
 RAY_PORT=${RAY_PORT:-6379}
 VLLM_PORT=${VLLM_PORT:-8000}
 MAX_NUM_BATCHED_TOKENS=8192
@@ -45,12 +45,12 @@ while [[ $# -gt 0 ]]; do
       MODEL="${2:-}"
       shift 2
       ;;
-    --dp)
-      DP="${2:-}"
+    --data-parallel-size)
+      DATA_PARALLEL_SIZE="${2:-}"
       shift 2
       ;;
-    --tp)
-      TP="${2:-}"
+    --tensor-parallel-size)
+      TENSOR_PARALLEL_SIZE="${2:-}"
       shift 2
       ;;
     --ray-port)
@@ -85,13 +85,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$MODEL" ]] && usage
-[[ -z "$DP" ]] && DP=1
-[[ -z "$TP" ]] && TP=1
+[[ -z "$DATA_PARALLEL_SIZE" ]] && DATA_PARALLEL_SIZE=1
+[[ -z "$TENSOR_PARALLEL_SIZE" ]] && TENSOR_PARALLEL_SIZE=1
 [[ -z "$RAY_PORT" ]] && RAY_PORT=6379
 [[ -z "$VLLM_PORT" ]] && VLLM_PORT=8000
 
-if ! [[ "$DP" =~ ^[0-9]+$ ]] || ! [[ "$TP" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: --dp and --tp must be positive integers" >&2
+if ! [[ "$DATA_PARALLEL_SIZE" =~ ^[0-9]+$ ]] || ! [[ "$TENSOR_PARALLEL_SIZE" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --data-parallel-size and --tensor-parallel-size must be positive integers" >&2
   exit 1
 fi
 
@@ -120,16 +120,16 @@ if ! [[ "$GPU_MEMORY_UTILIZATION" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   exit 1
 fi
 
-DP=$((DP))
-TP=$((TP))
+DATA_PARALLEL_SIZE=$((DATA_PARALLEL_SIZE))
+TENSOR_PARALLEL_SIZE=$((TENSOR_PARALLEL_SIZE))
 RAY_PORT=$((RAY_PORT))
 VLLM_PORT=$((VLLM_PORT))
 MAX_NUM_BATCHED_TOKENS=$((MAX_NUM_BATCHED_TOKENS))
 MAX_NUM_SEQS=$((MAX_NUM_SEQS))
 MAX_MODEL_LEN=$((MAX_MODEL_LEN))
 
-if (( DP < 1 || TP < 1 )); then
-  echo "ERROR: --dp and --tp must be >= 1" >&2
+if (( DATA_PARALLEL_SIZE < 1 || TENSOR_PARALLEL_SIZE < 1 )); then
+  echo "ERROR: --data-parallel-size and --tensor-parallel-size must be >= 1" >&2
   exit 1
 fi
 
@@ -164,32 +164,32 @@ if ! (( NUM_GPUS_PER_NODE > 0 )); then
 fi
 
 TOTAL_GPUS=$((NUM_NODES * NUM_GPUS_PER_NODE))
-REQUIRED_GPUS=$((DP * TP))
+REQUIRED_GPUS=$((DATA_PARALLEL_SIZE * TENSOR_PARALLEL_SIZE))
 
 if (( REQUIRED_GPUS > TOTAL_GPUS )); then
-  echo "ERROR: Requested DP*TP=${REQUIRED_GPUS} exceeds available GPUs (${TOTAL_GPUS})" >&2
+  echo "ERROR: Requested data-parallel-size * tensor-parallel-size = ${REQUIRED_GPUS} exceeds available GPUs (${TOTAL_GPUS})" >&2
   exit 1
 fi
 
-if (( DP < NUM_NODES )); then
-  echo "ERROR: Requested DP (${DP}) must be >= number of nodes (${NUM_NODES})" >&2
+if (( DATA_PARALLEL_SIZE < NUM_NODES )); then
+  echo "ERROR: Requested data-parallel-size (${DATA_PARALLEL_SIZE}) must be >= number of nodes (${NUM_NODES})" >&2
   exit 1
 fi
 
-if (( DP % NUM_NODES != 0 )); then
-  echo "ERROR: Requested DP (${DP}) must be divisible by number of nodes (${NUM_NODES}) to evenly distribute replicas" >&2
+if (( DATA_PARALLEL_SIZE % NUM_NODES != 0 )); then
+  echo "ERROR: Requested data-parallel-size (${DATA_PARALLEL_SIZE}) must be divisible by number of nodes (${NUM_NODES}) to evenly distribute replicas" >&2
   exit 1
 fi
 
-MAX_DP_PER_NODE=$((NUM_GPUS_PER_NODE / TP))
-if (( MAX_DP_PER_NODE == 0 )); then
-  echo "ERROR: Tensor parallel size (${TP}) exceeds GPUs per node (${NUM_GPUS_PER_NODE})" >&2
+MAX_DATA_PARALLEL_PER_NODE=$((NUM_GPUS_PER_NODE / TENSOR_PARALLEL_SIZE))
+if (( MAX_DATA_PARALLEL_PER_NODE == 0 )); then
+  echo "ERROR: Tensor parallel size (${TENSOR_PARALLEL_SIZE}) exceeds GPUs per node (${NUM_GPUS_PER_NODE})" >&2
   exit 1
 fi
 
-DP_LOCAL_PER_NODE=$((DP / NUM_NODES))
-if (( DP_LOCAL_PER_NODE > MAX_DP_PER_NODE )); then
-  echo "ERROR: DP per node (${DP_LOCAL_PER_NODE}) exceeds capacity (${MAX_DP_PER_NODE}) for TP=${TP}" >&2
+DATA_PARALLEL_PER_NODE=$((DATA_PARALLEL_SIZE / NUM_NODES))
+if (( DATA_PARALLEL_PER_NODE > MAX_DATA_PARALLEL_PER_NODE )); then
+  echo "ERROR: Data parallel replicas per node (${DATA_PARALLEL_PER_NODE}) exceeds capacity (${MAX_DATA_PARALLEL_PER_NODE}) for tensor-parallel-size=${TENSOR_PARALLEL_SIZE}" >&2
   exit 1
 fi
 
@@ -200,15 +200,15 @@ VLLM_LOG="${LOG_DIR}/imo-grader-${SLURM_JOB_ID}-vllm.log"
 CPUS_PER_NODE=88
 
 export MODEL
-export DP
-export TP
+export DATA_PARALLEL_SIZE
+export TENSOR_PARALLEL_SIZE
 export VLLM_API_KEY="grader"
 export VLLM_HOST_IP="$HEAD_NODE_IP"
 
 echo "================================================================"
 echo "LLM Grader multi-node launch configuration"
 echo "Model: $MODEL"
-echo "DP: $DP (per node: $DP_LOCAL_PER_NODE) | TP: $TP | Requested GPUs: $REQUIRED_GPUS"
+echo "Data parallel size: $DATA_PARALLEL_SIZE (per node: $DATA_PARALLEL_PER_NODE) | Tensor parallel size: $TENSOR_PARALLEL_SIZE | Requested GPUs: $REQUIRED_GPUS"
 echo "Nodes: $NUM_NODES"
 echo "GPUs per node: $NUM_GPUS_PER_NODE"
 echo "Total GPUs: $TOTAL_GPUS"
@@ -331,9 +331,9 @@ vllm serve "$MODEL" \
   --distributed-executor-backend ray \
   --data-parallel-backend ray \
   --data-parallel-address "$HEAD_NODE_IP" \
-  --data-parallel-size $DP \
-  --data-parallel-size-local $DP_LOCAL_PER_NODE \
-  --tensor-parallel-size $TP \
+  --data-parallel-size $DATA_PARALLEL_SIZE \
+  --data-parallel-size-local $DATA_PARALLEL_PER_NODE \
+  --tensor-parallel-size $TENSOR_PARALLEL_SIZE \
   --no-enable-prefix-caching \
   --enable-chunked-prefill \
   --max-cudagraph-capture-size 2048 \

@@ -40,8 +40,8 @@ llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   vllm_kwargs:
     num_nodes: 1
-    dp: 8
-    tp: 1
+    data-parallel-size: 8
+    tensor-parallel-size: 1
     max-num-batched-tokens: 8192
     max-num-seqs: 16
     max-model-len: 32768

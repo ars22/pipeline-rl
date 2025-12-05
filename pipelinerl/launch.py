@@ -610,8 +610,8 @@ def _to_dict(config: Any) -> dict[str, Any]:
 def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str = "HuggingFaceH4", timeout=900):
     kwargs = _to_dict(vllm_kwargs)
     num_nodes = int(kwargs.get("num_nodes", 1))
-    dp = int(kwargs.get("dp", 1))
-    tp = int(kwargs.get("tp", 1))
+    data_parallel_size = int(kwargs.get("data-parallel-size", kwargs.get("dp", 1)))
+    tensor_parallel_size = int(kwargs.get("tensor-parallel-size", kwargs.get("tp", 1)))
     max_num_batched_tokens = kwargs.get("max-num-batched-tokens", 8192)
     max_num_seqs = kwargs.get("max-num-seqs", 16)
     max_model_len = kwargs.get("max-model-len", 32768)
@@ -633,10 +633,10 @@ def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str =
             "run_grader.slurm",
             "--model",
             name,
-            "--dp",
-            str(dp),
-            "--tp",
-            str(tp),
+            "--data-parallel-size",
+            str(data_parallel_size),
+            "--tensor-parallel-size",
+            str(tensor_parallel_size),
             "--max-num-batched-tokens",
             str(max_num_batched_tokens),
             "--max-num-seqs",
