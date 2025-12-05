@@ -285,52 +285,24 @@ class ProofVerificationResult:
     table_entry: dict[str, str | int] | None = None
 
 
-def _extract_text_from_content_blocks(content: Any) -> list[str]:
-    """
-    WandB logging helper that normalizes different response SDK content shapes into plain strings.
-    """
-    def _as_list(value: Any) -> list[Any]:
-        if not value:
-            return []
-        return list(value) if isinstance(value, (list, tuple)) else [value]
-
-    def _get(obj: Any, key: str) -> Any:
-        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
-
-    texts: list[str] = []
-    for block in _as_list(content):
-        text_obj = _get(block, "text")
-        if not text_obj:
-            continue
-        if isinstance(text_obj, str):
-            texts.append(text_obj)
-            continue
-        value = text_obj.get("value") if isinstance(text_obj, dict) else getattr(text_obj, "value", None)
-        if value:
-            texts.append(str(value))
-    return texts
-
-
 def _extract_reasoning_from_response(response: Any) -> str:
-    def _as_list(value: Any) -> list[Any]:
-        if not value:
-            return []
-        return list(value) if isinstance(value, (list, tuple)) else [value]
+    """
+    Extract reasoning text from an OpenAI Responses API Response object.
 
-    def _get(obj: Any, key: str) -> Any:
-        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+    The Response object has an `output` list containing output items.
+    For reasoning models, this includes items with type="reasoning" that have
+    a `summary` list of text objects.
 
+    See: https://platform.openai.com/docs/api-reference/responses/object
+    """
     reasoning_chunks: list[str] = []
-    for output in _as_list(getattr(response, "output", None)):
-        for block in _as_list(_get(output, "content")):
-            if _get(block, "type") != "reasoning":
-                continue
-            reasoning_chunks.extend(_extract_text_from_content_blocks(_get(block, "content")))
-
-    if not reasoning_chunks:
-        reasoning_chunks.extend(_extract_text_from_content_blocks(_get(response, "reasoning")))
-
-    return "\n\n".join(chunk for chunk in reasoning_chunks if chunk)
+    for item in response.output or []:
+        if getattr(item, "type", None) == "reasoning":
+            for summary_item in getattr(item, "summary", []) or []:
+                text = getattr(summary_item, "text", None)
+                if text:
+                    reasoning_chunks.append(text)
+    return "\n\n".join(reasoning_chunks)
 
 
 def _should_collect_metrics(collect_flag: bool | None) -> bool:
