@@ -108,7 +108,7 @@ class TestFileStreamReaderCorruptedLine:
         )
 
         results = []
-        with FileStreamReader(spec) as reader:  # skip_corrupted=True by default
+        with FileStreamReader(spec, max_retries=1) as reader:  # skip_corrupted=True by default, fast retries for test
             for item in reader.read():
                 results.append(item)
                 if len(results) >= 20:  # Safety limit
@@ -130,8 +130,7 @@ class TestFileStreamReaderCorruptedLine:
 
     def test_corrupted_line_raises_when_skip_disabled(self, temp_exp_path):
         """
-        With skip_corrupted=False, the reader should fail on corrupted data
-        (original behavior for backwards compatibility).
+        With skip_corrupted=False, the reader should fail on corrupted data (original behavior).
         """
         import pipelinerl.streams as streams_module
         streams_module._backend = "files"
@@ -155,7 +154,7 @@ class TestFileStreamReaderCorruptedLine:
         )
 
         results = []
-        with FileStreamReader(spec, skip_corrupted=False) as reader:
+        with FileStreamReader(spec, skip_corrupted=False, max_retries=1) as reader:
             with pytest.raises(json.JSONDecodeError):
                 for item in reader.read():
                     results.append(item)

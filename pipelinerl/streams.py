@@ -299,9 +299,10 @@ def read_jsonl_stream(f: TextIO, retry_delay: float = _REREAD_DELAY) -> Iterator
 
 
 class FileStreamReader(StreamReader):
-    def __init__(self, stream: SingleStreamSpec, skip_corrupted: bool = True):
+    def __init__(self, stream: SingleStreamSpec, skip_corrupted: bool = True, max_retries: int = 10):
         self.stream = stream
         self.skip_corrupted = skip_corrupted
+        self.max_retries = max_retries
 
     def __enter__(self):
         _file_dir = stream_dir(self.stream.exp_path, self.stream.topic, self.stream.instance, self.stream.partition)
@@ -336,7 +337,6 @@ class FileStreamReader(StreamReader):
     def read(self):
         retry_time = 0.01
         cur_retries = 0
-        max_retries = 10
         while True:
             try:
                 for line in read_jsonl_stream(self._file):
@@ -347,9 +347,9 @@ class FileStreamReader(StreamReader):
                 # Sometimes when the stream file is being written to at the same time as we're reading it,
                 # we get lines like \0x00\0x00\0x00\0x00\0x00\0x00\0x00\0x00 that break the JSON decoder.
                 # We have to reopen the file and seek to the previous position to try again.
-                if cur_retries < max_retries:
+                if cur_retries < self.max_retries:
                     logger.warning(
-                        f"Could not decode JSON from {self.stream}, might have run into end of the file. Will reopen the file and retry ({cur_retries}/{max_retries}), starting from position {e.position})"
+                        f"Could not decode JSON from {self.stream}, might have run into end of the file. Will reopen the file and retry ({cur_retries}/{self.max_retries}), starting from position {e.position})"
                     )  # type: ignore
                     time.sleep(retry_time)
                     self._file.close()
@@ -376,7 +376,7 @@ class FileStreamReader(StreamReader):
                         retry_time = 0.01
                         continue
                     else:
-                        logger.error(f"Error reading stream {self.stream}, giving up after {max_retries} retries")
+                        logger.error(f"Error reading stream {self.stream}, giving up after {self.max_retries} retries")
                         raise e
 
 
