@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 import traceback
@@ -26,37 +27,37 @@ logger = logging.getLogger(__name__)
 _REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
 
 
-def _resolve_selected_config_file(cfg: DictConfig) -> tuple[Path, str]:
-    """Locate the config file referenced via --config-name."""
-    hydra_cfg = getattr(cfg, "hydra", None)
-    job_cfg = getattr(hydra_cfg, "job", None) if hydra_cfg else None
-    job_cfg_name = getattr(job_cfg, "config_name", None)
-    if not job_cfg_name:
-        raise ValueError("Hydra did not provide --config-name; please invoke launch with --config-name=<name>")
-
-    rel_path = Path(job_cfg_name)
-    if rel_path.suffix != ".yaml":
-        rel_path = rel_path.with_suffix(".yaml")
-
-    config_path = (_REPO_CONF_DIR / rel_path).resolve()
-    logical_name = rel_path.name
-    if not config_path.exists():
-        raise FileNotFoundError(
-            f"Config file '{config_path}' does not exist. Ensure --config-name points to a file in { _REPO_CONF_DIR }."
-        )
-    return config_path, logical_name
+def _get_config_name_from_argv() -> str | None:
+    """Extract --config-name value from command line arguments."""
+    for arg in sys.argv:
+        if arg.startswith("--config-name="):
+            return arg.split("=", 1)[1]
+    return None
 
 
 def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
     """Upload the active Hydra config file to W&B."""
-    config_path, logical_name = _resolve_selected_config_file(cfg)
+    config_name = _get_config_name_from_argv()
+    if config_name is None:
+        logger.debug("Skipping config upload to W&B: --config-name not found in argv")
+        return
+
+    rel_path = Path(config_name)
+    if rel_path.suffix != ".yaml":
+        rel_path = rel_path.with_suffix(".yaml")
+
+    config_path = (_REPO_CONF_DIR / rel_path).resolve()
+    if not config_path.exists():
+        logger.warning("Config file %s does not exist, skipping upload", config_path)
+        return
+
     try:
         wandb.save(
             str(config_path),
             base_path=str(config_path.parent),
             policy="now",
         )
-        logger.info("Uploaded config file %s to W&B", logical_name)
+        logger.info("Uploaded config file %s to W&B", rel_path.name)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to upload config %s to W&B: %s", config_path, exc)
 
