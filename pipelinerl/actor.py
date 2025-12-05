@@ -672,6 +672,7 @@ def run_actor_loop(cfg: DictConfig):
         run = init_wandb(cfg, exp_path / "actor", flatten_dict_config(cfg))  # type: ignore
         if run is None:
             raise ValueError("Failed to initialize wandb run")
+        wandb.define_metric("verifier/*", step_metric="verifier/group_index")
     llm_urls = str(cfg.me.llm_urls).split("+")
 
     stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats")
