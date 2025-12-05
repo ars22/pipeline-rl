@@ -23,19 +23,28 @@ import wandb
 from wandb.sdk import wandb_run
 
 logger = logging.getLogger(__name__)
+_REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
 
 
 def _resolve_selected_config_file(cfg: DictConfig) -> tuple[Path, str]:
     """Locate the config file referenced via --config-name."""
-    config_path_value = getattr(cfg, "source_config_path", None)
-    if not config_path_value:
-        raise ValueError(
-            "source_config_path is missing from the config. Please re-run via pipelinerl.launch so the field is populated."
-        )
-    config_path = Path(str(config_path_value)).resolve()
+    hydra_cfg = getattr(cfg, "hydra", None)
+    job_cfg = getattr(hydra_cfg, "job", None) if hydra_cfg else None
+    job_cfg_name = getattr(job_cfg, "config_name", None)
+    if not job_cfg_name:
+        raise ValueError("Hydra did not provide --config-name; please invoke launch with --config-name=<name>")
+
+    rel_path = Path(job_cfg_name)
+    if rel_path.suffix != ".yaml":
+        rel_path = rel_path.with_suffix(".yaml")
+
+    config_path = (_REPO_CONF_DIR / rel_path).resolve()
+    logical_name = rel_path.name
     if not config_path.exists():
-        raise FileNotFoundError(f"Config file '{config_path}' does not exist. Please verify --config-name in pipelinerl.launch.")
-    return config_path, config_path.name
+        raise FileNotFoundError(
+            f"Config file '{config_path}' does not exist. Ensure --config-name points to a file in { _REPO_CONF_DIR }."
+        )
+    return config_path, logical_name
 
 
 def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:

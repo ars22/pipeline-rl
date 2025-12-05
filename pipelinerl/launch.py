@@ -14,7 +14,6 @@ from typing import Any, List, TextIO
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from hydra.core.hydra_config import HydraConfig
 
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import SingleStreamSpec, connect_to_redis, read_stream, set_streams_backend, write_to_streams
@@ -33,26 +32,6 @@ os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 
 _GRADER_JOB_ID: str | None = None
 _GRADER_CLEANUP_REGISTERED = False
-_REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
-
-
-def _set_source_config_path(cfg: DictConfig) -> None:
-    """Record the user-selected Hydra config path so downstream jobs can access it."""
-    if getattr(cfg, "source_config_path", None):
-        return
-    try:
-        hydra_cfg = HydraConfig.get()
-    except ValueError:
-        return
-    job_cfg = getattr(hydra_cfg, "job", None)
-    job_cfg_name = getattr(job_cfg, "config_name", None)
-    if not job_cfg_name:
-        return
-    rel_path = Path(job_cfg_name)
-    if rel_path.suffix != ".yaml":
-        rel_path = rel_path.with_suffix(".yaml")
-    candidate = (_REPO_CONF_DIR / rel_path).resolve()
-    cfg["source_config_path"] = str(candidate)
 
 def _popen(
     cmd: list[str],
@@ -715,7 +694,6 @@ def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str =
 )
 def main(cfg: DictConfig):
     validate_config(cfg)
-    _set_source_config_path(cfg)
 
     rank = int(os.environ.get("RANK", "0"))
 
