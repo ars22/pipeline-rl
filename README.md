@@ -56,6 +56,15 @@ timestamp=$(date +'%Y%m%d-%H%M%S'); python -m pipelinerl.launch --config-name=pr
 timestamp=$(date +'%Y%m%d-%H%M%S'); sbatch --job-name=prl-qwen3-4b-instruct-8k --nodes=2 run_hf.slurm --config proof_qwen3-4b-instruct-8k --job-name "proof_qwen3-4b-instruct-8k-${timestamp}"
 ```
 
+> ![WARNING]
+> We timestamp each run's `output_dir` to avoid WandB collisions in PipelineRL which cause the whole job to crash 🫠
+ 
+For developing, use the demo pipeline for faster iterations:
+
+```sh
+timestamp=$(date +'%Y%m%d-%H%M%S'); python -m pipelinerl.launch --config-name=proof_demo output_dir="tmp/results/proof_demo-${timestamp}" 
+```
+
 This pipeline depends on an external LLM grader for proof verification. You can either run the grader locally on the Hugging Face cluster or by calling a deployed inference endpoint. The choice is determined by the `llm_grader.name` field in the config:
 
 ```yaml
