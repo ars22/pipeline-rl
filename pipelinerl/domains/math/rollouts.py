@@ -83,6 +83,7 @@ async def generate_math_rollout(
     # PROOF-BASED SCORING BRANCH
     # ===========================================================
     verifier_metrics: dict[str, float | int] = {}
+    verifier_table_entry: dict[str, str | int] | None = None
     if "schema" in problem:
         verification = await verify_proof(
             problem=problem["task"],
@@ -95,6 +96,7 @@ async def generate_math_rollout(
         )
         score = verification.score
         verifier_metrics = verification.metrics
+        verifier_table_entry = verification.table_entry
         # normalize score to [0, 1]
         reward = (score / 7.0) * (discount_factor ** llm_call.output_length_tokens)
 
@@ -182,4 +184,5 @@ async def generate_math_rollout(
         latency=latency,
         dataset_name=problem.get("dataset"),
         verifier_metrics=verifier_metrics,
+        verifier_table_entry=verifier_table_entry,
     )

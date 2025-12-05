@@ -282,6 +282,27 @@ _openai_client = None
 class ProofVerificationResult:
     score: int
     metrics: dict[str, float | int] = field(default_factory=dict)
+    table_entry: dict[str, str | int] | None = None
+
+
+def _extract_reasoning_from_response(response: Any) -> str:
+    """
+    Extract reasoning content from an OpenAI Responses API Response object.
+
+    The Response object has an `output` list containing output items.
+    For reasoning models, this includes items with type="reasoning" that have
+    a `content` list of text objects.
+
+    See: https://platform.openai.com/docs/api-reference/responses/object
+    """
+    reasoning_chunks: list[str] = []
+    for item in response.output or []:
+        if getattr(item, "type", None) == "reasoning":
+            for content_item in getattr(item, "content", []) or []:
+                text = getattr(content_item, "text", None)
+                if text:
+                    reasoning_chunks.append(text)
+    return "\n\n".join(reasoning_chunks)
 
 
 def _should_collect_metrics(collect_flag: bool | None) -> bool:
@@ -429,17 +450,36 @@ async def verify_proof(
             output_text = getattr(response, "output_text", None) or ""
             match = re.search(r"<score>(\d+)</score>", output_text)
             if match:
+                score = int(match.group(1))
+                table_entry = None
+                if collect_metrics:
+                    reasoning_text = _extract_reasoning_from_response(response)
+                    table_entry = {
+                        "prompt": prompt_text,
+                        "reasoning": reasoning_text,
+                        "output_text": output_text,
+                        "score": score,
+                    }
                 rollout_metrics = _build_rollout_metrics(
                     success=True,
                     failure_causes=attempt_failure_causes,
                     num_retries=num_retries,
                 )
-                score = int(match.group(1))
                 return ProofVerificationResult(
                     score=score,
                     metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+                    table_entry=table_entry,
                 )
             else:
+                table_entry = None
+                if collect_metrics:
+                    reasoning_text = _extract_reasoning_from_response(response)
+                    table_entry = {
+                        "prompt": prompt_text,
+                        "reasoning": reasoning_text,
+                        "output_text": output_text,
+                        "score": 0,
+                    }
                 rollout_metrics = _build_rollout_metrics(
                     success=False,
                     failure_causes=["no_score_tag"],
@@ -449,6 +489,7 @@ async def verify_proof(
                 return ProofVerificationResult(
                     score=0,
                     metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+                    table_entry=table_entry,
                 )
 
         except openai.RateLimitError as e:

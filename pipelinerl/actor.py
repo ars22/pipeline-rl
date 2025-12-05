@@ -41,6 +41,34 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+
+_WANDB_VERIFIER_TABLE = None
+_WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
+
+
+def _get_wandb_verifier_table():
+    global _WANDB_VERIFIER_TABLE
+    if getattr(wandb, "run", None) is None:
+        return None
+    if _WANDB_VERIFIER_TABLE is None:
+        _WANDB_VERIFIER_TABLE = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS, log_mode="MUTABLE")
+    return _WANDB_VERIFIER_TABLE
+
+
+def _log_verifier_table_entry(entry: dict[str, str | int]):
+    table = _get_wandb_verifier_table()
+    if table is None:
+        return
+    table.add_data(
+        entry.get("group_index", 0),
+        entry.get("prompt", ""),
+        entry.get("reasoning", ""),
+        entry.get("output_text", ""),
+        entry.get("score", 0),
+    )
+    wandb.log({"tables/verifier": table})
+
+
 def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> dict[str, float | int]:
     runtime_values: defaultdict[str, list[float]] = defaultdict(list)
     count_totals: defaultdict[str, int] = defaultdict(int)
@@ -75,13 +103,10 @@ def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> d
     return aggregated
 
 
-def _log_group_verifier_metrics(metrics: dict[str, float | int], *, step: int | None = None):
+def _log_group_verifier_metrics(metrics: dict[str, float | int]):
     if not metrics or getattr(wandb, "run", None) is None:
         return
-    if step is None:
-        wandb.log(dict(metrics))
-    else:
-        wandb.log(dict(metrics), step=step)
+    wandb.log(dict(metrics))
 
 
 class SlidingWindowData(BaseModel):
@@ -437,7 +462,8 @@ class ActorLoop:
         if success_frac is not None:
             aggregated["verifier/group_size_eff"] = aggregated["verifier/group_size"] * success_frac
         self.verifier_metrics_step += 1
-        _log_group_verifier_metrics(aggregated, step=self.verifier_metrics_step)
+        aggregated["verifier/group_index"] = self.verifier_metrics_step
+        _log_group_verifier_metrics(aggregated)
         return
 
 
@@ -554,6 +580,15 @@ class ActorLoop:
                     f" {in_progress} groups in progress"
                 )
 
+                if self.cfg.wandb.use_wandb:
+                    group_index_value = self.verifier_metrics_step + 1
+                    for result in rollout_results:
+                        entry = getattr(result, "verifier_table_entry", None)
+                        if entry:
+                            entry_with_index = dict(entry)
+                            entry_with_index["group_index"] = group_index_value
+                            _log_verifier_table_entry(entry_with_index)
+
                 
                 self.update_stats(rollout_results=rollout_results)
                 self.log_verifier_metrics_for_group(rollout_results)
@@ -641,6 +676,7 @@ def run_actor_loop(cfg: DictConfig):
         run = init_wandb(cfg, exp_path / "actor", flatten_dict_config(cfg))  # type: ignore
         if run is None:
             raise ValueError("Failed to initialize wandb run")
+        wandb.define_metric("verifier/*", step_metric="verifier/group_index")
     llm_urls = str(cfg.me.llm_urls).split("+")
 
     stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats")
