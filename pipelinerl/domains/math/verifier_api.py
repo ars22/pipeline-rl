@@ -17,12 +17,9 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from functools import partial
 
-import pipelinerl.countdown_utils
+import wandb
 
-try:
-    import wandb
-except ImportError:  # pragma: no cover - wandb is optional at runtime
-    wandb = None
+import pipelinerl.countdown_utils
 
 logging.basicConfig(
     level=logging.DEBUG,  # Or INFO, WARNING, etc.
@@ -290,7 +287,7 @@ class ProofVerificationResult:
 
 
 _WANDB_VERIFIER_TABLE = None
-_WANDB_VERIFIER_TABLE_COLUMNS = ["prompt_text", "reasoning", "output", "score"]
+_WANDB_VERIFIER_TABLE_COLUMNS = ["prompt", "reasoning", "output", "score"]
 
 
 def _extract_text_from_content_blocks(content: Any) -> list[str]:
@@ -347,11 +344,11 @@ def _get_wandb_verifier_table():
     if wandb is None or getattr(wandb, "run", None) is None:
         return None
     if _WANDB_VERIFIER_TABLE is None:
-        _WANDB_VERIFIER_TABLE = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS)
+        _WANDB_VERIFIER_TABLE = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS, log_mode="MUTABLE")
     return _WANDB_VERIFIER_TABLE
 
 
-def _log_verifier_table_entry(prompt_text: str, response: Any, output_text: str, score: int):
+def _log_verifier_table_entry(prompt: str, response: Any, output_text: str, score: int):
     """
     Append the latest grader call details to a WandB table for later debugging.
     """
@@ -359,7 +356,7 @@ def _log_verifier_table_entry(prompt_text: str, response: Any, output_text: str,
     if table is None:
         return
     reasoning_text = _extract_reasoning_from_response(response)
-    table.add_data(prompt_text, reasoning_text, output_text, score)
+    table.add_data(prompt, reasoning_text, output_text, score)
     wandb.log({"verifier/grader_table": table})
 
 
@@ -511,7 +508,7 @@ async def verify_proof(
                 score = int(match.group(1))
                 if collect_metrics:
                     _log_verifier_table_entry(
-                        prompt_text=prompt_text,
+                        prompt=prompt_text,
                         response=response,
                         output_text=output_text,
                         score=score,
@@ -528,7 +525,7 @@ async def verify_proof(
             else:
                 if collect_metrics:
                     _log_verifier_table_entry(
-                        prompt_text=prompt_text,
+                        prompt=prompt_text,
                         response=response,
                         output_text=output_text,
                         score=0,
