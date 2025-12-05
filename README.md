@@ -56,6 +56,15 @@ timestamp=$(date +'%Y%m%d-%H%M%S'); python -m pipelinerl.launch --config-name=pr
 timestamp=$(date +'%Y%m%d-%H%M%S'); sbatch --job-name=prl-qwen3-4b-instruct-8k --nodes=2 run_hf.slurm --config proof_qwen3-4b-instruct-8k --job-name "proof_qwen3-4b-instruct-8k-${timestamp}"
 ```
 
+> ![WARNING]
+> We timestamp each run's `output_dir` to avoid WandB collisions in PipelineRL which cause the whole job to crash 🫠
+ 
+For developing, use the demo pipeline for faster iterations:
+
+```sh
+timestamp=$(date +'%Y%m%d-%H%M%S'); python -m pipelinerl.launch --config-name=proof_demo output_dir="tmp/results/proof_demo-${timestamp}" 
+```
+
 This pipeline depends on an external LLM grader for proof verification. You can either run the grader locally on the Hugging Face cluster or by calling a deployed inference endpoint. The choice is determined by the `llm_grader.name` field in the config:
 
 ```yaml
@@ -69,6 +78,10 @@ When you launch the training job, the grader server/endpoint will start automati
 ```yaml
 llm_grader:
   name: openai/gpt-oss-20b
+  vllm_kwargs:
+    num_nodes: 1
+    data-parallel-size: 8
+    tensor-parallel-size: 1
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 32768
@@ -79,18 +92,23 @@ llm_grader:
 
 The `reasoning_delimiters` field specifies where the split the model's response so that only the final answer is extracted for verification. Note that for the Responses API, `max_output_tokens` is the total number of tokens (prompt + output), so make sure to set it high enough to accommodate the full response. 
 
-For the Slurm deployment, you can tune the number of nodes and data/tensor paralleism as follows:
+For the Slurm deployment, you can tune `llm_grader.vllm_kwargs` (number of nodes, data/tensor parallelism, and vLLM resource limits) as follows:
 
 ```yaml
 llm_grader:
   name: openai/gpt-oss-20b
-  num_nodes: 2                      # number of nodes for the grader server
-  dp: 16                            # data parallelism
-  tp: 1                             # tensor parallelism
+  vllm_kwargs:
+    num_nodes: 2                    # number of nodes for the grader server
+    data-parallel-size: 16          # data parallelism
+    tensor-parallel-size: 1         # tensor parallelism
+    max-num-batched-tokens: 8192    # tokenizer budget per batch
+    max-num-seqs: 16                # concurrent sequences
+    max-model-len: 32768            # prompt + output budget
+    gpu-memory-utilization: 0.85    # fraction of GPU memory vLLM can use
 ```
 
 > [!NOTE]
-> Make sure that `dp * tp` matches the total number of GPUs allocated to the grader server (e.g., for 2 nodes with 8 GPUs each, use `dp:16` and `tp:1` or `dp:8` and `tp:2` etc).
+> Make sure that `data-parallel-size * tensor-parallel-size` matches the total number of GPUs allocated to the grader server (e.g., for 2 nodes with 8 GPUs each, use `data-parallel-size:16` and `tensor-parallel-size:1` or `data-parallel-size:8` and `tensor-parallel-size:2`, etc).
 
 To debug the grader, allocate one or more nodes:
 
@@ -101,7 +119,7 @@ salloc --nodes=1 --gres=gpu:8 --qos=high --time=02:00:00 --job-name=prl-grader -
 Then run the grader server manually:
 
 ```sh
-srun --nodes=1 --ntasks=1 --overlap bash run_grader_multinode.slurm --model Qwen/Qwen3-0.6B --dp 8
+srun --nodes=1 --ntasks=1 --overlap bash run_grader.slurm --model Qwen/Qwen3-0.6B --data-parallel-size 8
 ```
 
 # Hugging Face Hub integration

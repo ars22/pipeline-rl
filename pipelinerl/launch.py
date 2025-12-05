@@ -10,7 +10,7 @@ import signal
 import urllib.request
 import re
 from pathlib import Path
-from typing import List, TextIO
+from typing import Any, List, TextIO
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -597,7 +597,25 @@ def _wait_for_vllm_health(url: str, retries: int = 60, delay: int = 10, timeout:
     raise RuntimeError(f"vLLM health check failed after {retries} attempts: {last_error}")
 
 
-def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, namespace: str = "HuggingFaceH4", timeout=900):
+def _to_dict(config: Any) -> dict[str, Any]:
+    if config is None:
+        return {}
+    if isinstance(config, DictConfig):
+        return OmegaConf.to_container(config, resolve=True)  # type: ignore[return-value]
+    if isinstance(config, dict):
+        return dict(config)
+    return dict(config)
+
+
+def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str = "HuggingFaceH4", timeout=900):
+    kwargs = _to_dict(vllm_kwargs)
+    num_nodes = int(kwargs.get("num_nodes", 1))
+    data_parallel_size = int(kwargs.get("data-parallel-size", 1))
+    tensor_parallel_size = int(kwargs.get("tensor-parallel-size", 1))
+    max_num_batched_tokens = kwargs.get("max-num-batched-tokens", 8192)
+    max_num_seqs = kwargs.get("max-num-seqs", 16)
+    max_model_len = kwargs.get("max-model-len", 32768)
+    gpu_memory_util = kwargs.get("gpu-memory-utilization", 0.85)
     if "/" in name:
         logger.info(f"Starting local LLM grader {name}...")
         job_name = None
@@ -615,10 +633,18 @@ def start_llm_grader(name: str, num_nodes: int = 1, dp: int = 1, tp: int = 1, na
             "run_grader.slurm",
             "--model",
             name,
-            "--dp",
-            str(dp),
-            "--tp",
-            str(tp),
+            "--data-parallel-size",
+            str(data_parallel_size),
+            "--tensor-parallel-size",
+            str(tensor_parallel_size),
+            "--max-num-batched-tokens",
+            str(max_num_batched_tokens),
+            "--max-num-seqs",
+            str(max_num_seqs),
+            "--max-model-len",
+            str(max_model_len),
+            "--gpu-memory-utilization",
+            str(gpu_memory_util),
         ]
         submission = subprocess.run(cmd, capture_output=True, text=True, check=True)
         job_id = submission.stdout.strip().split(";")[0]
@@ -674,7 +700,10 @@ def main(cfg: DictConfig):
     # Spin up LLM grader if specified
     if cfg.llm_grader.name is not None:
         if rank == 0:
-            start_llm_grader(cfg.llm_grader.name, num_nodes=cfg.llm_grader.num_nodes, dp=cfg.llm_grader.dp, tp=cfg.llm_grader.tp)
+            start_llm_grader(
+                cfg.llm_grader.name,
+                vllm_kwargs=getattr(cfg.llm_grader, "vllm_kwargs", None),
+            )
         else:
             logger.info(
                 "Skipping LLM grader launch on rank %s; waiting for master to provision it",
