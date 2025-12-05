@@ -19,6 +19,11 @@ from functools import partial
 
 import pipelinerl.countdown_utils
 
+try:
+    import wandb
+except ImportError:  # pragma: no cover - wandb is optional at runtime
+    wandb = None
+
 logging.basicConfig(
     level=logging.DEBUG,  # Or INFO, WARNING, etc.
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -284,6 +289,80 @@ class ProofVerificationResult:
     metrics: dict[str, float | int] = field(default_factory=dict)
 
 
+_WANDB_VERIFIER_TABLE = None
+_WANDB_VERIFIER_TABLE_COLUMNS = ["prompt_text", "reasoning", "output", "score"]
+
+
+def _extract_text_from_content_blocks(content: Any) -> list[str]:
+    """
+    WandB logging helper that normalizes different response SDK content shapes into plain strings.
+    """
+    texts: list[str] = []
+    if content is None:
+        return texts
+    if isinstance(content, str):
+        texts.append(content)
+        return texts
+    if isinstance(content, dict):
+        text_value = content.get("text")
+        if text_value:
+            texts.append(str(text_value))
+        return texts
+    if isinstance(content, (list, tuple)):
+        for item in content:
+            texts.extend(_extract_text_from_content_blocks(item))
+        return texts
+    text_attr = getattr(content, "text", None)
+    if text_attr:
+        texts.append(str(text_attr))
+        return texts
+    nested_content = getattr(content, "content", None)
+    if nested_content:
+        texts.extend(_extract_text_from_content_blocks(nested_content))
+    return texts
+
+
+def _extract_reasoning_from_response(response: Any) -> str:
+    reasoning_chunks: list[str] = []
+    outputs = getattr(response, "output", None)
+    if outputs:
+        for item in outputs:
+            if isinstance(item, dict):
+                item_type = item.get("type")
+                if item_type == "reasoning":
+                    reasoning_chunks.extend(_extract_text_from_content_blocks(item.get("content")))
+                continue
+            item_type = getattr(item, "type", None) or getattr(item, "object", None)
+            if item_type == "reasoning":
+                reasoning_chunks.extend(_extract_text_from_content_blocks(getattr(item, "content", None)))
+    if not reasoning_chunks:
+        reasoning_fallback = getattr(response, "reasoning", None)
+        if reasoning_fallback:
+            reasoning_chunks.extend(_extract_text_from_content_blocks(reasoning_fallback))
+    return "\n\n".join(chunk for chunk in reasoning_chunks if chunk)
+
+
+def _get_wandb_verifier_table():
+    global _WANDB_VERIFIER_TABLE
+    if wandb is None or getattr(wandb, "run", None) is None:
+        return None
+    if _WANDB_VERIFIER_TABLE is None:
+        _WANDB_VERIFIER_TABLE = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS)
+    return _WANDB_VERIFIER_TABLE
+
+
+def _log_verifier_table_entry(prompt_text: str, response: Any, output_text: str, score: int):
+    """
+    Append the latest grader call details to a WandB table for later debugging.
+    """
+    table = _get_wandb_verifier_table()
+    if table is None:
+        return
+    reasoning_text = _extract_reasoning_from_response(response)
+    table.add_data(prompt_text, reasoning_text, output_text, score)
+    wandb.log({"verifier/grader_table": table})
+
+
 def _should_collect_metrics(collect_flag: bool | None) -> bool:
     if collect_flag is None:
         return True
@@ -429,17 +508,31 @@ async def verify_proof(
             output_text = getattr(response, "output_text", None) or ""
             match = re.search(r"<score>(\d+)</score>", output_text)
             if match:
+                score = int(match.group(1))
+                if collect_metrics:
+                    _log_verifier_table_entry(
+                        prompt_text=prompt_text,
+                        response=response,
+                        output_text=output_text,
+                        score=score,
+                    )
                 rollout_metrics = _build_rollout_metrics(
                     success=True,
                     failure_causes=attempt_failure_causes,
                     num_retries=num_retries,
                 )
-                score = int(match.group(1))
                 return ProofVerificationResult(
                     score=score,
                     metrics=_merge_metrics(runtime_metrics, rollout_metrics),
                 )
             else:
+                if collect_metrics:
+                    _log_verifier_table_entry(
+                        prompt_text=prompt_text,
+                        response=response,
+                        output_text=output_text,
+                        score=0,
+                    )
                 rollout_metrics = _build_rollout_metrics(
                     success=False,
                     failure_causes=["no_score_tag"],
