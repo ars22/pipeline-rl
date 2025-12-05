@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 import traceback
@@ -23,6 +24,25 @@ import wandb
 from wandb.sdk import wandb_run
 
 logger = logging.getLogger(__name__)
+_REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
+
+
+def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
+    """Upload the experiment config file to W&B."""
+    config_path = Path(cfg.output_dir) / "conf" / "exp_config.yaml"
+    if not config_path.exists():
+        logger.warning("Config file %s does not exist, skipping upload", config_path)
+        return
+
+    try:
+        wandb.save(
+            str(config_path),
+            base_path=str(config_path.parent),
+            policy="now",
+        )
+        logger.info("Uploaded config file %s to W&B", config_path.name)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to upload config %s to W&B: %s", config_path, exc)
 
 
 def init_wandb(
@@ -80,6 +100,7 @@ def init_wandb(
     )
     if not isinstance(run, wandb_run.Run):
         raise ValueError("W&B init failed")
+    _maybe_upload_config_to_wandb(cfg, run)
     return run
 
 
