@@ -75,13 +75,10 @@ def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> d
     return aggregated
 
 
-def _log_group_verifier_metrics(metrics: dict[str, float | int], *, step: int | None = None):
+def _log_group_verifier_metrics(metrics: dict[str, float | int]):
     if not metrics or getattr(wandb, "run", None) is None:
         return
-    if step is None:
-        wandb.log(dict(metrics))
-    else:
-        wandb.log(dict(metrics), step=step)
+    wandb.log(dict(metrics))
 
 
 class SlidingWindowData(BaseModel):
@@ -437,7 +434,8 @@ class ActorLoop:
         if success_frac is not None:
             aggregated["verifier/group_size_eff"] = aggregated["verifier/group_size"] * success_frac
         self.verifier_metrics_step += 1
-        _log_group_verifier_metrics(aggregated, step=self.verifier_metrics_step)
+        aggregated["verifier/group_index"] = self.verifier_metrics_step
+        _log_group_verifier_metrics(aggregated)
         return
 
 
