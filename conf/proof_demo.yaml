@@ -5,7 +5,7 @@ defaults:
     - base
     - _self_
 
-model_path: Qwen/Qwen3-4B-Thinking-2507
+model_path: Qwen/Qwen3-4B-Instruct-2507
 # Uncomment to skip test set rollouts
 eval_every_n_versions: 0
 
@@ -26,7 +26,7 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 16384
+    max_tokens: 8192
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
