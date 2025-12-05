@@ -29,12 +29,15 @@ _REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
 def _resolve_selected_config_file(cfg: DictConfig) -> tuple[Path, str]:
     """Locate the config file referenced via --config-name."""
     hydra_cfg = getattr(cfg, "hydra", None)
-    job_cfg_name = None
-    if hydra_cfg and hasattr(hydra_cfg, "job"):
-        job_cfg_name = getattr(hydra_cfg.job, "config_name", None)
-    rel_path = Path(job_cfg_name) if job_cfg_name else Path("config")
-    if not rel_path.suffix:
+    job_cfg = getattr(hydra_cfg, "job", None) if hydra_cfg else None
+    job_cfg_name = getattr(job_cfg, "config_name", None)
+    if not job_cfg_name:
+        raise ValueError("Hydra did not provide --config-name; please invoke launch with --config-name=<name>")
+
+    rel_path = Path(job_cfg_name)
+    if rel_path.suffix != ".yaml":
         rel_path = rel_path.with_suffix(".yaml")
+
     config_path = (_REPO_CONF_DIR / rel_path).resolve()
     logical_name = rel_path.name
     if not config_path.exists():
