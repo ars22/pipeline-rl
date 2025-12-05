@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 _WANDB_VERIFIER_TABLE = None
-_WANDB_VERIFIER_TABLE_COLUMNS = ["prompt", "reasoning", "output", "score"]
+_WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
 
 
 def _get_wandb_verifier_table():
@@ -60,6 +60,7 @@ def _log_verifier_table_entry(entry: dict[str, str | int]):
     if table is None:
         return
     table.add_data(
+        entry.get("group_index", 0),
         entry.get("prompt", ""),
         entry.get("reasoning", ""),
         entry.get("output_text", ""),
@@ -580,10 +581,13 @@ class ActorLoop:
                 )
 
                 if self.cfg.wandb.use_wandb:
+                    group_index_value = self.verifier_metrics_step + 1
                     for result in rollout_results:
                         entry = getattr(result, "verifier_table_entry", None)
                         if entry:
-                            _log_verifier_table_entry(entry)
+                            entry_with_index = dict(entry)
+                            entry_with_index["group_index"] = group_index_value
+                            _log_verifier_table_entry(entry_with_index)
 
                 
                 self.update_stats(rollout_results=rollout_results)
