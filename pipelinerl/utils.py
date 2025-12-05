@@ -8,7 +8,7 @@ from pathlib import Path
 import traceback
 from typing import Dict, Mapping, List, Any, Union
 import numpy as np
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import psutil
 import requests
 from importlib.metadata import distributions
@@ -23,6 +23,55 @@ import wandb
 from wandb.sdk import wandb_run
 
 logger = logging.getLogger(__name__)
+_CONFIG_UPLOAD_CACHE: set[str] = set()
+_REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
+
+
+def _resolve_selected_config_file(cfg: DictConfig) -> tuple[Path | None, str, bool]:
+    """Locate the config file referenced via --config-name."""
+    hydra_cfg = getattr(cfg, "hydra", None)
+    job_cfg_name = None
+    if hydra_cfg and hasattr(hydra_cfg, "job"):
+        job_cfg_name = getattr(hydra_cfg.job, "config_name", None)
+    rel_path = Path(job_cfg_name) if job_cfg_name else Path("config")
+    if not rel_path.suffix:
+        rel_path = rel_path.with_suffix(".yaml")
+    config_path = (_REPO_CONF_DIR / rel_path).resolve()
+    logical_name = rel_path.name
+    if config_path.exists():
+        return config_path, logical_name, False
+    exp_config = Path(str(cfg.output_dir)) / "conf" / "exp_config.yaml"
+    if exp_config.exists():
+        return exp_config.resolve(), logical_name, True
+    hydra_config = Path(str(cfg.output_dir)) / ".hydra" / "config.yaml"
+    if hydra_config.exists():
+        return hydra_config.resolve(), logical_name, True
+    return None, logical_name, False
+
+
+def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
+    """Upload the active Hydra config file to W&B."""
+    cache_key = getattr(run, "id", None) or str(id(run))
+    if cache_key in _CONFIG_UPLOAD_CACHE:
+        return
+    config_path, logical_name, used_fallback = _resolve_selected_config_file(cfg)
+    if config_path is None or not config_path.exists():
+        logger.warning("Unable to locate config '%s' to upload to W&B", logical_name)
+        _CONFIG_UPLOAD_CACHE.add(cache_key)
+        return
+    try:
+        wandb.save(
+            str(config_path),
+            base_path=str(config_path.parent),
+            policy="now",
+        )
+        if used_fallback:
+            logger.info("Uploaded composed config from %s to W&B as %s", config_path, logical_name)
+        else:
+            logger.info("Uploaded config file %s to W&B", config_path.name)
+        _CONFIG_UPLOAD_CACHE.add(cache_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to upload config %s to W&B: %s", config_path, exc)
 
 
 def init_wandb(
@@ -80,6 +129,7 @@ def init_wandb(
     )
     if not isinstance(run, wandb_run.Run):
         raise ValueError("W&B init failed")
+    _maybe_upload_config_to_wandb(cfg, run)
     return run
 
 
