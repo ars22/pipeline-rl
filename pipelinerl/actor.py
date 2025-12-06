@@ -205,12 +205,18 @@ async def schedule_rollouts(
 
     # Transient HTTP errors that should be retried
     TRANSIENT_ERRORS = (
+        aiohttp.ClientPayloadError,  # Response payload incomplete (e.g., connection reset mid-stream)
         aiohttp.ClientConnectionResetError,
         aiohttp.ClientOSError,
         aiohttp.ServerDisconnectedError,
+        aiohttp.ServerTimeoutError,
+        aiohttp.ServerConnectionError,
         aiohttp.ClientConnectorError,
+        aiohttp.SocketTimeoutError,
+        aiohttp.ConnectionTimeoutError,
         ConnectionResetError,
         ConnectionError,
+        TimeoutError,
         OSError,
     )
     max_retries = cfg.actor.get("max_retries", 3)
