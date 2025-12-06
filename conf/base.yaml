@@ -18,6 +18,9 @@ actor:
   result_queue_size: 64
   throughput_window_size: 50
   shared_memory_entry_size: 10000000
+  # Retry settings for transient HTTP errors (connection resets, etc.)
+  max_retries: 3
+  retry_base_delay: 1.0
 environment: null
 preprocess:
   input: actor

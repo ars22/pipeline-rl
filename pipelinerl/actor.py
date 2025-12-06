@@ -203,6 +203,19 @@ async def schedule_rollouts(
     rollout_policy = hydra.utils.get_method(cfg.actor.rollout_policy)
     logger.info(f"Use rollout policy: {rollout_policy}")
 
+    # Transient HTTP errors that should be retried
+    TRANSIENT_ERRORS = (
+        aiohttp.ClientConnectionResetError,
+        aiohttp.ClientOSError,
+        aiohttp.ServerDisconnectedError,
+        aiohttp.ClientConnectorError,
+        ConnectionResetError,
+        ConnectionError,
+        OSError,
+    )
+    max_retries = cfg.actor.get("max_retries", 3)
+    retry_base_delay = cfg.actor.get("retry_base_delay", 1.0)
+
     async def rollout_and_maybe_produce_result(
         problem: dict,
         group_id: int,
@@ -215,7 +228,31 @@ async def schedule_rollouts(
             llm = llms[llm_index]
             model_version = trainer_state.propagated_weight_version
             assert model_version is not None
-            rollout_result = await rollout_policy(cfg, llm, problem, session)
+
+            # Retry loop for transient HTTP errors
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    rollout_result = await rollout_policy(cfg, llm, problem, session)
+                    break
+                except TRANSIENT_ERRORS as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        delay = retry_base_delay * (2 ** attempt)
+                        logger.warning(
+                            f"Transient error in rollout (attempt {attempt + 1}/{max_retries}), "
+                            f"retrying in {delay:.1f}s: {type(e).__name__}: {e}"
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(
+                            f"Transient error in rollout after {max_retries} attempts, giving up: "
+                            f"{type(e).__name__}: {e}"
+                        )
+                        raise
+            else:
+                # This shouldn't happen, but just in case
+                raise last_error
             rollout_result.model_version = model_version
             # Make a group id that will be different from groups made by another rollout maker
             full_group_id = f"{scheduler_name}_{group_id}"
