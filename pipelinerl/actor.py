@@ -203,22 +203,6 @@ async def schedule_rollouts(
     rollout_policy = hydra.utils.get_method(cfg.actor.rollout_policy)
     logger.info(f"Use rollout policy: {rollout_policy}")
 
-    # Transient HTTP errors that should be retried
-    TRANSIENT_ERRORS = (
-        aiohttp.ClientPayloadError,  # Response payload incomplete (e.g., connection reset mid-stream)
-        aiohttp.ClientConnectionResetError,
-        aiohttp.ClientOSError,
-        aiohttp.ServerDisconnectedError,
-        aiohttp.ServerTimeoutError,
-        aiohttp.ServerConnectionError,
-        aiohttp.ClientConnectorError,
-        aiohttp.SocketTimeoutError,
-        aiohttp.ConnectionTimeoutError,
-        ConnectionResetError,
-        ConnectionError,
-        TimeoutError,
-        OSError,
-    )
     max_retries = cfg.actor.get("max_retries", 3)
     retry_base_delay = cfg.actor.get("retry_base_delay", 1.0)
 
@@ -235,24 +219,24 @@ async def schedule_rollouts(
             model_version = trainer_state.propagated_weight_version
             assert model_version is not None
 
-            # Retry loop for transient HTTP errors
+            # Retry loop for transient errors
             last_error = None
             for attempt in range(max_retries):
                 try:
                     rollout_result = await rollout_policy(cfg, llm, problem, session)
                     break
-                except TRANSIENT_ERRORS as e:
+                except Exception as e:
                     last_error = e
                     if attempt < max_retries - 1:
                         delay = retry_base_delay * (2 ** attempt)
                         logger.warning(
-                            f"Transient error in rollout (attempt {attempt + 1}/{max_retries}), "
+                            f"Error in rollout (attempt {attempt + 1}/{max_retries}), "
                             f"retrying in {delay:.1f}s: {type(e).__name__}: {e}"
                         )
                         await asyncio.sleep(delay)
                     else:
                         logger.error(
-                            f"Transient error in rollout after {max_retries} attempts, giving up: "
+                            f"Error in rollout after {max_retries} attempts, giving up: "
                             f"{type(e).__name__}: {e}"
                         )
                         raise

@@ -5,118 +5,8 @@ import pytest
 import aiohttp
 
 
-class TestTransientErrors:
-    """
-    Tests for the TRANSIENT_ERRORS tuple used in actor.py.
-
-    These tests verify that all the expected transient error types are
-    properly caught and would trigger retry logic.
-    """
-
-    def test_transient_errors_tuple_contains_expected_types(self):
-        """Verify that all expected transient error types are in the tuple."""
-        # This is the exact tuple from actor.py - keep in sync!
-        TRANSIENT_ERRORS = (
-            aiohttp.ClientPayloadError,  # Response payload incomplete (e.g., connection reset mid-stream)
-            aiohttp.ClientConnectionResetError,
-            aiohttp.ClientOSError,
-            aiohttp.ServerDisconnectedError,
-            aiohttp.ServerTimeoutError,
-            aiohttp.ServerConnectionError,
-            aiohttp.ClientConnectorError,
-            aiohttp.SocketTimeoutError,
-            aiohttp.ConnectionTimeoutError,
-            ConnectionResetError,
-            ConnectionError,
-            TimeoutError,
-            OSError,
-        )
-
-        # Verify all types exist and are exception classes
-        for error_type in TRANSIENT_ERRORS:
-            assert isinstance(error_type, type), f"{error_type} is not a type"
-            assert issubclass(error_type, BaseException), f"{error_type} is not an exception"
-
-    def test_client_payload_error_is_caught(self):
-        """
-        Test that ClientPayloadError is properly caught.
-
-        This was the exact error that caused the crash:
-        aiohttp.client_exceptions.ClientPayloadError: Response payload is not completed:
-        <ContentLengthError: 400, message='Not enough data to satisfy content length header.'>.
-        ConnectionResetError(104, 'Connection reset by peer')
-        """
-        TRANSIENT_ERRORS = (
-            aiohttp.ClientPayloadError,
-            aiohttp.ClientConnectionResetError,
-            aiohttp.ClientOSError,
-            aiohttp.ServerDisconnectedError,
-            aiohttp.ServerTimeoutError,
-            aiohttp.ServerConnectionError,
-            aiohttp.ClientConnectorError,
-            aiohttp.SocketTimeoutError,
-            aiohttp.ConnectionTimeoutError,
-            ConnectionResetError,
-            ConnectionError,
-            TimeoutError,
-            OSError,
-        )
-
-        # Simulate the exact error from the crash
-        error = aiohttp.ClientPayloadError(
-            "Response payload is not completed: "
-            "<ContentLengthError: 400, message='Not enough data to satisfy content length header.'>. "
-            "ConnectionResetError(104, 'Connection reset by peer')"
-        )
-
-        # Verify it's caught by isinstance check (as used in actor.py)
-        assert isinstance(error, TRANSIENT_ERRORS), "ClientPayloadError should be caught"
-
-    def test_connection_reset_error_is_caught(self):
-        """Test that ConnectionResetError is properly caught."""
-        TRANSIENT_ERRORS = (
-            aiohttp.ClientPayloadError,
-            aiohttp.ClientConnectionResetError,
-            aiohttp.ClientOSError,
-            aiohttp.ServerDisconnectedError,
-            aiohttp.ServerTimeoutError,
-            aiohttp.ServerConnectionError,
-            aiohttp.ClientConnectorError,
-            aiohttp.SocketTimeoutError,
-            aiohttp.ConnectionTimeoutError,
-            ConnectionResetError,
-            ConnectionError,
-            TimeoutError,
-            OSError,
-        )
-
-        error = ConnectionResetError(104, "Connection reset by peer")
-        assert isinstance(error, TRANSIENT_ERRORS), "ConnectionResetError should be caught"
-
-    def test_server_disconnected_error_is_caught(self):
-        """Test that ServerDisconnectedError is properly caught."""
-        TRANSIENT_ERRORS = (
-            aiohttp.ClientPayloadError,
-            aiohttp.ClientConnectionResetError,
-            aiohttp.ClientOSError,
-            aiohttp.ServerDisconnectedError,
-            aiohttp.ServerTimeoutError,
-            aiohttp.ServerConnectionError,
-            aiohttp.ClientConnectorError,
-            aiohttp.SocketTimeoutError,
-            aiohttp.ConnectionTimeoutError,
-            ConnectionResetError,
-            ConnectionError,
-            TimeoutError,
-            OSError,
-        )
-
-        error = aiohttp.ServerDisconnectedError()
-        assert isinstance(error, TRANSIENT_ERRORS), "ServerDisconnectedError should be caught"
-
-
 class TestRetryLogic:
-    """Tests for the retry logic implementation."""
+    """Tests for the retry logic implementation in actor.py."""
 
     @pytest.mark.asyncio
     async def test_retry_with_exponential_backoff(self):
@@ -132,8 +22,6 @@ class TestRetryLogic:
                 raise aiohttp.ClientPayloadError("Simulated transient error")
             return "success"
 
-        TRANSIENT_ERRORS = (aiohttp.ClientPayloadError,)
-
         # Simulate the retry logic from actor.py
         last_error = None
         result = None
@@ -141,7 +29,7 @@ class TestRetryLogic:
             try:
                 result = await failing_operation()
                 break
-            except TRANSIENT_ERRORS as e:
+            except Exception as e:
                 last_error = e
                 if attempt < max_retries - 1:
                     delay = retry_base_delay * (2 ** attempt)
@@ -164,17 +52,13 @@ class TestRetryLogic:
             attempts.append(len(attempts) + 1)
             raise aiohttp.ClientPayloadError("Simulated persistent error")
 
-        TRANSIENT_ERRORS = (aiohttp.ClientPayloadError,)
-
         # Simulate the retry logic from actor.py
-        last_error = None
         with pytest.raises(aiohttp.ClientPayloadError):
             for attempt in range(max_retries):
                 try:
                     await always_failing_operation()
                     break
-                except TRANSIENT_ERRORS as e:
-                    last_error = e
+                except Exception as e:
                     if attempt < max_retries - 1:
                         delay = retry_base_delay * (2 ** attempt)
                         await asyncio.sleep(delay)
@@ -184,34 +68,43 @@ class TestRetryLogic:
         assert len(attempts) == max_retries  # Should have tried max_retries times
 
     @pytest.mark.asyncio
-    async def test_non_transient_error_not_retried(self):
-        """Test that non-transient errors are not retried."""
+    async def test_various_exceptions_are_retried(self):
+        """Test that various exception types are retried."""
         max_retries = 3
         retry_base_delay = 0.01
 
-        attempts = []
+        # Test different exception types that should all be retried
+        exception_types = [
+            aiohttp.ClientPayloadError("payload error"),
+            aiohttp.ServerDisconnectedError(),
+            ConnectionResetError(104, "Connection reset by peer"),
+            TimeoutError("timeout"),
+            OSError("os error"),
+            RuntimeError("runtime error"),  # Even generic errors are retried
+        ]
 
-        async def non_transient_failure():
-            attempts.append(len(attempts) + 1)
-            raise ValueError("Non-transient error")
+        for exc in exception_types:
+            attempts = []
 
-        TRANSIENT_ERRORS = (aiohttp.ClientPayloadError,)
+            async def failing_then_success():
+                attempts.append(1)
+                if len(attempts) < 2:
+                    raise exc
+                return "success"
 
-        # The ValueError should propagate immediately without retry
-        with pytest.raises(ValueError):
+            result = None
             for attempt in range(max_retries):
                 try:
-                    await non_transient_failure()
+                    result = await failing_then_success()
                     break
-                except TRANSIENT_ERRORS as e:
+                except Exception as e:
                     if attempt < max_retries - 1:
-                        delay = retry_base_delay * (2 ** attempt)
-                        await asyncio.sleep(delay)
+                        await asyncio.sleep(retry_base_delay)
                     else:
                         raise
 
-        # Should have only attempted once since ValueError is not in TRANSIENT_ERRORS
-        assert len(attempts) == 1
+            assert result == "success", f"Failed for {type(exc).__name__}"
+            assert len(attempts) == 2, f"Wrong attempt count for {type(exc).__name__}"
 
 
 class TestAiohttpExceptionHierarchy:
