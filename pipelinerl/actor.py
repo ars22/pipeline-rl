@@ -614,7 +614,10 @@ class ActorLoop:
                         if entry:
                             entry_with_index = dict(entry)
                             entry_with_index["group_index"] = group_index_value
-                            _log_verifier_table_entry(entry_with_index)
+                            try: 
+                                _log_verifier_table_entry(entry_with_index)
+                            except Exception as e:
+                                logger.error(f"Failed to log verifier table entry to wandb: {e}")
 
                 
                 self.update_stats(rollout_results=rollout_results)
