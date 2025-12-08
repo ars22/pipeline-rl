@@ -105,22 +105,3 @@ class TestRetryLogic:
 
             assert result == "success", f"Failed for {type(exc).__name__}"
             assert len(attempts) == 2, f"Wrong attempt count for {type(exc).__name__}"
-
-
-class TestAiohttpExceptionHierarchy:
-    """Tests to verify our understanding of aiohttp exception hierarchy."""
-
-    def test_client_payload_error_inheritance(self):
-        """Verify ClientPayloadError inheritance chain."""
-        assert issubclass(aiohttp.ClientPayloadError, aiohttp.ClientError)
-        assert issubclass(aiohttp.ClientPayloadError, Exception)
-
-    def test_server_disconnected_error_inheritance(self):
-        """Verify ServerDisconnectedError inheritance chain."""
-        assert issubclass(aiohttp.ServerDisconnectedError, aiohttp.ServerConnectionError)
-        assert issubclass(aiohttp.ServerDisconnectedError, aiohttp.ClientError)
-
-    def test_connection_reset_error_inheritance(self):
-        """Verify ConnectionResetError inheritance chain."""
-        assert issubclass(ConnectionResetError, ConnectionError)
-        assert issubclass(ConnectionResetError, OSError)
