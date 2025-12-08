@@ -17,7 +17,7 @@ import hydra
 import uvloop
 
 # Transient errors that should not crash the entire actor when retries are exhausted.
-# Instead, we skip the problematic rollout and continue with others.
+# Instead, we re-queue the rollout to try again later.
 TRANSIENT_EXCEPTIONS = (
     aiohttp.client_exceptions.ClientError,  # Base class for all aiohttp client errors
     aiohttp.client_exceptions.ClientPayloadError,  # Response payload incomplete
@@ -27,6 +27,9 @@ TRANSIENT_EXCEPTIONS = (
     ConnectionError,  # Base connection errors
     TimeoutError,  # Base timeout errors
 )
+
+# Maximum number of times to re-queue a rollout after transient errors before giving up
+MAX_REQUEUE_ATTEMPTS = 3
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
 from tapeagents.llms import TrainableLLM
@@ -219,12 +222,17 @@ async def schedule_rollouts(
     max_retries = cfg.actor.get("max_retries", 3)
     retry_base_delay = cfg.actor.get("retry_base_delay", 1.0)
 
+    # Queue for rollouts that failed with transient errors and need to be retried
+    # Each item is (problem, group_id, rollout_index, requeue_count)
+    retry_queue: asyncio.Queue = asyncio.Queue()
+
     async def rollout_and_maybe_produce_result(
         problem: dict,
         group_id: int,
         rollout_index: int,
         llm_index: int,
         session: aiohttp.ClientSession,
+        requeue_count: int = 0,
     ):
         nonlocal started_rollouts, finished_rollouts
         try:
@@ -275,15 +283,25 @@ async def schedule_rollouts(
             finished_rollouts += 1
         except TRANSIENT_EXCEPTIONS as e:
             # Transient errors (HTTP/connection issues) that exhausted retries.
-            # Skip this rollout but continue processing others - don't crash the whole actor.
-            logger.warning(
-                f"Transient error in rollout for group {group_id}, skipping this rollout "
-                f"(group will have fewer samples): {type(e).__name__}: {e}"
-            )
-            # Still count as finished to avoid blocking
-            finished_rollouts += 1
-            # Note: The group will have fewer rollouts than expected. If this becomes
-            # problematic, we could re-queue the problem or mark the group as incomplete.
+            # Re-queue the rollout to try again later, up to MAX_REQUEUE_ATTEMPTS times.
+            if requeue_count < MAX_REQUEUE_ATTEMPTS:
+                logger.warning(
+                    f"Transient error in rollout for group {group_id}, re-queuing "
+                    f"(attempt {requeue_count + 1}/{MAX_REQUEUE_ATTEMPTS}): {type(e).__name__}: {e}"
+                )
+                await retry_queue.put((problem, group_id, rollout_index, requeue_count + 1))
+            else:
+                # Exhausted all re-queue attempts - this is a fatal error for the group
+                logger.error(
+                    f"Transient error in rollout for group {group_id} after {MAX_REQUEUE_ATTEMPTS} "
+                    f"re-queue attempts, stopping actor: {type(e).__name__}: {e}"
+                )
+                current_task = asyncio.current_task(loop=loop)
+                for task in asyncio.all_tasks(loop=loop):
+                    if task != current_task:
+                        task.cancel()
+                result_queue.put(e)
+                logger.error("Stopped all tasks and put exception in the result queue")
         except Exception as e:
             # Fatal error - cancel all tasks and stop the actor
             logger.error("Fatal exception in rollout, stop all other rollout tasks", exc_info=e)
@@ -307,6 +325,7 @@ async def schedule_rollouts(
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         while True:
             if time.time() - last_logged > 10.0 and sum(active_rollouts):
+                retry_queue_size = retry_queue.qsize()
                 logger.info(
                     f"{scheduler_name}: "
                     f"rollouts in progress: {sum(active_rollouts)}, "
@@ -314,9 +333,41 @@ async def schedule_rollouts(
                     f"rollouts started so far: {started_rollouts}, "
                     f"rollouts finished so far: {finished_rollouts}, "
                     f"max group size in bytes: {result_queue.max_actual_entry_size()}, "
+                    + (f"retry queue size: {retry_queue_size}" if retry_queue_size > 0 else "")
                 )
                 last_logged = time.time()
 
+            # First, check if there are any failed rollouts to retry
+            retry_item = None
+            try:
+                retry_item = retry_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+
+            if retry_item is not None:
+                # Re-queue a failed rollout
+                retry_problem, retry_group_id, retry_rollout_index, requeue_count = retry_item
+                next_llm = active_rollouts.index(min(active_rollouts))
+                if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts:
+                    # All LLMs are busy, put item back and wait
+                    await retry_queue.put(retry_item)
+                    await asyncio.sleep(0.01)
+                    continue
+                active_rollouts[next_llm] += 1
+                started_rollouts += 1
+                loop.create_task(
+                    rollout_and_maybe_produce_result(
+                        problem=retry_problem,
+                        group_id=retry_group_id,
+                        rollout_index=retry_rollout_index,
+                        llm_index=next_llm,
+                        session=session,
+                        requeue_count=requeue_count,
+                    )
+                )
+                continue
+
+            # Then, check if we need to start a new group
             if group_rollout_index == attempts:
                 try:
                     problem = problem_queue.get(block=False)
