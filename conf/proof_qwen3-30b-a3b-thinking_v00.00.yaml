@@ -9,6 +9,9 @@ model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
 # Uncomment to skip test set rollouts
 # eval_every_n_versions: 0
 
+preprocess:
+  shared_memory_entry_size: 2000000000
+
 finetune:
   attempts: 16
   train_batch_size: 16
