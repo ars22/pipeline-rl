@@ -12,8 +12,21 @@ from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 
 import aiohttp
+import aiohttp.client_exceptions
 import hydra
 import uvloop
+
+# Transient errors that should not crash the entire actor when retries are exhausted.
+# Instead, we skip the problematic rollout and continue with others.
+TRANSIENT_EXCEPTIONS = (
+    aiohttp.client_exceptions.ClientError,  # Base class for all aiohttp client errors
+    aiohttp.client_exceptions.ClientPayloadError,  # Response payload incomplete
+    aiohttp.client_exceptions.ClientOSError,  # Connection errors
+    aiohttp.client_exceptions.ServerDisconnectedError,  # Server closed connection
+    asyncio.TimeoutError,  # Request timeout
+    ConnectionError,  # Base connection errors
+    TimeoutError,  # Base timeout errors
+)
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
 from tapeagents.llms import TrainableLLM
@@ -260,9 +273,20 @@ async def schedule_rollouts(
                 result_queue.put(group_rollouts[group_id])
                 del group_rollouts[group_id]
             finished_rollouts += 1
+        except TRANSIENT_EXCEPTIONS as e:
+            # Transient errors (HTTP/connection issues) that exhausted retries.
+            # Skip this rollout but continue processing others - don't crash the whole actor.
+            logger.warning(
+                f"Transient error in rollout for group {group_id}, skipping this rollout "
+                f"(group will have fewer samples): {type(e).__name__}: {e}"
+            )
+            # Still count as finished to avoid blocking
+            finished_rollouts += 1
+            # Note: The group will have fewer rollouts than expected. If this becomes
+            # problematic, we could re-queue the problem or mark the group as incomplete.
         except Exception as e:
-            # Cancel all tasks except the current one
-            logger.error("Exception in rollout, stop all other rollout tasks", exc_info=e)
+            # Fatal error - cancel all tasks and stop the actor
+            logger.error("Fatal exception in rollout, stop all other rollout tasks", exc_info=e)
             current_task = asyncio.current_task(loop=loop)
             for task in asyncio.all_tasks(loop=loop):
                 if task != current_task:
