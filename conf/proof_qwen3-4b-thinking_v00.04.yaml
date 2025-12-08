@@ -6,8 +6,8 @@ defaults:
     - _self_
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
-# Uncomment to skip test set rollouts
-# eval_every_n_versions: 0
+# Eval every 50 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
+eval_every_n_versions: 25600
 
 preprocess:
   shared_memory_entry_size: 2000000000
@@ -23,7 +23,7 @@ finetune:
   save_checkpoint_steps: 50
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: v00.03
+  hub_model_revision: v00.04
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -58,7 +58,7 @@ llm_grader:
   reasoning_delimiters: ["</think>"]
 
 actor:
-  llm_max_rollouts: 16 # Larger values exhaust the KV cache
+  llm_max_rollouts: 64
   shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
@@ -85,7 +85,8 @@ vllm_config:
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
-    max-num-batched-tokens: 16384
+    max-num-batched-tokens: 65536
+    max-model-len: 65536
     enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
