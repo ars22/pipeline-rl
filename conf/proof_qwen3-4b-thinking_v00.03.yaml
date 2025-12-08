@@ -44,15 +44,15 @@ llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   vllm_kwargs:
     num_nodes: 2
-    data-parallel-size: 16
-    tensor-parallel-size: 1
-    max-num-batched-tokens: 16384
-    max-num-seqs: 32
-    max-model-len: 65536
-    gpu-memory-utilization: 0.9
+    data-parallel-size: 8
+    tensor-parallel-size: 2
+    max-num-batched-tokens: 65536
+    max-num-seqs: 16
+    max-model-len: 131072
+    gpu-memory-utilization: 0.85
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 32768
+    max_output_tokens: 81920
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
