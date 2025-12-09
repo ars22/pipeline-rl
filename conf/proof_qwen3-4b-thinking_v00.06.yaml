@@ -23,7 +23,7 @@ finetune:
   save_checkpoint_steps: 10
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: v00.04
+  hub_model_revision: v00.06
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -58,7 +58,7 @@ llm_grader:
   reasoning_delimiters: ["</think>"]
 
 actor:
-  llm_max_rollouts: 32 # Larger values exhaust the KV cache
+  llm_max_rollouts: 16 # Larger values exhaust the KV cache
   shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
@@ -85,7 +85,7 @@ vllm_config:
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
-    max-num-batched-tokens: 16384
+    max-num-batched-tokens: 32768
     max-model-len: ${finetune.seq_length}
     enable-prefix-caching: ""
     enable-chunked-prefill: ""

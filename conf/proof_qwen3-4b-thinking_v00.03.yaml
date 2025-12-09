@@ -6,8 +6,8 @@ defaults:
     - _self_
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
-# Uncomment to skip test set rollouts
-# eval_every_n_versions: 0
+# Eval every 50 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
+eval_every_n_versions: 25600
 
 preprocess:
   shared_memory_entry_size: 2000000000
@@ -20,7 +20,7 @@ finetune:
   seq_length: 49920
   seq_parallel: 2
   learning_rate: 1.0e-6
-  save_checkpoint_steps: 50
+  save_checkpoint_steps: 10
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
   hub_model_revision: v00.03
@@ -86,6 +86,7 @@ vllm_config:
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
     max-num-batched-tokens: 16384
+    max-model-len: ${finetune.seq_length}
     enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
