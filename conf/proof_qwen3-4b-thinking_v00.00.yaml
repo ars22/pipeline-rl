@@ -7,7 +7,7 @@ defaults:
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
 # Eval every 25 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
-eval_every_n_versions: 12800
+eval_every_n_versions: 0 #12800
 
 preprocess:
   shared_memory_entry_size: 2000000000
@@ -56,8 +56,6 @@ llm_grader:
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
-  # Batching settings for improved throughput
-  use_batching: true
   max_concurrent: 64  # Max concurrent requests to grader (should be >= data-parallel-size)
 
 actor:
