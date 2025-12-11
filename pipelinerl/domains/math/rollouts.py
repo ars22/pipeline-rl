@@ -85,13 +85,18 @@ async def generate_math_rollout(
     verifier_metrics: dict[str, float | int] = {}
     verifier_table_entry: dict[str, str | int] | None = None
     if "schema" in problem:
+        max_concurrent = getattr(cfg.llm_grader, "max_concurrent", 64)
+        model_name = getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO")
+        sampling_kwargs = getattr(cfg.llm_grader, "sampling_kwargs", None)
+
         verification = await verify_proof(
             problem=problem["task"],
             ref_solution=problem["answer"],
             schema=problem["schema"],
             generation=generation_final_answer,
-            model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
-            sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
+            model=model_name,
+            sampling_kwargs=sampling_kwargs,
+            max_concurrent=max_concurrent,
             log_wandb_metrics=cfg.wandb.use_wandb,
         )
         score = verification.score

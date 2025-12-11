@@ -225,6 +225,7 @@ import asyncio
 import os
 import openai
 from datasets import load_dataset
+import uuid
 
 PROOF_EVALUATOR_PROMPT = """
 You are an **expert mathematics proof grader**. Your role is to evaluate the correctness,
@@ -364,11 +365,429 @@ def get_openai_client():
             api_key=api_key,
             base_url=base_url,
         )
-    return _openai_client 
+    return _openai_client
+
 
 # =================================================
-# Proof evaluator: calls OpenAI-compatible endpoint
+# Batched proof verification for improved throughput
 # =================================================
+
+@dataclass
+class _PendingVerification:
+    """Internal class to track a pending verification request."""
+    request_id: str
+    prompt_text: str
+    future: asyncio.Future
+    submit_time: float
+    collect_metrics: bool
+
+
+class ProofVerificationBatcher:
+    """
+    Batches proof verification requests and submits them concurrently to maximize
+    GPU utilization on the grader. Instead of sending one request at a time and
+    waiting for each to complete, this batcher collects requests and fires them
+    off concurrently.
+
+    Usage:
+        batcher = ProofVerificationBatcher(
+            model="openai/gpt-oss-20b",
+            sampling_kwargs={...},
+            max_concurrent=64,  # Max concurrent requests to grader
+            batch_timeout=0.1,  # Seconds to wait for batch to fill
+        )
+
+        # Start the batcher (call once at startup)
+        await batcher.start()
+
+        # Submit verification requests (from multiple coroutines)
+        result = await batcher.submit(problem, ref_solution, schema, generation)
+
+        # Stop the batcher (call once at shutdown)
+        await batcher.stop()
+    """
+
+    def __init__(
+        self,
+        model: str,
+        sampling_kwargs: dict[str, Any] | None = None,
+        max_concurrent: int = 64,
+        batch_timeout: float = 0.1,
+        request_timeout: int = 900,
+        max_retries: int = 3,
+        retry_backoff: list[int] | None = None,
+        log_wandb_metrics: bool = True,
+    ):
+        self.model = model
+        self.sampling_kwargs = sampling_kwargs or {}
+        self.max_concurrent = max_concurrent
+        self.batch_timeout = batch_timeout
+        self.request_timeout = request_timeout
+        self.max_retries = max_retries
+        self.retry_backoff = retry_backoff or [15, 30, 60, 90, 120]
+        self.log_wandb_metrics = log_wandb_metrics
+
+        self._pending_queue: asyncio.Queue[_PendingVerification] = asyncio.Queue()
+        self._active_count = 0
+        self._active_lock = asyncio.Lock()
+        self._running = False
+        self._worker_task: asyncio.Task | None = None
+        self._client = None
+
+        # Metrics
+        self._total_submitted = 0
+        self._total_completed = 0
+        self._total_failed = 0
+
+    async def start(self):
+        """Start the batcher worker task."""
+        if self._running:
+            return
+        self._running = True
+        self._client = get_openai_client()
+        self._worker_task = asyncio.create_task(self._worker_loop())
+        logger.info(
+            f"ProofVerificationBatcher started: max_concurrent={self.max_concurrent}, "
+            f"batch_timeout={self.batch_timeout}s, request_timeout={self.request_timeout}s"
+        )
+
+    async def stop(self):
+        """Stop the batcher and wait for pending requests to complete."""
+        self._running = False
+        if self._worker_task:
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
+        logger.info(
+            f"ProofVerificationBatcher stopped: submitted={self._total_submitted}, "
+            f"completed={self._total_completed}, failed={self._total_failed}"
+        )
+
+    async def submit(
+        self,
+        problem: str,
+        ref_solution: str,
+        schema: str,
+        generation: str,
+        collect_metrics: bool | None = None,
+    ) -> ProofVerificationResult:
+        """
+        Submit a proof verification request. Returns when the verification is complete.
+        Multiple coroutines can call this concurrently - requests will be batched and
+        processed with controlled concurrency.
+        """
+        if collect_metrics is None:
+            collect_metrics = self.log_wandb_metrics
+
+        # Handle empty generation early
+        if len(generation.strip()) == 0:
+            rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_input"], num_retries=0)
+            return ProofVerificationResult(
+                score=0,
+                metrics=_merge_metrics({}, rollout_metrics),
+            )
+
+        # Build the prompt
+        prompt_text = PROOF_EVALUATOR_PROMPT.format(
+            problem=problem,
+            human_solution=ref_solution,
+            marking_scheme=schema,
+            solution=generation,
+        )
+
+        # Create a future to receive the result
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[ProofVerificationResult] = loop.create_future()
+
+        # Create pending verification request
+        pending = _PendingVerification(
+            request_id=str(uuid.uuid4()),
+            prompt_text=prompt_text,
+            future=future,
+            submit_time=time.perf_counter(),
+            collect_metrics=collect_metrics,
+        )
+
+        # Add to queue
+        await self._pending_queue.put(pending)
+        self._total_submitted += 1
+
+        # Wait for result
+        return await future
+
+    async def _worker_loop(self):
+        """Main worker loop that processes pending verification requests."""
+        while self._running:
+            try:
+                # Collect a batch of requests
+                batch: list[_PendingVerification] = []
+
+                # Wait for at least one request
+                try:
+                    first = await asyncio.wait_for(
+                        self._pending_queue.get(),
+                        timeout=1.0  # Check running flag periodically
+                    )
+                    batch.append(first)
+                except asyncio.TimeoutError:
+                    continue
+
+                # Try to collect more requests up to max_concurrent (with short timeout)
+                batch_deadline = time.perf_counter() + self.batch_timeout
+                while len(batch) < self.max_concurrent:
+                    remaining_time = batch_deadline - time.perf_counter()
+                    if remaining_time <= 0:
+                        break
+
+                    # Check how many slots are available
+                    async with self._active_lock:
+                        available_slots = self.max_concurrent - self._active_count
+
+                    if available_slots <= 0:
+                        break
+
+                    try:
+                        item = await asyncio.wait_for(
+                            self._pending_queue.get(),
+                            timeout=min(remaining_time, 0.01)  # Short poll
+                        )
+                        batch.append(item)
+                    except asyncio.TimeoutError:
+                        break
+
+                # Fire off all requests in the batch concurrently
+                if batch:
+                    # Update active count
+                    async with self._active_lock:
+                        self._active_count += len(batch)
+
+                    # Launch all verifications concurrently
+                    tasks = [
+                        asyncio.create_task(self._process_single(pending))
+                        for pending in batch
+                    ]
+
+                    # Log batch info periodically
+                    queue_size = self._pending_queue.qsize()
+                    if queue_size > 0 or len(batch) > 1:
+                        logger.debug(
+                            f"Batcher: launching {len(batch)} requests, "
+                            f"active={self._active_count}, queued={queue_size}"
+                        )
+
+                    # Don't wait for tasks to complete - they'll resolve futures when done
+                    # Just let them run in the background
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in batcher worker loop: {e}", exc_info=True)
+                await asyncio.sleep(1.0)  # Prevent tight loop on errors
+
+    async def _process_single(self, pending: _PendingVerification):
+        """Process a single verification request."""
+        try:
+            result = await self._call_grader(
+                pending.prompt_text,
+                pending.collect_metrics,
+            )
+            pending.future.set_result(result)
+            self._total_completed += 1
+        except Exception as e:
+            # On failure, return a zero score with failure metrics
+            rollout_metrics = _build_rollout_metrics(
+                success=False,
+                failure_causes=["exception"],
+                num_retries=0,
+            )
+            result = ProofVerificationResult(
+                score=0,
+                metrics=rollout_metrics,
+            )
+            if not pending.future.done():
+                pending.future.set_result(result)
+            self._total_failed += 1
+            logger.error(f"Verification failed for request {pending.request_id}: {e}")
+        finally:
+            async with self._active_lock:
+                self._active_count -= 1
+
+    async def _call_grader(
+        self,
+        prompt_text: str,
+        collect_metrics: bool,
+    ) -> ProofVerificationResult:
+        """Make the actual API call to the grader with retries."""
+        loop = asyncio.get_running_loop()
+        api_kwargs = dict(self.sampling_kwargs)
+
+        async def _call_openai():
+            return await loop.run_in_executor(
+                None,
+                lambda: self._client.responses.create(
+                    model=self.model,
+                    input=prompt_text,
+                    **api_kwargs,
+                ),
+            )
+
+        attempt_failure_causes: list[str] = []
+        num_retries = 0
+        runtime_metrics: dict[str, float | int] = {}
+
+        for attempt in range(1, self.max_retries + 1):
+            attempt_start = time.perf_counter()
+            try:
+                response = await asyncio.wait_for(_call_openai(), timeout=self.request_timeout)
+                latency_seconds = time.perf_counter() - attempt_start
+
+                # Extract usage metrics
+                usage = getattr(response, "usage", None)
+                output_tokens = None
+                input_tokens = None
+                if usage is not None:
+                    output_tokens = getattr(usage, "output_tokens", None)
+                    input_tokens = getattr(usage, "input_tokens", None)
+                    if output_tokens is None and isinstance(usage, dict):
+                        output_tokens = usage.get("output_tokens")
+                    if input_tokens is None and isinstance(usage, dict):
+                        input_tokens = usage.get("input_tokens")
+
+                if collect_metrics:
+                    runtime_metrics = {"verifier/runtime/latency_per_request": latency_seconds}
+                    if output_tokens is not None:
+                        runtime_metrics["verifier/runtime/output_tokens"] = output_tokens
+                    if input_tokens is not None:
+                        runtime_metrics["verifier/runtime/input_tokens"] = input_tokens
+
+                output_text = getattr(response, "output_text", None) or ""
+                match = re.search(r"<score>(\d+)</score>", output_text)
+
+                if match:
+                    score = int(match.group(1))
+                    table_entry = None
+                    if collect_metrics:
+                        reasoning_text = _extract_reasoning_from_response(response)
+                        table_entry = {
+                            "prompt": prompt_text,
+                            "reasoning": reasoning_text,
+                            "output_text": output_text,
+                            "score": score,
+                        }
+                    rollout_metrics = _build_rollout_metrics(
+                        success=True,
+                        failure_causes=attempt_failure_causes,
+                        num_retries=num_retries,
+                    )
+                    return ProofVerificationResult(
+                        score=score,
+                        metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+                        table_entry=table_entry,
+                    )
+                else:
+                    # No score tag found
+                    table_entry = None
+                    if collect_metrics:
+                        reasoning_text = _extract_reasoning_from_response(response)
+                        table_entry = {
+                            "prompt": prompt_text,
+                            "reasoning": reasoning_text,
+                            "output_text": output_text,
+                            "score": 0,
+                        }
+                    rollout_metrics = _build_rollout_metrics(
+                        success=False,
+                        failure_causes=["no_score_tag"],
+                        num_retries=num_retries,
+                    )
+                    logger.warning(f"[batcher] No <score> tag found (attempt {attempt})")
+                    return ProofVerificationResult(
+                        score=0,
+                        metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+                        table_entry=table_entry,
+                    )
+
+            except openai.RateLimitError as e:
+                wait_time = self.retry_backoff[min(attempt - 1, len(self.retry_backoff) - 1)]
+                attempt_failure_causes.append("rate_limit")
+                if attempt < self.max_retries:
+                    num_retries += 1
+                logger.warning(f"[batcher] Rate limit hit (attempt {attempt}/{self.max_retries}), sleeping {wait_time}s")
+                await asyncio.sleep(wait_time)
+
+            except (asyncio.TimeoutError, TimeoutException):
+                wait_time = self.retry_backoff[min(attempt - 1, len(self.retry_backoff) - 1)]
+                attempt_failure_causes.append("timeout")
+                if attempt < self.max_retries:
+                    num_retries += 1
+                logger.warning(
+                    f"[batcher] Timeout after {self.request_timeout}s (attempt {attempt}/{self.max_retries})"
+                )
+                await asyncio.sleep(wait_time)
+
+            except Exception as e:
+                wait_time = self.retry_backoff[min(attempt - 1, len(self.retry_backoff) - 1)]
+                attempt_failure_causes.append("other")
+                if attempt < self.max_retries:
+                    num_retries += 1
+                logger.warning(f"[batcher] Error (attempt {attempt}/{self.max_retries}): {e}")
+                await asyncio.sleep(wait_time)
+
+        # All retries exhausted
+        logger.error(f"[batcher] All {self.max_retries} attempts failed")
+        rollout_metrics = _build_rollout_metrics(
+            success=False,
+            failure_causes=attempt_failure_causes,
+            num_retries=num_retries,
+        )
+        return ProofVerificationResult(
+            score=0,
+            metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+        )
+
+    def get_stats(self) -> dict[str, int]:
+        """Get current batcher statistics."""
+        return {
+            "submitted": self._total_submitted,
+            "completed": self._total_completed,
+            "failed": self._total_failed,
+            "active": self._active_count,
+            "queued": self._pending_queue.qsize(),
+        }
+
+
+# Global batcher instance (initialized lazily)
+_global_batcher: ProofVerificationBatcher | None = None
+_batcher_lock = asyncio.Lock()
+
+
+async def get_or_create_batcher(
+    model: str,
+    sampling_kwargs: dict[str, Any] | None = None,
+    max_concurrent: int = 64,
+    log_wandb_metrics: bool = True,
+) -> ProofVerificationBatcher:
+    """
+    Get or create a global batcher instance. This ensures all verification
+    requests share a single batcher for optimal batching.
+    """
+    global _global_batcher
+
+    async with _batcher_lock:
+        if _global_batcher is None:
+            _global_batcher = ProofVerificationBatcher(
+                model=model,
+                sampling_kwargs=sampling_kwargs,
+                max_concurrent=max_concurrent,
+                log_wandb_metrics=log_wandb_metrics,
+            )
+            await _global_batcher.start()
+            logger.info(f"Created global proof verification batcher with max_concurrent={max_concurrent}")
+        return _global_batcher
+
+
 async def verify_proof(
     problem: str,
     ref_solution: str,
@@ -376,159 +795,49 @@ async def verify_proof(
     generation: str,
     model: str | None = None,
     sampling_kwargs: dict[str, Any] | None = None,
-    client=None,
-    timeout_seconds: int = 900,
-    max_retries: int = 3,
-    retry_backoff: list[int] = [15, 30, 60, 90, 120],
+    max_concurrent: int = 64,
     log_wandb_metrics: bool | None = None,
 ) -> ProofVerificationResult:
     """
-    Evaluate a model-generated proof via Groq GPR model.
-    Returns a ProofVerificationResult that includes the integer score [0–7] and optional runtime metrics.
-    Retries up to `max_retries` times if the OpenAI-compatible endpoint fails or hits rate limits.
+    Evaluate a model-generated proof using the batched verification system.
+
+    This function uses a global batcher to submit verification requests concurrently,
+    maximizing GPU utilization on the grader. Multiple coroutines calling this function
+    will have their requests batched together.
+
+    Args:
+        problem: The problem statement
+        ref_solution: The reference solution
+        schema: The marking scheme (JSON)
+        generation: The model-generated proof to evaluate
+        model: The grader model name (required on first call to initialize batcher)
+        sampling_kwargs: Sampling parameters for the grader
+        max_concurrent: Maximum concurrent requests (only used on first call)
+        log_wandb_metrics: Whether to log metrics to wandb
+
+    Returns:
+        ProofVerificationResult with score [0-7] and optional metrics
     """
+    if not model:
+        raise RuntimeError("verify_proof requires a grader model name")
 
     collect_metrics = _should_collect_metrics(log_wandb_metrics)
 
-    if len(generation.strip()) == 0:
-        rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_input"], num_retries=0)
-        return ProofVerificationResult(
-            score=0,
-            metrics=_merge_metrics({}, rollout_metrics),
-        )
+    batcher = await get_or_create_batcher(
+        model=model,
+        sampling_kwargs=sampling_kwargs,
+        max_concurrent=max_concurrent,
+        log_wandb_metrics=collect_metrics,
+    )
 
-    client = client or get_openai_client()
-
-    prompt_text = PROOF_EVALUATOR_PROMPT.format(
+    return await batcher.submit(
         problem=problem,
-        human_solution=ref_solution,
-        marking_scheme=schema,
-        solution=generation,
+        ref_solution=ref_solution,
+        schema=schema,
+        generation=generation,
+        collect_metrics=collect_metrics,
     )
-    if not model:
-        raise RuntimeError("verify_proof requires a grader model name; pass via cfg.llm_grader.name")
-    api_kwargs = dict(sampling_kwargs) if sampling_kwargs else {}
 
-    loop = asyncio.get_event_loop()
-
-    # TODO: add support for chat completions API for other graders
-    async def _call_openai():
-        return await loop.run_in_executor(
-            None,
-            lambda: client.responses.create(
-                model=model,
-                input=prompt_text,
-                **api_kwargs,
-            ),
-        )
-
-    attempt_failure_causes: list[str] = []
-    num_retries = 0
-    runtime_metrics: dict[str, float | int] = {}
-
-    for attempt in range(1, max_retries + 1):
-        attempt_start = time.perf_counter()
-        try:
-            response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
-            latency_seconds = time.perf_counter() - attempt_start
-            usage = getattr(response, "usage", None)
-            output_tokens = None
-            input_tokens = None
-            if usage is not None:
-                output_tokens = getattr(usage, "output_tokens", None)
-                input_tokens = getattr(usage, "input_tokens", None)
-                if output_tokens is None and isinstance(usage, dict):
-                    output_tokens = usage.get("output_tokens")
-                if input_tokens is None and isinstance(usage, dict):
-                    input_tokens = usage.get("input_tokens")
-            if collect_metrics:
-                runtime_metrics = {"verifier/runtime/latency_per_request": latency_seconds}
-                if output_tokens is not None:
-                    runtime_metrics["verifier/runtime/output_tokens"] = output_tokens
-                if input_tokens is not None:
-                    runtime_metrics["verifier/runtime/input_tokens"] = input_tokens
-            output_text = getattr(response, "output_text", None) or ""
-            match = re.search(r"<score>(\d+)</score>", output_text)
-            if match:
-                score = int(match.group(1))
-                table_entry = None
-                if collect_metrics:
-                    reasoning_text = _extract_reasoning_from_response(response)
-                    table_entry = {
-                        "prompt": prompt_text,
-                        "reasoning": reasoning_text,
-                        "output_text": output_text,
-                        "score": score,
-                    }
-                rollout_metrics = _build_rollout_metrics(
-                    success=True,
-                    failure_causes=attempt_failure_causes,
-                    num_retries=num_retries,
-                )
-                return ProofVerificationResult(
-                    score=score,
-                    metrics=_merge_metrics(runtime_metrics, rollout_metrics),
-                    table_entry=table_entry,
-                )
-            else:
-                table_entry = None
-                if collect_metrics:
-                    reasoning_text = _extract_reasoning_from_response(response)
-                    table_entry = {
-                        "prompt": prompt_text,
-                        "reasoning": reasoning_text,
-                        "output_text": output_text,
-                        "score": 0,
-                    }
-                rollout_metrics = _build_rollout_metrics(
-                    success=False,
-                    failure_causes=["no_score_tag"],
-                    num_retries=num_retries,
-                )
-                print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
-                return ProofVerificationResult(
-                    score=0,
-                    metrics=_merge_metrics(runtime_metrics, rollout_metrics),
-                    table_entry=table_entry,
-                )
-
-        except openai.RateLimitError as e:
-            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-            attempt_failure_causes.append("rate_limit")
-            if attempt < max_retries:
-                num_retries += 1
-            print(f"[verify_proof] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
-            await asyncio.sleep(wait_time)
-
-        except (asyncio.TimeoutError, TimeoutException):
-            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-            attempt_failure_causes.append("timeout")
-            if attempt < max_retries:
-                num_retries += 1
-            print(
-                f"[verify_proof] Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), "
-                f"retrying in {wait_time}s..."
-            )
-            await asyncio.sleep(wait_time)
-
-        except Exception as e:
-            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
-            attempt_failure_causes.append("other")
-            if attempt < max_retries:
-                num_retries += 1
-            print(f"[verify_proof] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
-            await asyncio.sleep(wait_time)
-
-    print(f"[verify_proof] All {max_retries} attempts failed — returning score=0")
-    rollout_metrics = _build_rollout_metrics(
-        success=False,
-        failure_causes=attempt_failure_causes,
-        num_retries=num_retries,
-    )
-    return ProofVerificationResult(
-        score=0,
-        metrics=_merge_metrics(runtime_metrics, rollout_metrics),
-    )
 
 class MathProofEnvironment:
     def __init__(
@@ -565,13 +874,11 @@ class MathProofEnvironment:
             schema = request["schema"]
             generation = request["generation"]
 
-            client = get_openai_client()
             verification = await verify_proof(
                 problem=problem,
                 ref_solution=ref_solution,
                 schema=schema,
                 generation=generation,
-                client=client,
                 model=self.model_name,
                 sampling_kwargs=self.sampling_kwargs,
                 log_wandb_metrics=self.use_wandb,

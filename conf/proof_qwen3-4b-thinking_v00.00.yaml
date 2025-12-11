@@ -56,6 +56,9 @@ llm_grader:
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
+  # Batching settings for improved throughput
+  use_batching: true
+  max_concurrent: 64  # Max concurrent requests to grader (should be >= data-parallel-size)
 
 actor:
   llm_max_rollouts: 24 # Larger values exhaust the KV cache
