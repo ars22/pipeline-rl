@@ -6,8 +6,8 @@ defaults:
     - _self_
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
-# Eval every 50 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
-eval_every_n_versions: 25600
+# Eval every 25 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
+eval_every_n_versions: 12800
 
 preprocess:
   shared_memory_entry_size: 2000000000
