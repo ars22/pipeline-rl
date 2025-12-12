@@ -1,5 +1,5 @@
 # ----------------------
-# Config for 4+2+2 nodes
+# Config for 5+1+2 nodes
 # ----------------------
 defaults:
     - base
@@ -7,7 +7,7 @@ defaults:
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
 # Eval every 25 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
-eval_every_n_versions: 0 #12800
+eval_every_n_versions: 12800
 
 preprocess:
   shared_memory_entry_size: 2000000000
@@ -43,11 +43,11 @@ test_llm:
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   vllm_kwargs:
-    num_nodes: 2
-    data-parallel-size: 16
+    num_nodes: 1
+    data-parallel-size: 8
     tensor-parallel-size: 1
     max-num-batched-tokens: 24576
-    max-num-seqs: 32
+    max-num-seqs: 64
     max-model-len: 98304
     gpu-memory-utilization: 0.9
   sampling_kwargs:
@@ -59,7 +59,7 @@ llm_grader:
   max_concurrent: 256
 
 actor:
-  llm_max_rollouts: 32 # Larger values exhaust the KV cache
+  llm_max_rollouts: 20 # Larger values exhaust the KV cache and lead to preemptions
   shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
@@ -95,7 +95,7 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 32
+  actor_fraction: 40
   preprocessor_fraction: 0
   finetune_fraction: 16
   env_replicas: 1
