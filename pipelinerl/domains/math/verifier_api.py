@@ -368,9 +368,9 @@ def get_openai_client():
     return _openai_client
 
 
-# =================================================
-# Batched proof verification for improved throughput
-# =================================================
+# ==========================
+# Batched proof verification
+# ==========================
 
 @dataclass
 class _PendingVerification:
