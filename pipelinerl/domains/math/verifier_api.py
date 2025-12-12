@@ -584,6 +584,282 @@ class MathProofEnvironment:
 
         uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
 
+# =====================================================================
+# General llm-based math evaluator: calls an OpenAI-compatible endpoint
+# =====================================================================
+
+MATH_LLM_SYSTEM_PROMPT = """You are an expert mathematician and a meticulous AI reasoning evaluator. Your task is to assess the quality of a "Generated Reasoning" trace.
+Specifically, you must judge how likely it is that a model, *after* thinking through the "Generated Reasoning," would then produce the *exact* "Reference Solution" provided.
+You are evaluating the **logical and causal link** between the reasoning trace and the final answer."""
+
+MATH_LLM_USER_PROMPT = """### Math Problem
+
+{problem}
+
+### Generated Reasoning
+
+{reasoning_trace}
+
+### Reference Solution
+
+{reference_solution}
+
+### Instructions
+First, provide a step-by-step analysis of the connection between the "Generated Reasoning" and the "Reference Solution." In your analysis, consider the following:
+* **Correctness & Alignment:** Is the reasoning trace mathematically sound, and does its logical conclusion *perfectly match* the "Reference Solution"?
+* **Sufficiency:** Does the reasoning provide all the necessary steps and logic to arrive at the answer? Or does it stop short, requiring an additional logical leap?
+* **Contradiction:** Is there anything in the reasoning that would contradict the "Reference Solution" or lead to a *different* answer, even if part of the reasoning is correct?
+After your analysis, provide a single numerical score on the 5-point Likert scale defined below.
+
+**Likert Scale:**
+* **1 (Very Unlikely):** The reasoning is incorrect, stops far short, or actively leads to a completely different answer.
+* **2 (Unlikely):** The reasoning has significant gaps, flaws, or is too vague, making the "Reference Solution" a surprising or illogical next step.
+* **3 (Neutral/Possible):** The reasoning is generally on the right track but is incomplete or contains minor errors. One *could* arrive at the answer, but it's not a direct or guaranteed consequence.
+* **4 (Likely):** The reasoning is correct and provides a strong, clear path to the answer, with only trivial gaps (if any).
+* **5 (Very Likely):** The reasoning is sound, complete, and directly and unambiguously implies the "Reference Solution" as its final conclusion.
+
+---
+
+Please follow this output format:
+Reasoning: [Your detailed analysis goes here.]
+
+Score: [Provide the single numerical score: 1, 2, 3, 4, or 5.]"""
+
+
+@dataclass
+class MathLLMVerificationResult:
+    score: int  # 1-5
+    metrics: dict[str, float | int] = field(default_factory=dict)
+    table_entry: dict[str, str | int] | None = None
+
+
+async def verify_math_llm(
+    problem: str,
+    reasoning_trace: str,
+    reference_solution: str,
+    model: str | None = None,
+    sampling_kwargs: dict[str, Any] | None = None,
+    client=None,
+    timeout_seconds: int = 300,
+    max_retries: int = 3,
+    retry_backoff: list[int] = [15, 30, 60, 90, 120],
+    log_wandb_metrics: bool | None = None,
+) -> MathLLMVerificationResult:
+    """
+    Evaluate model-generated reasoning via LLM judge.
+    Returns a MathLLMVerificationResult with score [1-5].
+    """
+    collect_metrics = _should_collect_metrics(log_wandb_metrics)
+
+    if len(reasoning_trace.strip()) == 0:
+        rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_input"], num_retries=0)
+        return MathLLMVerificationResult(
+            score=1,  # Minimum score for empty reasoning
+            metrics=_merge_metrics({}, rollout_metrics),
+        )
+
+    client = client or get_openai_client()
+
+    user_prompt = MATH_LLM_USER_PROMPT.format(
+        problem=problem,
+        reasoning_trace=reasoning_trace,
+        reference_solution=reference_solution,
+    )
+    
+    if not model:
+        raise RuntimeError("verify_math_llm requires a grader model name; pass via cfg.llm_grader.name")
+    
+    api_kwargs = dict(sampling_kwargs) if sampling_kwargs else {}
+    # Remove reasoning-specific kwargs that don't apply to chat completions
+    api_kwargs.pop("reasoning", None)
+    api_kwargs.pop("max_output_tokens", None)
+    
+    loop = asyncio.get_event_loop()
+
+    # Use Chat Completions API for standard LLM graders
+    async def _call_openai():
+        return await loop.run_in_executor(
+            None,
+            lambda: client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": MATH_LLM_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                **api_kwargs,
+            ),
+        )
+
+    attempt_failure_causes: list[str] = []
+    num_retries = 0
+    runtime_metrics: dict[str, float | int] = {}
+
+    for attempt in range(1, max_retries + 1):
+        attempt_start = time.perf_counter()
+        try:
+            response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
+            latency_seconds = time.perf_counter() - attempt_start
+            
+            # Extract usage metrics
+            usage = getattr(response, "usage", None)
+            output_tokens = None
+            input_tokens = None
+            if usage is not None:
+                output_tokens = getattr(usage, "completion_tokens", None)
+                input_tokens = getattr(usage, "prompt_tokens", None)
+            
+            if collect_metrics:
+                runtime_metrics = {"verifier/runtime/latency_per_request": latency_seconds}
+                if output_tokens is not None:
+                    runtime_metrics["verifier/runtime/output_tokens"] = output_tokens
+                if input_tokens is not None:
+                    runtime_metrics["verifier/runtime/input_tokens"] = input_tokens
+                        
+            output_text = response.choices[0].message.content or ""
+            # match = re.search(r"Score:\s*(\d)", output_text)
+            # extract score from output_text
+            try:
+                if "Score:" in output_text:
+                    score_str = output_text.split("Score:")[1].lstrip().split("\n")[0]
+                elif "Score" in output_text:
+                    score_str = output_text.split("Score")[1].lstrip().split("\n")[0]
+                else:
+                    raise ValueError(f"Score not found in response: {output_text}")
+                
+                score_str = score_str.replace("*", "").lstrip()[0]
+                raw_score = int(score_str[0])
+                # @TODO: currently default to smooth strategy, change it later
+                score = (raw_score - 1) / 4
+                
+                table_entry = None
+                if collect_metrics:
+                    table_entry = {
+                        "system_prompt": MATH_LLM_SYSTEM_PROMPT,
+                        "user_prompt": user_prompt,
+                        "output_text": output_text,
+                        "score": score,
+                        "raw_score": raw_score,
+                    }
+                
+                rollout_metrics = _build_rollout_metrics(
+                    success=True,
+                    failure_causes=attempt_failure_causes,
+                    num_retries=num_retries,
+                )
+                return MathLLMVerificationResult(
+                    score=score,
+                    metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+                    table_entry=table_entry,
+                )
+            except Exception as e:                
+                # if no score found, we disgard the full trace
+                table_entry = None
+                if collect_metrics:
+                    table_entry = {
+                        "system_prompt": MATH_LLM_SYSTEM_PROMPT,
+                        "user_prompt": user_prompt,
+                        "output_text": output_text,
+                        "score": 1,
+                    }
+                rollout_metrics = _build_rollout_metrics(
+                    success=False,
+                    failure_causes=["no_score_tag"],
+                    num_retries=num_retries,
+                )
+                print(f"[verify_math_llm] No 'Score: X' found (attempt {attempt}) — returning 1")
+                return MathLLMVerificationResult(
+                    score=1,
+                    metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+                    table_entry=table_entry,
+                )
+
+        except openai.RateLimitError as e:
+            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            attempt_failure_causes.append("rate_limit")
+            if attempt < max_retries:
+                num_retries += 1
+            print(f"[verify_math_llm] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
+            await asyncio.sleep(wait_time)
+
+        except (asyncio.TimeoutError, TimeoutException):
+            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            attempt_failure_causes.append("timeout")
+            if attempt < max_retries:
+                num_retries += 1
+            print(f"[verify_math_llm] Timeout (attempt {attempt}/{max_retries}), retrying in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+
+        except Exception as e:
+            wait_time = retry_backoff[min(attempt - 1, len(retry_backoff) - 1)]
+            attempt_failure_causes.append("other")
+            if attempt < max_retries:
+                num_retries += 1
+            print(f"[verify_math_llm] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+
+    print(f"[verify_math_llm] All {max_retries} attempts failed — returning score=1")
+    rollout_metrics = _build_rollout_metrics(
+        success=False,
+        failure_causes=attempt_failure_causes,
+        num_retries=num_retries,
+    )
+    return MathLLMVerificationResult(
+        score=1,
+        metrics=_merge_metrics(runtime_metrics, rollout_metrics),
+    )
+
+
+class MathLLMEnvironment:
+    """Environment that uses LLM-as-judge for math reasoning evaluation."""
+    
+    def __init__(
+        self,
+        model_name: str | None = None,
+        sampling_kwargs: dict[str, Any] | None = None,
+        use_wandb: bool | None = True,
+    ):
+        self.model_name = model_name
+        self.sampling_kwargs = sampling_kwargs
+        self.use_wandb = use_wandb
+
+    def launch(self, port: int):
+        """Serve the LLM verification API using FastAPI."""
+        app = FastAPI()
+
+        @app.post("/verify_answer")
+        async def verify(request: dict):
+            """
+            Evaluate reasoning quality via LLM judge.
+            Expected JSON:
+            {
+                "problem": "...",
+                "reasoning_trace": "...",
+                "reference_solution": "..."
+            }
+            """
+            problem = request["problem"]
+            reasoning_trace = request["reasoning_trace"]
+            reference_solution = request["reference_solution"]
+
+            client = get_openai_client()
+            verification = await verify_math_llm(
+                problem=problem,
+                reasoning_trace=reasoning_trace,
+                reference_solution=reference_solution,
+                client=client,
+                model=self.model_name,
+                sampling_kwargs=self.sampling_kwargs,
+                log_wandb_metrics=self.use_wandb,
+            )
+            return JSONResponse(content={"score": verification.score})
+
+        @app.get("/health")
+        async def health():
+            return JSONResponse(content={"status": "ok"})
+
+        uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run proof verifier locally for debugging.")
     parser.add_argument("--model", required=True, help="Fully qualified grader model name (e.g. openai/gpt-oss-20b)")
@@ -616,3 +892,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

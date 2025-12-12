@@ -2,6 +2,8 @@ defaults:
     - base
     - _self_
 
+llm_grader:
+  name: null
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
@@ -11,7 +13,7 @@ environment:
   _target_: pipelinerl.domains.math.MathEnvironment
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - pope_hard_with_guide
+  - pope_mix
 test_dataset_names:
-  - pope_hard_no_guide_test
+  - pope_mix_test
   - aime_2025

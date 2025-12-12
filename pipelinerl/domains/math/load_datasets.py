@@ -43,6 +43,19 @@ def process_eurus(dataset):
             "answer": answer,
         }
 
+def process_cohen_omni_filter(dataset, dataset_name):
+    for item in dataset:
+        task = item["problem"]
+        answer = item["answer"]
+        answer = "\\boxed{" + str(answer) + "}"
+        reference_solution = item["solution"]
+        yield {
+            "dataset": dataset_name,
+            "task": task,
+            "answer": answer,
+            "reference_solution": reference_solution,
+        }
+
 
 def process_math(dataset, dataset_name):
     for item in dataset:
@@ -293,6 +306,12 @@ def load_datasets(
         dataset = load_dataset("hendrycks/competition_math", split="train", trust_remote_code=True)
         samples = [s for s in process_math(dataset, "math_train") if s is not None]
         logger.info(f"Loading math train dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "cohen_omni_filter" in dataset_names:
+        dataset = load_dataset("violetxi/omni-filtered-by-cohen", split="train", trust_remote_code=True)
+        samples = [s for s in process_cohen_omni_filter(dataset, "cohen_omni_filter") if s is not None]
+        logger.info(f"Loading cohen omni filter dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "math_simplerl_train" in dataset_names:

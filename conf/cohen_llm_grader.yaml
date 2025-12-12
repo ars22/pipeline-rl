@@ -1,0 +1,95 @@
+
+defaults:
+    - base
+    - _self_
+
+
+model_path: Qwen/Qwen3-4B-Instruct-2507
+
+finetune:
+  attempts: 4
+  train_batch_size: 32
+  valid_batch_size: 32
+  gradient_accumulation_passes: 8
+  seq_length: 10240
+  seq_parallel: 1
+  save_checkpoint_steps: 50
+  push_to_hub: false
+
+llm:
+  parameters:
+    max_tokens: 8192 
+    temperature: 0.8
+
+test_llm:
+  parameters: 
+    max_tokens: 8192
+    temperature: 0.8 
+    top_p: 0.8
+    top_k: 20
+
+
+llm_grader:
+  name: Qwen/Qwen3-4B-Instruct-2507
+  vllm_kwargs:
+    num_nodes: 1
+    data-parallel-size: 8
+    tensor-parallel-size: 1
+    max-num-batched-tokens: 8192
+    max-num-seqs: 16
+    max-model-len: 16384
+    gpu-memory-utilization: 0.85
+  sampling_kwargs:
+    temperature: 0.7
+    max_tokens: 2048
+
+actor:
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+
+# Use MathLLMEnvironment for LLM-as-judge grading
+environment:
+  _target_: pipelinerl.domains.math.MathLLMEnvironment
+  model_name: ${llm_grader.name}
+  sampling_kwargs: ${llm_grader.sampling_kwargs}
+
+dataset_loader: pipelinerl.domains.math.load_datasets
+
+# Configure your datasets here
+train_dataset_names:
+  - hub_id: cohen_omni_filter
+    split: train
+
+test_dataset_names:
+  - hub_id: your-dataset/test
+    split: test
+
+# vLLM config for the actor (model being trained)
+vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 1024
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+# Resource allocation
+# Training + Actor: 2 nodes, Grader: 1 node (separate Slurm job)
+world:
+  replicas: 1
+  actor_fraction: 8
+  preprocessor_fraction: 0
+  finetune_fraction: 8
+  env_replicas: 1
+  actor_group_port: 9000
+  environment_start_port: 7777

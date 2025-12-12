@@ -199,3 +199,4 @@ runs/
 
 AGENTS.md
 .claude/
+slurm_logs/
