@@ -521,6 +521,13 @@ class ProofVerificationBatcher:
         """Main worker loop that processes pending verification requests."""
         while self._running:
             try:
+                # Respect max_concurrent before pulling work off the queue
+                async with self._active_lock:
+                    available_slots = self.max_concurrent - self._active_count
+                if available_slots <= 0:
+                    await asyncio.sleep(0.01)
+                    continue
+
                 # Collect a batch of requests
                 batch: list[_PendingVerification] = []
 
@@ -537,15 +544,13 @@ class ProofVerificationBatcher:
                 # Try to collect more requests up to max_concurrent (with short timeout)
                 batch_deadline = time.perf_counter() + self.batch_timeout
                 while len(batch) < self.max_concurrent:
-                    remaining_time = batch_deadline - time.perf_counter()
-                    if remaining_time <= 0:
+                    async with self._active_lock:
+                        available_slots = self.max_concurrent - self._active_count - len(batch)
+                    if available_slots <= 0:
                         break
 
-                    # Check how many slots are available
-                    async with self._active_lock:
-                        available_slots = self.max_concurrent - self._active_count
-
-                    if available_slots <= 0:
+                    remaining_time = batch_deadline - time.perf_counter()
+                    if remaining_time <= 0:
                         break
 
                     try:
