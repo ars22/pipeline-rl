@@ -336,7 +336,6 @@ vllm serve "$MODEL" \
   --tensor-parallel-size $TENSOR_PARALLEL_SIZE \
   --no-enable-prefix-caching \
   --enable-chunked-prefill \
-  --max-cudagraph-capture-size 2048 \
   --max-num-batched-tokens $MAX_NUM_BATCHED_TOKENS \
   --max-num-seqs $MAX_NUM_SEQS \
   --max-model-len $MAX_MODEL_LEN \

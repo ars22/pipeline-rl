@@ -1,13 +1,13 @@
-# --------------------
-# Config for 4+2 nodes
-# --------------------
+# ----------------------
+# Config for 5+1+2 nodes
+# ----------------------
 defaults:
     - base
     - _self_
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
-# Uncomment to skip test set rollouts
-# eval_every_n_versions: 0
+# Eval every 25 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
+eval_every_n_versions: 12800
 
 preprocess:
   shared_memory_entry_size: 2000000000
@@ -20,7 +20,7 @@ finetune:
   seq_length: 49920
   seq_parallel: 2
   learning_rate: 1.0e-6
-  save_checkpoint_steps: 50
+  save_checkpoint_steps: 10
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
   hub_model_revision: v00.00
@@ -43,13 +43,13 @@ test_llm:
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   vllm_kwargs:
-    num_nodes: 2
+    num_nodes: 1
     data-parallel-size: 8
-    tensor-parallel-size: 2
-    max-num-batched-tokens: 65536
-    max-num-seqs: 16
-    max-model-len: 131072
-    gpu-memory-utilization: 0.85
+    tensor-parallel-size: 1
+    max-num-batched-tokens: 24576
+    max-num-seqs: 64
+    max-model-len: 98304
+    gpu-memory-utilization: 0.9
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 81920
@@ -58,7 +58,7 @@ llm_grader:
   reasoning_delimiters: ["</think>"]
 
 actor:
-  llm_max_rollouts: 16 # Larger values exhaust the KV cache
+  llm_max_rollouts: 20 # Larger values exhaust the KV cache and lead to preemptions
   shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
@@ -86,16 +86,15 @@ vllm_config:
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
     max-num-batched-tokens: 16384
-    enable-prefix-caching: ""
-    enable-chunked-prefill: ""
+    max-model-len: ${finetune.seq_length}
     return-tokens-as-token-ids: ""
-    tensor-parallel-size: 2
+    tensor-parallel-size: 1
     pipeline-parallel-size: 1
     generation-config: vllm
 
 world:
   replicas: 1
-  actor_fraction: 32
+  actor_fraction: 40
   preprocessor_fraction: 0
   finetune_fraction: 16
   env_replicas: 1
