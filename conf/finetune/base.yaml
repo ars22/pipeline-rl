@@ -116,7 +116,6 @@ rl:
 
 llm_grader:
   name: null
-  # max_concurrent: 64
   vllm_kwargs:
     num_nodes: 1
     tensor-parallel-size: 1
