@@ -244,11 +244,11 @@ def load_evaluator_prompt(prompt_name: str | os.PathLike) -> str:
     Load an evaluator prompt file from conf/evaluator_prompts.
     """
     if prompt_name is None:
-        raise ValueError("llm_grader.prompt must name a Markdown file in conf/evaluator_prompts")
+        raise ValueError("llm_grader.prompt_name must name a Markdown file in conf/evaluator_prompts")
 
     prompt_str = str(prompt_name).strip()
     if not prompt_str:
-        raise ValueError("llm_grader.prompt cannot be empty")
+        raise ValueError("llm_grader.prompt_name cannot be empty")
 
     filename = Path(prompt_str).name
     if not filename.endswith(".md"):
@@ -258,6 +258,34 @@ def load_evaluator_prompt(prompt_name: str | os.PathLike) -> str:
     if not prompt_path.is_file():
         raise FileNotFoundError(f"Evaluator prompt '{filename}' not found in {_EVALUATOR_PROMPT_DIR}")
     return prompt_path.read_text(encoding="utf-8")
+
+
+def parse_schema(schema: Any) -> str:
+    """
+    Normalize a schema payload into the grader-compatible string format.
+
+    The schema is often provided as a list of dicts with keys "title", "points",
+    and "desc". This helper converts that structure into the Markdown string
+    expected by the evaluator prompt.
+    """
+    if isinstance(schema, str):
+        return schema
+    if not isinstance(schema, list):
+        raise TypeError("Schema must be a string or a list of dicts")
+
+    sections: list[str] = []
+    for idx, entry in enumerate(schema):
+        if not isinstance(entry, dict):
+            raise ValueError(f"Schema entry at index {idx} must be a dict")
+        title = entry.get("title")
+        points = entry.get("points")
+        description = entry.get("desc") or entry.get("description")
+        if title is None or points is None or description is None:
+            raise ValueError(f"Schema entry at index {idx} missing title, points, or description")
+        section = f"# {title} ({points} points)\nDescription: {description}".strip()
+        sections.append(section)
+
+    return "\n\n".join(sections)
 
 _openai_client = None
 
@@ -355,7 +383,7 @@ def get_openai_client():
 async def verify_proof(
     problem: str,
     ref_solution: str,
-    schema: str,
+    schema: str | list[dict[str, Any]],
     generation: str,
     prompt_name: str | os.PathLike | None = None,
     model: str | None = None,
@@ -371,6 +399,7 @@ async def verify_proof(
     Returns a ProofVerificationResult that includes the integer score [0–7] and optional runtime metrics.
 
     Args:
+        schema: Either a Markdown string or a list of rubric dicts containing title/points/desc.
         prompt_name: Optional filename or path for the evaluator prompt template. If omitted,
             the default baseline prompt is used.
     Retries up to `max_retries` times if the OpenAI-compatible endpoint fails or hits rate limits.
@@ -388,10 +417,11 @@ async def verify_proof(
     client = client or get_openai_client()
 
     prompt_template = load_evaluator_prompt(prompt_name)
+    normalized_schema = parse_schema(schema)
     prompt_text = prompt_template.format(
         problem=problem,
         human_solution=ref_solution,
-        marking_scheme=schema,
+        marking_scheme=normalized_schema,
         solution=generation,
     )
     if not model:
@@ -531,7 +561,7 @@ class MathProofEnvironment:
         self.sampling_kwargs = sampling_kwargs
         self.use_wandb = use_wandb
         if not prompt_name:
-            raise ValueError("MathProofEnvironment requires llm_grader.prompt to be set")
+            raise ValueError("MathProofEnvironment requires llm_grader.prompt_name to be set")
         self.prompt_name = prompt_name
 
     def launch(self, port: int):
