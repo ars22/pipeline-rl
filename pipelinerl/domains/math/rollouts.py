@@ -90,6 +90,7 @@ async def generate_math_rollout(
             ref_solution=problem["answer"],
             schema=problem["schema"],
             generation=generation_final_answer,
+            prompt_name=getattr(cfg.llm_grader, "prompt", None),
             model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
             sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
             log_wandb_metrics=cfg.wandb.use_wandb,

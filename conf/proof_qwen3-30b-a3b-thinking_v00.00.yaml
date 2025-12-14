@@ -56,6 +56,7 @@ llm_grader:
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
+  prompt: baseline
 
 actor:
   llm_max_rollouts: 16 # Larger values exhaust the KV cache
@@ -68,6 +69,7 @@ environment:
   _target_: pipelinerl.domains.math.MathProofEnvironment
   model_name: ${llm_grader.name}
   sampling_kwargs: ${llm_grader.sampling_kwargs}
+  prompt_name: ${llm_grader.prompt}
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema
