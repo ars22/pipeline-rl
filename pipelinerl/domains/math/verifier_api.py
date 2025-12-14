@@ -383,7 +383,7 @@ def get_openai_client():
 async def verify_proof(
     problem: str,
     ref_solution: str,
-    schema: str | list[dict[str, Any]],
+    schema: str,
     generation: str,
     prompt_name: str | os.PathLike | None = None,
     model: str | None = None,
@@ -399,7 +399,7 @@ async def verify_proof(
     Returns a ProofVerificationResult that includes the integer score [0–7] and optional runtime metrics.
 
     Args:
-        schema: Either a Markdown string or a list of rubric dicts containing title/points/desc.
+        schema: Markdown-formatted marking scheme expected by the grader prompt.
         prompt_name: Optional filename or path for the evaluator prompt template. If omitted,
             the default baseline prompt is used.
     Retries up to `max_retries` times if the OpenAI-compatible endpoint fails or hits rate limits.
@@ -415,13 +415,14 @@ async def verify_proof(
         )
 
     client = client or get_openai_client()
+    if not isinstance(schema, str):
+        raise TypeError("verify_proof expects schema as Markdown string; convert via parse_schema() first.")
 
     prompt_template = load_evaluator_prompt(prompt_name)
-    normalized_schema = parse_schema(schema)
     prompt_text = prompt_template.format(
         problem=problem,
         human_solution=ref_solution,
-        marking_scheme=normalized_schema,
+        marking_scheme=schema,
         solution=generation,
     )
     if not model:
@@ -585,7 +586,7 @@ class MathProofEnvironment:
             """
             problem = request["problem"]
             ref_solution = request["ref_solution"]
-            schema = request["schema"]
+            schema = parse_schema(request["schema"])
             generation = request["generation"]
 
             client = get_openai_client()
@@ -628,7 +629,7 @@ def main():
     data = dataset[1]
     problem = data["problem"]
     ref_solution = data["solution"]
-    schema = data["schema_0"]
+    schema = parse_schema(data["schema_0"])
     prediction = data["solution"]
     for i in range(10):
         verification = asyncio.run(
