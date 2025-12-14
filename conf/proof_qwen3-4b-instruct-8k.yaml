@@ -51,7 +51,7 @@ llm_grader:
     max_output_tokens: 16384
     reasoning:
       effort: medium
-  prompt_name: baseline
+  prompt_name: v0
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout

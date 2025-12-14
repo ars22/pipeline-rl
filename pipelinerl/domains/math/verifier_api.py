@@ -20,6 +20,12 @@ from functools import partial
 
 import pipelinerl.countdown_utils
 
+import re
+import asyncio
+import os
+import openai
+from datasets import load_dataset
+
 logging.basicConfig(
     level=logging.DEBUG,  # Or INFO, WARNING, etc.
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -221,13 +227,6 @@ class MathEnvironment:
             uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
 
 
-import re
-import asyncio
-import os
-import openai
-from datasets import load_dataset
-
-
 def _infer_repo_root() -> Path:
     module_path = Path(__file__).resolve()
     for parent in module_path.parents:
@@ -245,7 +244,7 @@ def load_evaluator_prompt(prompt_name: str | os.PathLike) -> str:
     Load an evaluator prompt file from conf/evaluator_prompts.
     """
     if prompt_name is None:
-        raise ValueError("llm_grader.prompt must name a .md file in conf/evaluator_prompts")
+        raise ValueError("llm_grader.prompt must name a Markdown file in conf/evaluator_prompts")
 
     prompt_str = str(prompt_name).strip()
     if not prompt_str:
@@ -589,7 +588,7 @@ def main():
     )
     parser.add_argument(
         "--prompt-name",
-        default="baseline",
+        default="v0",
         help="Name of evaluator prompt file located in conf/evaluator_prompts (with or without .md suffix).",
     )
     args = parser.parse_args()
