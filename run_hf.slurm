@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=pipe-rl
 #SBATCH --ntasks-per-node=1
-#SBATCH --exclusive
 #SBATCH --gres=gpu:8
 #SBATCH --partition=hopper-prod
 #SBATCH --output=/fsx/h4/logs/%x-%j.out
