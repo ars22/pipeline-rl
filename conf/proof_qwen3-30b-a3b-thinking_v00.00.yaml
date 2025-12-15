@@ -7,7 +7,7 @@ defaults:
 
 model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
 # Eval every 25 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
-eval_every_n_versions: 12800
+eval_every_n_versions: 0 #12800
 
 preprocess:
   shared_memory_entry_size: 2000000000
@@ -59,7 +59,7 @@ llm_grader:
   prompt_name: v0
 
 actor:
-  llm_max_rollouts: 8 # Larger values exhaust the KV cache and lead to preemptions
+  llm_max_rollouts: 28 # Larger values exhaust the KV cache and lead to preemptions
   shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
@@ -90,7 +90,7 @@ vllm_config:
     max-num-batched-tokens: 16384
     max-model-len: ${finetune.seq_length}
     return-tokens-as-token-ids: ""
-    tensor-parallel-size: 1
+    tensor-parallel-size: 2
     pipeline-parallel-size: 1
     generation-config: vllm
 
