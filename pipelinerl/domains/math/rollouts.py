@@ -11,7 +11,7 @@ from tapeagents.core import Prompt
 from tapeagents.llms.trainable import TrainableLLM
 
 from pipelinerl.async_llm import llm_async_generate, make_training_text
-from .verifier_api import verify_answer_rpc, verify_proof
+from .verifier_api import verify_answer_rpc, verify_proof, parse_schema
 
 def remove_reasoning(completion: str, reasoning_delimiters: list[str] = None) -> str:
     if reasoning_delimiters is not None:
@@ -85,11 +85,13 @@ async def generate_math_rollout(
     verifier_metrics: dict[str, float | int] = {}
     verifier_table_entry: dict[str, str | int] | None = None
     if "schema" in problem:
+        schema_text = parse_schema(problem["schema"])
         verification = await verify_proof(
             problem=problem["task"],
             ref_solution=problem["answer"],
-            schema=problem["schema"],
+            schema=schema_text,
             generation=generation_final_answer,
+            prompt_name=getattr(cfg.llm_grader, "prompt_name", None),
             model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
             sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
             log_wandb_metrics=cfg.wandb.use_wandb,

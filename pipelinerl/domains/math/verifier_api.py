@@ -10,6 +10,7 @@ import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
+from pathlib import Path
 
 import math_verify  # Ensure math_verify is installed
 
@@ -18,6 +19,12 @@ from fastapi.responses import JSONResponse
 from functools import partial
 
 import pipelinerl.countdown_utils
+
+import re
+import asyncio
+import os
+import openai
+from datasets import load_dataset
 
 logging.basicConfig(
     level=logging.DEBUG,  # Or INFO, WARNING, etc.
@@ -220,61 +227,65 @@ class MathEnvironment:
             uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=60)
 
 
-import re
-import asyncio
-import os
-import openai
-from datasets import load_dataset
+def _infer_repo_root() -> Path:
+    module_path = Path(__file__).resolve()
+    for parent in module_path.parents:
+        if (parent / "conf").is_dir():
+            return parent
+    return module_path.parent
 
-PROOF_EVALUATOR_PROMPT = """
-You are an **expert mathematics proof grader**. Your role is to evaluate the correctness,
-rigor, and completeness of a model-generated proof for a given problem using a provided
-**reference solution** and **grading schema**.
 
----
+_REPO_ROOT = _infer_repo_root()
+_EVALUATOR_PROMPT_DIR = (_REPO_ROOT / "conf" / "evaluator_prompts").resolve()
 
-### INPUT COMPONENTS
-You will receive four sections:
-1. **Problem Statement** — the math problem to be solved.
-2. **Reference Solution** — a correct, authoritative solution.
-3. **Marking Scheme (Schema)** — a JSON list of checkpoints (`title`, `desc`, `points`).
-4. **Proof Solution** — the model-generated proof.
 
----
+def load_evaluator_prompt(prompt_name: str | os.PathLike) -> str:
+    """
+    Load an evaluator prompt file from conf/evaluator_prompts.
+    """
+    if prompt_name is None:
+        raise ValueError("llm_grader.prompt_name must name a Markdown file in conf/evaluator_prompts")
 
-### YOUR TASK
-Analyze the **Proof Solution** against the **Problem**, **Reference Solution**, and **Schema**,
-determine correspondence with rubric checkpoints, and assign an integer score **0–7**.
+    prompt_str = str(prompt_name).strip()
+    if not prompt_str:
+        raise ValueError("llm_grader.prompt_name cannot be empty")
 
----
+    filename = Path(prompt_str).name
+    if not filename.endswith(".md"):
+        filename = f"{filename}.md"
 
-### OUTPUT FORMAT
-Respond *only* in XML:
+    prompt_path = (_EVALUATOR_PROMPT_DIR / filename).resolve()
+    if not prompt_path.is_file():
+        raise FileNotFoundError(f"Evaluator prompt '{filename}' not found in {_EVALUATOR_PROMPT_DIR}")
+    return prompt_path.read_text(encoding="utf-8")
 
-<assessment>DETAILED_EVALUATION_TEXT</assessment>
-<errors>
-  1. description of first issue,
-  2. description of second issue,
-  ...
-</errors>
-<score>INTEGER</score>
 
----
+def parse_schema(schema: Any) -> str:
+    """
+    Normalize a schema payload into the grader-compatible string format.
 
-### INPUT DATA
+    The schema is often provided as a list of dicts with keys "title", "points",
+    and "desc". This helper converts that structure into the Markdown string
+    expected by the evaluator prompt.
+    """
+    if isinstance(schema, str):
+        return schema
+    if not isinstance(schema, list):
+        raise TypeError("Schema must be a string or a list of dicts")
 
-**Problem Statement**
-{problem}
+    sections: list[str] = []
+    for idx, entry in enumerate(schema):
+        if not isinstance(entry, dict):
+            raise ValueError(f"Schema entry at index {idx} must be a dict")
+        title = entry.get("title")
+        points = entry.get("points")
+        description = entry.get("desc") or entry.get("description")
+        if title is None or points is None or description is None:
+            raise ValueError(f"Schema entry at index {idx} missing title, points, or description")
+        section = f"# {title} ({points} points)\nDescription: {description}".strip()
+        sections.append(section)
 
-**Reference Solution**
-{human_solution}
-
-**Marking Scheme**
-{marking_scheme}
-
-**Proof Solution**
-{solution}
-"""
+    return "\n\n".join(sections)
 
 _openai_client = None
 
@@ -374,6 +385,7 @@ async def verify_proof(
     ref_solution: str,
     schema: str,
     generation: str,
+    prompt_name: str | os.PathLike | None = None,
     model: str | None = None,
     sampling_kwargs: dict[str, Any] | None = None,
     client=None,
@@ -385,6 +397,11 @@ async def verify_proof(
     """
     Evaluate a model-generated proof via Groq GPR model.
     Returns a ProofVerificationResult that includes the integer score [0–7] and optional runtime metrics.
+
+    Args:
+        schema: Markdown-formatted marking scheme expected by the grader prompt.
+        prompt_name: Optional filename or path for the evaluator prompt template. If omitted,
+            the default baseline prompt is used.
     Retries up to `max_retries` times if the OpenAI-compatible endpoint fails or hits rate limits.
     """
 
@@ -398,8 +415,11 @@ async def verify_proof(
         )
 
     client = client or get_openai_client()
+    if not isinstance(schema, str):
+        raise TypeError("verify_proof expects schema as Markdown string; convert via parse_schema() first.")
 
-    prompt_text = PROOF_EVALUATOR_PROMPT.format(
+    prompt_template = load_evaluator_prompt(prompt_name)
+    prompt_text = prompt_template.format(
         problem=problem,
         human_solution=ref_solution,
         marking_scheme=schema,
@@ -536,10 +556,14 @@ class MathProofEnvironment:
         model_name: str | None = None,
         sampling_kwargs: dict[str, Any] | None = None,
         use_wandb: bool | None = True,
+        prompt_name: str | os.PathLike | None = None,
     ):
         self.model_name = model_name
         self.sampling_kwargs = sampling_kwargs
         self.use_wandb = use_wandb
+        if not prompt_name:
+            raise ValueError("MathProofEnvironment requires llm_grader.prompt_name to be set")
+        self.prompt_name = prompt_name
 
     def launch(self, port: int):
         """
@@ -562,7 +586,7 @@ class MathProofEnvironment:
             """
             problem = request["problem"]
             ref_solution = request["ref_solution"]
-            schema = request["schema"]
+            schema = parse_schema(request["schema"])
             generation = request["generation"]
 
             client = get_openai_client()
@@ -571,6 +595,7 @@ class MathProofEnvironment:
                 ref_solution=ref_solution,
                 schema=schema,
                 generation=generation,
+                prompt_name=self.prompt_name,
                 client=client,
                 model=self.model_name,
                 sampling_kwargs=self.sampling_kwargs,
@@ -592,6 +617,11 @@ def main():
         default=None,
         help="JSON dict of sampling params forwarded to the grader (e.g. '{\"temperature\": 0.8}')",
     )
+    parser.add_argument(
+        "--prompt-name",
+        default="v0",
+        help="Name of evaluator prompt file located in conf/evaluator_prompts (with or without .md suffix).",
+    )
     args = parser.parse_args()
     sampling_kwargs = json.loads(args.sampling_kwargs) if args.sampling_kwargs else None
 
@@ -599,7 +629,7 @@ def main():
     data = dataset[1]
     problem = data["problem"]
     ref_solution = data["solution"]
-    schema = data["schema_0"]
+    schema = parse_schema(data["schema_0"])
     prediction = data["solution"]
     for i in range(10):
         verification = asyncio.run(
@@ -608,6 +638,7 @@ def main():
                 ref_solution,
                 schema,
                 prediction,
+                prompt_name=args.prompt_name,
                 model=args.model,
                 sampling_kwargs=sampling_kwargs,
             )

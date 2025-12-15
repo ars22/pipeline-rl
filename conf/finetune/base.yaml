@@ -128,3 +128,4 @@ llm_grader:
     temperature: 1.0
     max_output_tokens: 4096
   reasoning_delimiters: []
+  prompt_name: v0

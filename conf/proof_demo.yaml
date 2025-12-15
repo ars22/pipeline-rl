@@ -51,6 +51,7 @@ llm_grader:
     max_output_tokens: 32768
     reasoning:
       effort: medium
+  prompt_name: v0
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
@@ -61,6 +62,7 @@ environment:
   _target_: pipelinerl.domains.math.MathProofEnvironment
   model_name: ${llm_grader.name}
   sampling_kwargs: ${llm_grader.sampling_kwargs}
+  prompt_name: ${llm_grader.prompt_name}
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema
