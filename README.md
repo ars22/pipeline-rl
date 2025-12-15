@@ -88,9 +88,10 @@ llm_grader:
     reasoning:
         effort: medium
   reasoning_delimiters: ["</think>"]
+  prompt_name: v0
 ```
 
-The `reasoning_delimiters` field specifies where the split the model's response so that only the final answer is extracted for verification. Note that for the Responses API, `max_output_tokens` is the total number of tokens (prompt + output), so make sure to set it high enough to accommodate the full response. 
+The `prompt_name` field specifies which evaluator prompt to load from `conf/evaluator_prompts`, while the `reasoning_delimiters` field specifies where the split the model's response so that only the final answer is extracted for verification. Note that for the Responses API, `max_output_tokens` is the total number of tokens (prompt + output), so make sure to set it high enough to accommodate the full response. 
 
 For the Slurm deployment, you can tune `llm_grader.vllm_kwargs` (number of nodes, data/tensor parallelism, and vLLM resource limits) as follows:
 
