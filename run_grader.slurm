@@ -8,7 +8,7 @@
 #SBATCH --partition=hopper-prod
 #SBATCH --output=/fsx/h4/logs/%x-%j.out
 #SBATCH --error=/fsx/h4/logs/%x-%j.err
-#SBATCH --time=3-0:00:00
+#SBATCH --time=7-0:00:00
 
 # Multi-node grader launch script that uses Ray for distributed vLLM serving
 
