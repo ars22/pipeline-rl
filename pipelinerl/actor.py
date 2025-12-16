@@ -28,8 +28,6 @@ TRANSIENT_EXCEPTIONS = (
     TimeoutError,  # Base timeout errors
 )
 
-# Maximum number of times to re-queue a rollout after transient errors before giving up
-MAX_REQUEUE_ATTEMPTS = 3
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
 from tapeagents.llms import TrainableLLM
@@ -219,8 +217,13 @@ async def schedule_rollouts(
     rollout_policy = hydra.utils.get_method(cfg.actor.rollout_policy)
     logger.info(f"Use rollout policy: {rollout_policy}")
 
-    max_retries = cfg.actor.get("max_retries", 3)
-    retry_base_delay = cfg.actor.get("retry_base_delay", 1.0)
+    max_retries = cfg.actor.max_retries
+    retry_base_delay = cfg.actor.retry_base_delay
+    max_requeue_attempts = cfg.actor.max_requeue_attempts
+    max_consecutive_failures = cfg.actor.max_consecutive_failures
+
+    # Track consecutive failures to implement failure budget
+    consecutive_failures = 0
 
     # Queue for rollouts that failed with transient errors and need to be retried
     # Each item is (problem, group_id, rollout_index, requeue_count)
@@ -234,7 +237,7 @@ async def schedule_rollouts(
         session: aiohttp.ClientSession,
         requeue_count: int = 0,
     ):
-        nonlocal started_rollouts, finished_rollouts
+        nonlocal started_rollouts, finished_rollouts, consecutive_failures
         try:
             llm = llms[llm_index]
             model_version = trainer_state.propagated_weight_version
@@ -280,28 +283,45 @@ async def schedule_rollouts(
                 random.shuffle(group_rollouts[group_id])
                 result_queue.put(group_rollouts[group_id])
                 del group_rollouts[group_id]
+                # Reset consecutive failures on successful group completion
+                consecutive_failures = 0
             finished_rollouts += 1
         except TRANSIENT_EXCEPTIONS as e:
             # Transient errors (HTTP/connection issues) that exhausted retries.
-            # Re-queue the rollout to try again later, up to MAX_REQUEUE_ATTEMPTS times.
-            if requeue_count < MAX_REQUEUE_ATTEMPTS:
+            # Re-queue the rollout to try again later, up to max_requeue_attempts times.
+            if requeue_count < max_requeue_attempts:
                 logger.warning(
                     f"Transient error in rollout for group {group_id}, re-queuing "
-                    f"(attempt {requeue_count + 1}/{MAX_REQUEUE_ATTEMPTS}): {type(e).__name__}: {e}"
+                    f"(attempt {requeue_count + 1}/{max_requeue_attempts}): {type(e).__name__}: {e}"
                 )
                 await retry_queue.put((problem, group_id, rollout_index, requeue_count + 1))
             else:
-                # Exhausted all re-queue attempts - this is a fatal error for the group
-                logger.error(
-                    f"Transient error in rollout for group {group_id} after {MAX_REQUEUE_ATTEMPTS} "
-                    f"re-queue attempts, stopping actor: {type(e).__name__}: {e}"
-                )
-                current_task = asyncio.current_task(loop=loop)
-                for task in asyncio.all_tasks(loop=loop):
-                    if task != current_task:
-                        task.cancel()
-                result_queue.put(e)
-                logger.error("Stopped all tasks and put exception in the result queue")
+                # Exhausted all re-queue attempts for this rollout
+                consecutive_failures += 1
+
+                if consecutive_failures >= max_consecutive_failures:
+                    # Too many consecutive failures - crash the actor
+                    logger.error(
+                        f"Transient error in rollout for group {group_id} after {max_requeue_attempts} "
+                        f"re-queue attempts. Hit {consecutive_failures}/{max_consecutive_failures} "
+                        f"consecutive failures, stopping actor: {type(e).__name__}: {e}"
+                    )
+                    current_task = asyncio.current_task(loop=loop)
+                    for task in asyncio.all_tasks(loop=loop):
+                        if task != current_task:
+                            task.cancel()
+                    result_queue.put(e)
+                    logger.error("Stopped all tasks and put exception in the result queue")
+                else:
+                    # Skip this rollout but continue processing
+                    logger.warning(
+                        f"Transient error in rollout for group {group_id} after {max_requeue_attempts} "
+                        f"re-queue attempts ({consecutive_failures}/{max_consecutive_failures} consecutive failures), "
+                        f"skipping rollout: {type(e).__name__}: {e}"
+                    )
+                    # Note: This rollout is lost, but the group may still complete with fewer rollouts
+                    # if other rollouts in the group succeed. If not enough rollouts complete,
+                    # the group will be orphaned (which is acceptable for resilience).
         except Exception as e:
             # Fatal error - cancel all tasks and stop the actor
             logger.error("Fatal exception in rollout, stop all other rollout tasks", exc_info=e)

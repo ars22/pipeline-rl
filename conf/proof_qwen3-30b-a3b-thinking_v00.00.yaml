@@ -61,6 +61,7 @@ llm_grader:
 actor:
   llm_max_rollouts: 32 # Larger values exhaust the KV cache and lead to preemptions
   shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
+  max_consecutive_failures: 10 # More tolerance for long runs with transient network issues
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-

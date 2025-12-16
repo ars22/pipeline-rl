@@ -21,6 +21,11 @@ actor:
   # Retry settings for transient HTTP errors (connection resets, etc.)
   max_retries: 3
   retry_base_delay: 1.0
+  # Number of times to re-queue a failed rollout before counting it as a failure
+  max_requeue_attempts: 3
+  # Number of consecutive rollout failures before crashing the actor
+  # (failures are reset when a group completes successfully)
+  max_consecutive_failures: 5
 environment: null
 preprocess:
   input: actor
