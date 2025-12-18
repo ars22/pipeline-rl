@@ -29,7 +29,7 @@ TRANSIENT_EXCEPTIONS = (
 )
 
 # Maximum number of times to re-queue a rollout after transient errors before giving up
-MAX_REQUEUE_ATTEMPTS = 3
+MAX_REQUEUE_ATTEMPTS = 10
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
 from tapeagents.llms import TrainableLLM
