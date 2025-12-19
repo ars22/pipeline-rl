@@ -7,7 +7,7 @@ import queue
 from queue import Empty
 import random
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 
@@ -58,31 +58,68 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 
-_WANDB_VERIFIER_TABLE = None
 _WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
 
 
-def _get_wandb_verifier_table():
-    global _WANDB_VERIFIER_TABLE
-    if getattr(wandb, "run", None) is None:
-        return None
-    if _WANDB_VERIFIER_TABLE is None:
-        _WANDB_VERIFIER_TABLE = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS, log_mode="MUTABLE")
-    return _WANDB_VERIFIER_TABLE
+class WandbVerifierTableLogger:
+    def __init__(self) -> None:
+        self.enabled = False
+        self.max_rows = 0
+        self.log_every_n_groups = 1
+        self._entries: deque[list] = deque()
+        self._last_logged_group: int | None = None
+
+    def configure(self, enabled: bool, max_rows: int, log_every_n_groups: int) -> None:
+        max_rows = max(int(max_rows), 0)
+        log_every_n_groups = max(int(log_every_n_groups), 1)
+        self.enabled = bool(enabled) and max_rows > 0
+        self.max_rows = max_rows
+        self.log_every_n_groups = log_every_n_groups
+        self._entries = deque(maxlen=self.max_rows) if self.enabled else deque()
+        self._last_logged_group = None
+
+    def _should_log(self, group_index: int | None) -> bool:
+        if self.log_every_n_groups <= 1:
+            return self._last_logged_group != group_index
+
+        if self._last_logged_group is None:
+            return True
+
+        if group_index is None:
+            return False
+
+        return (group_index - self._last_logged_group) >= self.log_every_n_groups
+
+    def log_entry(self, entry: dict[str, str | int]) -> None:
+        if not self.enabled or getattr(wandb, "run", None) is None:
+            return
+        if self.max_rows <= 0:
+            return
+
+        row = [
+            entry.get("group_index", 0),
+            entry.get("prompt", ""),
+            entry.get("reasoning", ""),
+            entry.get("output_text", ""),
+            entry.get("score", 0),
+        ]
+        self._entries.append(row)
+
+        group_index_value = entry.get("group_index")
+        if self._should_log(group_index_value):
+            table = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS, data=list(self._entries))
+            wandb.log({"tables/verifier": table})
+            if isinstance(group_index_value, int):
+                self._last_logged_group = group_index_value
+            elif self._last_logged_group is None:
+                self._last_logged_group = 0
+
+
+_WANDB_VERIFIER_TABLE_LOGGER = WandbVerifierTableLogger()
 
 
 def _log_verifier_table_entry(entry: dict[str, str | int]):
-    table = _get_wandb_verifier_table()
-    if table is None:
-        return
-    table.add_data(
-        entry.get("group_index", 0),
-        entry.get("prompt", ""),
-        entry.get("reasoning", ""),
-        entry.get("output_text", ""),
-        entry.get("score", 0),
-    )
-    wandb.log({"tables/verifier": table})
+    _WANDB_VERIFIER_TABLE_LOGGER.log_entry(entry)
 
 
 def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> dict[str, float | int]:
@@ -455,6 +492,12 @@ class ActorLoop:
         self.debug_mode = bool(cfg.debug.mode)
         self.verifier_metrics_step = 0
         self._last_verifier_timestep: float | None = None
+        wandb_table_cfg = getattr(cfg.llm_grader, "wandb_table", None)
+        _WANDB_VERIFIER_TABLE_LOGGER.configure(
+            enabled=bool(getattr(wandb_table_cfg, "enabled", False)),
+            max_rows=int(getattr(wandb_table_cfg, "max_rows", 0) or 0),
+            log_every_n_groups=int(getattr(wandb_table_cfg, "log_every_n_groups", 1) or 1),
+        )
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
