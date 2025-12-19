@@ -131,5 +131,5 @@ llm_grader:
   prompt_name: v0
   wandb_table:
     enabled: false
-    max_rows: 200
+    max_rows: 512
     log_every_n_groups: 32

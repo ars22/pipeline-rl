@@ -110,9 +110,14 @@ srun -w "$HOSTLIST_STR" --ntasks-per-node=1 \
     export ALL_ADDR=$ALL_ADDR
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
+    # Write W&B run files to node-local storage (avoids filling shared FS).
+    export WANDB_DIR="/scratch/wandb"
+    mkdir -p "$WANDB_DIR"
     echo "[$(hostname -s)] RANK=$RANK WORLD_SIZE=$WORLD_SIZE MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT ALL_ADDR=$ALL_ADDR"
+    echo "[$(hostname -s)] WANDB_DIR=$WANDB_DIR"
     python -m pipelinerl.launch --config-name=$CONFIG_NAME \
-      output_dir=runs/$JOB_NAME
+      output_dir=runs/$JOB_NAME \
+      wandb.wandb_dir="$WANDB_DIR"
     '
 
 END_TIME=$(date +%s)
