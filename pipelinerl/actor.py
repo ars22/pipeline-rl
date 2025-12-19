@@ -4,12 +4,10 @@ import math
 import multiprocessing as mp
 import os
 import queue
-import signal
 from queue import Empty
 import random
 import time
-from collections import defaultdict, deque
-from dataclasses import dataclass
+from collections import defaultdict
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 
@@ -31,7 +29,7 @@ TRANSIENT_EXCEPTIONS = (
 )
 
 # Maximum number of times to re-queue a rollout after transient errors before giving up
-MAX_REQUEUE_ATTEMPTS = 10
+MAX_REQUEUE_ATTEMPTS = 3
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
 from tapeagents.llms import TrainableLLM
@@ -60,69 +58,31 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 
+_WANDB_VERIFIER_TABLE = None
 _WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
 
-@dataclass(frozen=True)
-class _WandbVerifierTableConfig:
-    enabled: bool = False
-    max_rows: int = 200
-    log_every_n_groups: int = 50
+
+def _get_wandb_verifier_table():
+    global _WANDB_VERIFIER_TABLE
+    if getattr(wandb, "run", None) is None:
+        return None
+    if _WANDB_VERIFIER_TABLE is None:
+        _WANDB_VERIFIER_TABLE = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS, log_mode="MUTABLE")
+    return _WANDB_VERIFIER_TABLE
 
 
-_WANDB_VERIFIER_TABLE_CFG = _WandbVerifierTableConfig()
-_WANDB_VERIFIER_TABLE_BUFFER: deque[dict[str, object]] | None = None
-
-
-def _configure_wandb_verifier_table(cfg: DictConfig) -> None:
-    global _WANDB_VERIFIER_TABLE_CFG, _WANDB_VERIFIER_TABLE_BUFFER
-    verifier_cfg = cfg.wandb.get("verifier_table", {}) if getattr(cfg, "wandb", None) is not None else {}
-    enabled = bool(verifier_cfg.get("enabled", False))
-    max_rows = int(verifier_cfg.get("max_rows", 200))
-    log_every_n_groups = int(verifier_cfg.get("log_every_n_groups", 50))
-
-    if max_rows <= 0:
-        enabled = False
-        max_rows = 0
-    if log_every_n_groups <= 0:
-        log_every_n_groups = 1
-
-    _WANDB_VERIFIER_TABLE_CFG = _WandbVerifierTableConfig(enabled, max_rows, log_every_n_groups)
-    _WANDB_VERIFIER_TABLE_BUFFER = deque(maxlen=max_rows) if enabled else None
-
-
-def _add_verifier_table_entries(entries: list[dict[str, str | int]], group_index: int) -> None:
-    if not _WANDB_VERIFIER_TABLE_CFG.enabled or getattr(wandb, "run", None) is None:
+def _log_verifier_table_entry(entry: dict[str, str | int]):
+    table = _get_wandb_verifier_table()
+    if table is None:
         return
-    global _WANDB_VERIFIER_TABLE_BUFFER
-    if _WANDB_VERIFIER_TABLE_BUFFER is None:
-        _WANDB_VERIFIER_TABLE_BUFFER = deque(maxlen=_WANDB_VERIFIER_TABLE_CFG.max_rows)
-
-    for entry in entries:
-        _WANDB_VERIFIER_TABLE_BUFFER.append(
-            {
-                "group_index": int(entry.get("group_index", group_index)),
-                "prompt": str(entry.get("prompt", "")),
-                "reasoning": str(entry.get("reasoning", "")),
-                "output_text": str(entry.get("output_text", "")),
-                "score": int(entry.get("score", 0)),
-            }
-        )
-
-    if not _WANDB_VERIFIER_TABLE_BUFFER:
-        return
-    if group_index % _WANDB_VERIFIER_TABLE_CFG.log_every_n_groups != 0:
-        return
-
-    table = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS)
-    for row in _WANDB_VERIFIER_TABLE_BUFFER:
-        table.add_data(
-            row.get("group_index", 0),
-            row.get("prompt", ""),
-            row.get("reasoning", ""),
-            row.get("output_text", ""),
-            row.get("score", 0),
-        )
-    wandb.log({"tables/verifier": table, "verifier/group_index": group_index})
+    table.add_data(
+        entry.get("group_index", 0),
+        entry.get("prompt", ""),
+        entry.get("reasoning", ""),
+        entry.get("output_text", ""),
+        entry.get("score", 0),
+    )
+    wandb.log({"tables/verifier": table})
 
 
 def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> dict[str, float | int]:
@@ -724,18 +684,15 @@ class ActorLoop:
 
                 if self.cfg.wandb.use_wandb:
                     group_index_value = self.verifier_metrics_step + 1
-                    verifier_entries: list[dict[str, str | int]] = []
                     for result in rollout_results:
                         entry = getattr(result, "verifier_table_entry", None)
                         if entry:
                             entry_with_index = dict(entry)
                             entry_with_index["group_index"] = group_index_value
-                            verifier_entries.append(entry_with_index)
-                    if verifier_entries:
-                        try:
-                            _add_verifier_table_entries(verifier_entries, group_index=group_index_value)
-                        except Exception as e:
-                            logger.error(f"Failed to log verifier table entries to wandb: {e}")
+                            try: 
+                                _log_verifier_table_entry(entry_with_index)
+                            except Exception as e:
+                                logger.error(f"Failed to log verifier table entry to wandb: {e}")
 
                 
                 self.update_stats(rollout_results=rollout_results)
@@ -824,7 +781,6 @@ def run_actor_loop(cfg: DictConfig):
         run = init_wandb(cfg, exp_path / "actor", flatten_dict_config(cfg))  # type: ignore
         if run is None:
             raise ValueError("Failed to initialize wandb run")
-        _configure_wandb_verifier_table(cfg)
         wandb.define_metric("verifier/*", step_metric="verifier/group_index")
     llm_urls = str(cfg.me.llm_urls).split("+")
 
@@ -900,54 +856,41 @@ def run_actor_loop(cfg: DictConfig):
     )
     test_loop_run = None
 
-    def _handle_shutdown(signum, frame):  # noqa: ARG001
-        raise SystemExit(f"Received signal {signum}, shutting down actor loop")
+    last_regular_eval = -1
+    current_eval = -1
+    while True:
+        assert trainer_state.propagated_weight_version is not None
 
-    signal.signal(signal.SIGTERM, _handle_shutdown)
-    signal.signal(signal.SIGINT, _handle_shutdown)
-
-    try:
-        last_regular_eval = -1
-        current_eval = -1
-        while True:
-            assert trainer_state.propagated_weight_version is not None
-
-            # 1. Start a new test loop if needed
-            next_regular_eval = (
-                trainer_state.propagated_weight_version
-                if last_regular_eval == -1
-                else last_regular_eval + cfg.eval_every_n_versions
+        # 1. Start a new test loop if needed
+        next_regular_eval = (
+            trainer_state.propagated_weight_version
+            if last_regular_eval == -1
+            else last_regular_eval + cfg.eval_every_n_versions
+        )
+        if (
+            cfg.eval_every_n_versions
+            and not cfg.debug.mode
+            and trainer_state.propagated_weight_version >= next_regular_eval
+            and test_dataset
+            and test_loop_run is None
+        ):
+            logger.info("Create test loop")
+            test_loop_run = test_loop.run(
+                dataset=test_dataset,
             )
-            if (
-                cfg.eval_every_n_versions
-                and not cfg.debug.mode
-                and trainer_state.propagated_weight_version >= next_regular_eval
-                and test_dataset
-                and test_loop_run is None
-            ):
-                logger.info("Create test loop")
-                test_loop_run = test_loop.run(
-                    dataset=test_dataset,
-                )
-                train_loop.is_scheduling_paused = True
-                current_eval = next_regular_eval
+            train_loop.is_scheduling_paused = True
+            current_eval = next_regular_eval
 
-            # 2. If there is an active test loop, keep it running
-            if test_loop_run is not None:
-                try:
-                    _ = next(test_loop_run)
-                except StopIteration:
-                    # 2.1 If the test loop is finished, resume scheduling the training loop
-                    test_loop_run = None
-                    last_regular_eval = current_eval
-                    train_loop.is_scheduling_paused = False
-                    logger.info("Test loop finished")
-
-            # 3. Keep running the training loop
-            _ = next(train_loop_run)
-    finally:
-        if cfg.wandb.use_wandb and getattr(wandb, "run", None) is not None:
+        # 2. If there is an active test loop, keep it running
+        if test_loop_run is not None:
             try:
-                wandb.finish()
-            except Exception as e:
-                logger.warning(f"Failed to finish wandb run cleanly: {e}")
+                _ = next(test_loop_run)
+            except StopIteration:
+                # 2.1 If the test loop is finished, resume scheduling the training loop
+                test_loop_run = None
+                last_regular_eval = current_eval
+                train_loop.is_scheduling_paused = False
+                logger.info("Test loop finished")
+
+        # 3. Keep running the training loop
+        _ = next(train_loop_run)
