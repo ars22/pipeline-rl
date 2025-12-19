@@ -129,3 +129,5 @@ llm_grader:
     max_output_tokens: 4096
   reasoning_delimiters: []
   prompt_name: v0
+  wandb_table:
+    enabled: true

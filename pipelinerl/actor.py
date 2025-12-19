@@ -455,6 +455,11 @@ class ActorLoop:
         self.debug_mode = bool(cfg.debug.mode)
         self.verifier_metrics_step = 0
         self._last_verifier_timestep: float | None = None
+        llm_grader_cfg = cfg.get("llm_grader", None)
+        wandb_table_cfg = llm_grader_cfg.get("wandb_table", None) if llm_grader_cfg is not None else None
+        self.wandb_table_enabled = True
+        if wandb_table_cfg is not None:
+            self.wandb_table_enabled = wandb_table_cfg.get("enabled", True)
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
@@ -682,7 +687,7 @@ class ActorLoop:
                     f" {in_progress} groups in progress"
                 )
 
-                if self.cfg.wandb.use_wandb:
+                if self.cfg.wandb.use_wandb and self.wandb_table_enabled:
                     group_index_value = self.verifier_metrics_step + 1
                     for result in rollout_results:
                         entry = getattr(result, "verifier_table_entry", None)
