@@ -142,5 +142,10 @@ wandb:
   wandb_dir: null
   # Comma-separated list of keywords to tag the run.
   tags: []
-
-
+  # Logging large W&B Tables every step can explode local disk usage; keep these bounded and infrequent by default.
+  verifier_table:
+    enabled: false
+    # Keep only the most recent rows in the logged table.
+    max_rows: 200
+    # Log the table every N verifier groups (table updates create files on disk).
+    log_every_n_groups: 50
