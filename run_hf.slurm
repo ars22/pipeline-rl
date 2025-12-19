@@ -110,8 +110,8 @@ srun -w "$HOSTLIST_STR" --ntasks-per-node=1 \
     export ALL_ADDR=$ALL_ADDR
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    # Write W&B run files to node-local storage (avoids filling shared FS).
-    export WANDB_DIR="/scratch/wandb"
+    # Write W&B run files to node-local scratch per job to avoid collisions.
+    export WANDB_DIR="/scratch/$USER/$SLURM_JOB_ID/wandb"
     mkdir -p "$WANDB_DIR"
     echo "[$(hostname -s)] RANK=$RANK WORLD_SIZE=$WORLD_SIZE MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT ALL_ADDR=$ALL_ADDR"
     echo "[$(hostname -s)] WANDB_DIR=$WANDB_DIR"
