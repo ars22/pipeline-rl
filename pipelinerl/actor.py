@@ -103,12 +103,12 @@ class VerifierTableBuffer:
                 )
         return table
 
-    def log_to_wandb_summary(self) -> None:
-        """Publish the current buffer as a summary table (overwrites in place)."""
+    def log_to_wandb(self) -> None:
+        """Publish the current buffer as a table via wandb.log()."""
         if getattr(wandb, "run", None) is None:
             return
         table = self.to_wandb_table()
-        wandb.run.summary["tables/verifier_last_k"] = table
+        wandb.log({"tables/verifier_last_k": table})
 
 
 def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> dict[str, float | int]:
@@ -734,9 +734,9 @@ class ActorLoop:
                         self.verifier_table_buffer.add_group(group_entries)
                         if self.verifier_table_buffer.should_log():
                             try:
-                                self.verifier_table_buffer.log_to_wandb_summary()
+                                self.verifier_table_buffer.log_to_wandb()
                             except Exception as e:
-                                logger.error(f"Failed to log verifier table to wandb summary: {e}")
+                                logger.error(f"Failed to log verifier table to wandb: {e}")
 
                 
                 self.update_stats(rollout_results=rollout_results)
