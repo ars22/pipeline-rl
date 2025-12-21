@@ -7,7 +7,7 @@ import queue
 from queue import Empty
 import random
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 
@@ -58,31 +58,57 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 
-_WANDB_VERIFIER_TABLE = None
 _WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
 
 
-def _get_wandb_verifier_table():
-    global _WANDB_VERIFIER_TABLE
-    if getattr(wandb, "run", None) is None:
-        return None
-    if _WANDB_VERIFIER_TABLE is None:
-        _WANDB_VERIFIER_TABLE = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS, log_mode="MUTABLE")
-    return _WANDB_VERIFIER_TABLE
+class VerifierTableBuffer:
+    """
+    A bounded ring-buffer for verifier table entries.
 
+    Keeps only the last `k` groups' worth of rows. Each group can have multiple
+    rows (one per rollout). When a new group is added and the buffer exceeds `k`
+    groups, the oldest group is evicted.
+    """
 
-def _log_verifier_table_entry(entry: dict[str, str | int]):
-    table = _get_wandb_verifier_table()
-    if table is None:
-        return
-    table.add_data(
-        entry.get("group_index", 0),
-        entry.get("prompt", ""),
-        entry.get("reasoning", ""),
-        entry.get("output_text", ""),
-        entry.get("score", 0),
-    )
-    wandb.log({"tables/verifier": table})
+    def __init__(self, keep_last_k_groups: int = 50, log_every_n_groups: int = 1):
+        self.keep_last_k_groups = keep_last_k_groups
+        self.log_every_n_groups = log_every_n_groups
+        self._groups: deque[list[dict[str, str | int]]] = deque()
+        self._groups_added = 0
+
+    def add_group(self, entries: list[dict[str, str | int]]) -> None:
+        """Add a group of entries (rows) to the buffer."""
+        if not entries:
+            return
+        self._groups.append(entries)
+        self._groups_added += 1
+        while len(self._groups) > self.keep_last_k_groups:
+            self._groups.popleft()
+
+    def should_log(self) -> bool:
+        """Return True if we should log the table this group."""
+        return self._groups_added % self.log_every_n_groups == 0
+
+    def to_wandb_table(self) -> "wandb.Table":
+        """Build a wandb.Table from all rows currently in the buffer."""
+        table = wandb.Table(columns=_WANDB_VERIFIER_TABLE_COLUMNS)
+        for group_entries in self._groups:
+            for entry in group_entries:
+                table.add_data(
+                    entry.get("group_index", 0),
+                    entry.get("prompt", ""),
+                    entry.get("reasoning", ""),
+                    entry.get("output_text", ""),
+                    entry.get("score", 0),
+                )
+        return table
+
+    def log_to_wandb_summary(self) -> None:
+        """Publish the current buffer as a summary table (overwrites in place)."""
+        if getattr(wandb, "run", None) is None:
+            return
+        table = self.to_wandb_table()
+        wandb.run.summary["tables/verifier_last_k"] = table
 
 
 def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> dict[str, float | int]:
@@ -458,8 +484,16 @@ class ActorLoop:
         llm_grader_cfg = cfg.get("llm_grader", None)
         wandb_table_cfg = llm_grader_cfg.get("wandb_table", None) if llm_grader_cfg is not None else None
         self.wandb_table_enabled = True
+        keep_last_k_groups = 50
+        log_every_n_groups = 1
         if wandb_table_cfg is not None:
             self.wandb_table_enabled = wandb_table_cfg.get("enabled", True)
+            keep_last_k_groups = wandb_table_cfg.get("keep_last_k_groups", 50)
+            log_every_n_groups = wandb_table_cfg.get("log_every_n_groups", 1)
+        self.verifier_table_buffer = VerifierTableBuffer(
+            keep_last_k_groups=keep_last_k_groups,
+            log_every_n_groups=log_every_n_groups,
+        )
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
@@ -689,15 +723,20 @@ class ActorLoop:
 
                 if self.cfg.wandb.use_wandb and self.wandb_table_enabled:
                     group_index_value = self.verifier_metrics_step + 1
+                    group_entries: list[dict[str, str | int]] = []
                     for result in rollout_results:
                         entry = getattr(result, "verifier_table_entry", None)
                         if entry:
                             entry_with_index = dict(entry)
                             entry_with_index["group_index"] = group_index_value
-                            try: 
-                                _log_verifier_table_entry(entry_with_index)
+                            group_entries.append(entry_with_index)
+                    if group_entries:
+                        self.verifier_table_buffer.add_group(group_entries)
+                        if self.verifier_table_buffer.should_log():
+                            try:
+                                self.verifier_table_buffer.log_to_wandb_summary()
                             except Exception as e:
-                                logger.error(f"Failed to log verifier table entry to wandb: {e}")
+                                logger.error(f"Failed to log verifier table to wandb summary: {e}")
 
                 
                 self.update_stats(rollout_results=rollout_results)
