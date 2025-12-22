@@ -10,23 +10,24 @@ defaults:
 
 model_path: Qwen/Qwen3-4B-Thinking-2507
 # Eval every 25 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
-eval_every_n_versions: 0 #12800
+eval_every_n_versions: 12800
 
 preprocess:
   shared_memory_entry_size: 2000000000
-
-rl:
-  entropy_bonus: 0.0001
-  overlong_filtering: true
 
 finetune:
   attempts: 16
   train_batch_size: 32
   valid_batch_size: 32
   gradient_accumulation_passes: 16
-  seq_length: 66304
-  seq_parallel: 4
+  seq_length: 49920
+  seq_parallel: 2
   learning_rate: 1.0e-6
+  lr_scheduler_type: constant_with_warmup
+  num_warmup_steps: 0
+  rl:
+    entropy_bonus: 0.0001
+    overlong_filtering: false
   save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
@@ -37,12 +38,12 @@ finetune:
 
 llm:
   parameters:
-    max_tokens: 65536 
+    max_tokens: 49152 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 65536
+    max_tokens: 49152
     temperature: 0.8 
     top_p: 0.95
     top_k: 20
@@ -59,7 +60,7 @@ llm_grader:
     gpu-memory-utilization: 0.9
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 73728 # Assume max proof length of 24576 tokens 
+    max_output_tokens: 81920
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
@@ -67,7 +68,7 @@ llm_grader:
   wandb_table:
     enabled: true
     keep_last_k_groups: 32
-    log_every_n_groups: 1 # Change to 32
+    log_every_n_groups: 32
 
 
 actor:
