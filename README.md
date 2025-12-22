@@ -1,9 +1,10 @@
+
+
+## TODO List for Reasoning Cache
+[] Create an actor that with separate pipelines for the different turns.
+[] Add logic to subsample the prompts and send it to standard actor.
+
 # CMU-AIRe Setup
-
-## TODO List
-[] Unify the data loading mechanism
-[] Separate the logging mechanism for different dataset sources (e.g., different benchmarks)
-
 
 - Follow the conda environment and other setup instructions below. 
 - For multinode training use the file ```run_multi_slurm.sh```.
