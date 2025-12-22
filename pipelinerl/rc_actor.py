@@ -125,6 +125,84 @@ def _log_group_verifier_metrics(metrics: dict[str, float | int]):
     wandb.log(dict(metrics))
 
 
+
+class InferenceProblemState:
+    """A helper class to track the inference progress for a single problem."""
+    
+    def __init__(
+        self,
+        problem: str,
+        reasoning_prompt_template: str,
+        summarization_prompt_template: str,
+        problem_id: str,
+        prompt_id: str,
+        sample_id: str,
+        label: str,
+        starting_step: int,
+        use_think_tags: bool = False,
+    ):
+        self.problem = problem
+        self.reasoning_prompt_template = reasoning_prompt_template
+        self.summarization_prompt_template = summarization_prompt_template
+        self.problem_id = problem_id
+        self.prompt_id = prompt_id
+        self.sample_id = sample_id
+        self.label = label
+        self.starting_step = starting_step
+
+        self.curr_summary = ""
+        self.curr_reasoning = ""
+        self.final_reward = None
+
+        self.reasoning_rollout_store = []
+        self.summarization_rollout_store = []
+        self.reasoning_string_store = []
+        self.summarization_string_store = []
+        self.reasoning_string_complete_store = []
+        self.summarization_string_complete_store = []
+
+    def update_reasoning(self, rollouts: list[RolloutResult], response_string: str):
+        self.reasoning_rollout_store.append(rollouts)
+        self.reasoning_string_complete_store.append(response_string)
+        processed_response_string = response_string.replace("<think>", "")
+        if "</think>" in processed_response_string:
+            processed_response_string = processed_response_string.split("</think>")[0]
+        self.curr_reasoning = processed_response_string.strip()
+        self.reasoning_string_store.append(self.curr_reasoning)
+
+    def update_summarization(self, rollouts: list[RolloutResult], response_string: str):
+        self.summarization_rollout_store.append(rollouts)
+        self.summarization_string_complete_store.append(response_string)
+        processed_response_string = response_string.replace("<think>", "").replace("</think>", "").strip()
+        self.curr_summary = processed_response_string
+        self.summarization_string_store.append(self.curr_summary)
+
+    def get_filled_reasoning_prompt(self) -> str:
+        return self.reasoning_prompt_template.format(
+            problem=self.problem,
+            curr_summary=self.curr_summary,
+        )
+
+    def get_filled_summarization_prompt(self) -> str:
+        curr_chunk = self.curr_reasoning
+        return self.summarization_prompt_template.format(
+            problem=self.problem,
+            existing_summary=self.curr_summary, 
+            reasoning=curr_chunk.strip()
+        )
+
+    def reset_stores(self):
+        self.reasoning_rollout_store = []
+        self.summarization_rollout_store = []
+        self.reasoning_string_store = []
+        self.summarization_string_store = []
+    
+    def __repr__(self) -> str:
+        return f"InferenceProblemState(problem_id={self.problem_id}, prompt_id={self.prompt_id}, \
+            sample_id={self.sample_id}, label={self.label}, starting_step={self.starting_step})"
+
+
+
 class SlidingWindowData(BaseModel):
     prompt_tokens_window: list[list[int]] = Field(
         default_factory=list,
