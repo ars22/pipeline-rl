@@ -131,25 +131,24 @@ class InferenceProblemState:
     
     def __init__(
         self,
-        problem: str,
+        problem_text: str,
+        answer: str,
+        dataset_name: str,
         reasoning_prompt_template: str,
         summarization_prompt_template: str,
-        problem_id: str,
-        prompt_id: str,
-        sample_id: str,
-        label: str,
+        problem_id: int,
+        sample_id: int,
         starting_step: int,
         use_think_tags: bool = False,
     ):
-        self.problem = problem
+        self.problem_text = problem_text
         self.reasoning_prompt_template = reasoning_prompt_template
         self.summarization_prompt_template = summarization_prompt_template
         self.problem_id = problem_id
-        self.prompt_id = prompt_id
         self.sample_id = sample_id
-        self.label = label
         self.starting_step = starting_step
-
+        self.answer = answer
+        self.dataset_name = dataset_name
         self.curr_summary = ""
         self.curr_reasoning = ""
         self.final_reward = None
@@ -198,8 +197,8 @@ class InferenceProblemState:
         self.summarization_string_store = []
     
     def __repr__(self) -> str:
-        return f"InferenceProblemState(problem_id={self.problem_id}, prompt_id={self.prompt_id}, \
-            sample_id={self.sample_id}, label={self.label}, starting_step={self.starting_step})"
+        return f"InferenceProblemState(problem_id={self.problem_id}, problem_text={self.problem_text}, \
+            sample_id={self.sample_id}, starting_step={self.starting_step}, answer={self.answer}, dataset_name={self.dataset_name})"
 
 
 
@@ -276,13 +275,13 @@ async def schedule_rollouts(
     llms: list[TrainableLLM],
     scheduler_name: str,
 ):
-    """This courotuine does the following.
+    """This routine schedules rollouts for a given problem queue and result queue.
 
-    - It run asyncio loop for doing many rollouts in parallel using llm_async_generate
+    - It runs an asyncio loop for doing many rollouts in parallel using llm_async_generate
     - For each problem it does exactly `attempts` rollouts (let's call this a group)
-    - It keeps track of how many rollout coroutines are running for each llms
-    - it uses the LLM that has the least number of running coroutines for each new rollout
-    - when all LLMs are busy it does nothing
+    - It keeps track of how many rollout coroutines are running for each LLM
+    - It uses the LLM that has the least number of running coroutines for each new rollout
+    - When all LLMs are busy it does nothing
     - It keeps track of how many rollouts are done for each group
     - When the group is done it puts the result in the result queue
     """
@@ -290,12 +289,16 @@ async def schedule_rollouts(
 
     # Track active tasks per LLM
     active_rollouts = [0] * len(llms)
-    started_rollouts = 0
-    finished_rollouts = 0
+    started_solution_rollouts = [0] * len(llms)
+    started_summarization_rollouts = [0] * len(llms)
+    finished_solution_rollouts = [0] * len(llms)
+    finished_summarization_rollouts = [0] * len(llms)
     # Track rollouts per problem group
     group_rollouts = {}
-    rollout_policy = hydra.utils.get_method(cfg.actor.rollout_policy)
-    logger.info(f"Use rollout policy: {rollout_policy}")
+    solution_rollout_policy = hydra.utils.get_method(cfg.actor.solution_rollout_policy)
+    summarization_rollout_policy = hydra.utils.get_method(cfg.actor.summarization_rollout_policy)
+    logger.info(f"Use solution rollout policy: {solution_rollout_policy}")
+    logger.info(f"Use summarization rollout policy: {summarization_rollout_policy}")
 
     max_retries = cfg.actor.get("max_retries", 3)
     retry_base_delay = cfg.actor.get("retry_base_delay", 1.0)
@@ -312,7 +315,7 @@ async def schedule_rollouts(
         session: aiohttp.ClientSession,
         requeue_count: int = 0,
     ):
-        nonlocal started_rollouts, finished_rollouts
+        nonlocal started_solution_rollouts, started_summarization_rollouts, finished_solution_rollouts, finished_summarization_rollouts
         try:
             llm = llms[llm_index]
             model_version = trainer_state.propagated_weight_version
@@ -322,7 +325,10 @@ async def schedule_rollouts(
             last_error = None
             for attempt in range(max_retries):
                 try:
-                    rollout_result = await rollout_policy(cfg, llm, problem, session)
+                    solution_rollout_result = await solution_rollout_policy(cfg, llm, problem, session)
+                    processed_solution_rollout_result = process_solution_rollout_result(solution_rollout_result)
+                    summarization_problem = create_summarization_problem(processed_solution_rollout_result)
+                    summarization_rollout_result = await summarization_rollout_policy(cfg, llm, summarization_problem, session)
                     break
                 except Exception as e:
                     last_error = e
@@ -358,7 +364,7 @@ async def schedule_rollouts(
                 random.shuffle(group_rollouts[group_id])
                 result_queue.put(group_rollouts[group_id])
                 del group_rollouts[group_id]
-            finished_rollouts += 1
+            finished_solution_rollouts += 1
         except TRANSIENT_EXCEPTIONS as e:
             # Transient errors (HTTP/connection issues) that exhausted retries.
             # Re-queue the rollout to try again later, up to MAX_REQUEUE_ATTEMPTS times.
@@ -511,7 +517,7 @@ def sequential_iter(problems: list):
         yield problem
 
 
-class ActorLoop:
+class RCActorLoop:
     def __init__(
         self,
         cfg: DictConfig,
@@ -519,11 +525,17 @@ class ActorLoop:
         data_stream: StreamSpec,
         stats_stream: StreamSpec,
         trainer_state: TrainerState,
+        reasoning_prompt_template: str,
+        summarization_prompt_template: str,
         is_training: bool = True,
+        use_think_tags: bool = False,
     ) -> None:
         self.data_stream = data_stream
         self.trainer_state = trainer_state
         self.stats_stream = stats_stream
+        self.reasoning_prompt_template = reasoning_prompt_template
+        self.summarization_prompt_template = summarization_prompt_template
+        self.use_think_tags = use_think_tags
         self.sliding_aggregator = SlidingWindowAggregator(window_size=cfg.actor.throughput_window_size)
         self.llms = llms
         self.loop_start_time = -1
@@ -536,7 +548,7 @@ class ActorLoop:
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
-        attempts = self.cfg.attempts if is_training else 1
+        attempts = 1 # for online RC, always use 1 attempt
 
         # Divide LLMs approximately equally across processes
         llm_groups = [[] for _ in range(num_processes)]
@@ -551,7 +563,7 @@ class ActorLoop:
         self.problem_queue = SharedMemoryQueue(self.smm, self.cfg.actor.problem_queue_size, cfg.actor.shared_memory_entry_size)
         self.result_queue = SharedMemoryQueue(self.smm, self.cfg.actor.result_queue_size, cfg.actor.shared_memory_entry_size)
         
-        logger.info(f"Initialized {'train' if self.is_training else 'test'} actor loop")
+        logger.info(f"Initialized {'train' if self.is_training else 'test'} RC actor loop")
         logger.info(f"Problem queue size: {self.problem_queue.max_size}, result queue size: {self.result_queue.max_size}")
         logger.info(f"Result queue buffer size: {self.result_queue.get_memory_size() / 2**30} Gb")
 
@@ -562,7 +574,7 @@ class ActorLoop:
             llm_idxs = [llm[0] for llm in llm_group]
             llms = [llm[1] for llm in llm_group]
             scheduler_name = (
-                f"{'train' if is_training else 'test'} scheduler for llms {','.join([str(i) for i in llm_idxs])}"
+                f"{'train' if self.is_training else 'test'} RC scheduler for llms {','.join([str(i) for i in llm_idxs])}"
             )
             process = mp.Process(
                 target=rollout_maker_entrypoint,
@@ -647,12 +659,63 @@ class ActorLoop:
         return
 
 
+    def create_rc_rollout_state(self, existing_state: InferenceProblemState, thinking_ind: int, summary_ind: int) -> InferenceProblemState:
+        """
+        Create a snapshot of the current state of the problem for RC.
+        """
+
+        thinking_strings = existing_state.reasoning_string_store
+        summarization_strings = existing_state.summarization_string_store
+
+        snapshot = {
+            "problem_text": existing_state.problem_text,
+            "problem_id": existing_state.problem_id,
+            "sample_id": 0,
+            "starting_step": existing_state.starting_step,
+        }
+
+        snapshot_state = InferenceProblemState(
+            **snapshot,
+            reasoning_prompt_template=self.reasoning_prompt_template,
+            summarization_prompt_template=self.summarization_prompt_template,
+            use_think_tags=self.use_think_tags
+        )
+
+        if len(thinking_strings) > 0:
+            snapshot_state.curr_reasoning = thinking_strings[thinking_ind - 1] if thinking_ind > 0 else ""
+        if len(summarization_strings) > 0:
+            snapshot_state.curr_summary = summarization_strings[summary_ind - 1] if summary_ind > 0 else ""
+        return snapshot_state
+
+
+    def init_rc_rollout_state(
+        self,
+        problem: dict
+    ) -> InferenceProblemState:
+        """
+        Prepare init state for an RC rollout.
+        """
+        
+        state = InferenceProblemState(
+            problem_text=problem['task'],
+            problem_id=problem['id'],
+            answer=problem['answer'],
+            dataset_name=problem['dataset'],
+            sample_id=0,
+            reasoning_prompt_template=self.reasoning_prompt_template,
+            summarization_prompt_template=self.summarization_prompt_template,
+            use_think_tags=self.use_think_tags,
+            starting_step=0
+        )
+        
+        return state
+
 
     def run(self, dataset: list[tuple[str, dict]]):
         loop_start_time = time.time()
         self.init_stats()
 
-        attempts = self.cfg.attempts if self.is_training else 1
+        attempts = 1 # for online RC, always use 1 attempt
         published_samples = 0
         submitted_groups = 0
         finished_groups = 0
@@ -671,32 +734,7 @@ class ActorLoop:
         assert self.trainer_state.propagated_weight_version is not None
 
         last_trainer_version = self.trainer_state.propagated_weight_version
-        max_lag = self.cfg.finetune.max_lag if self.is_training else None
-        if max_lag is not None:
-            total_batch_size = self.cfg.finetune.train_batch_size * self.cfg.finetune.gradient_accumulation_passes
-            total_update_size = (
-                math.ceil(self.cfg.finetune.weight_update_interval / total_batch_size) * total_batch_size
-            )
-            if total_batch_size % self.cfg.attempts != 0:
-                logger.warning(
-                    f"I'm trying to submit the exact right number of groups for this batch."
-                    f" The attempt number  {self.cfg.attempts} ideally should divide"
-                    f" total batch size {total_batch_size}"
-                )
-            groups_per_update = math.ceil(total_update_size / self.cfg.attempts)
-            lag_groups = math.ceil(self.cfg.finetune.max_lag / self.cfg.attempts)
-            logger.info(
-                f"Sync RL mode on, can submit {groups_per_update} groups for each update,"
-                f" that makes {groups_per_update * self.cfg.attempts} samples per update"
-            )
-            logger.info(
-                f"Max lag is {self.cfg.finetune.max_lag} samples, that makes {lag_groups} additional starting chunks"
-            )
-            can_submit_before_update = lag_groups + groups_per_update
-        else:
-            groups_per_update = None
-            can_submit_before_update = math.inf
-
+        
         logger.info(f"Start {'train' if self.is_training else 'test'} actor loop")
         with (
             write_to_streams(self.data_stream, "a") as data_stream_writer,
@@ -707,9 +745,6 @@ class ActorLoop:
                 yield
 
                 if self.trainer_state.propagated_weight_version > last_trainer_version:
-                    if max_lag is not None:
-                        assert groups_per_update is not None
-                        can_submit_before_update += groups_per_update
                     # the weights have been updated, publish the stats of the previous trainer version
                     trainer_version_to_publish = last_trainer_version
                     last_trainer_version = self.trainer_state.propagated_weight_version
@@ -717,12 +752,14 @@ class ActorLoop:
                 # First, submit all problems you can until the problem queue is full
                 if not self.is_scheduling_paused:
                     while True:
-                        blocked_by_lag = submitted_groups == can_submit_before_update and self.is_training
-                        if not blocked_by_lag and not self.problem_queue.full():
+                        if not self.problem_queue.full():
                             try:
                                 try:
                                     problem = next(problem_iter)
-                                    self.problem_queue.put(problem, block=False)
+                                    init_problem_state = self.init_rc_rollout_state(
+                                        problem=problem
+                                    )
+                                    self.problem_queue.put(init_problem_state, block=False)
                                     submitted_groups += 1
                                 except queue.Full:            
                                     assert False, "Problem queue was not full just a moment ago, but now it is full"
