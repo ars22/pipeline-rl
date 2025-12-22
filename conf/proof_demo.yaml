@@ -52,6 +52,10 @@ llm_grader:
     reasoning:
       effort: medium
   prompt_name: v0
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 16
+    log_every_n_groups: 4
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout

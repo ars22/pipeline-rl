@@ -71,8 +71,8 @@ class VerifierTableBuffer:
     """
 
     def __init__(self, keep_last_k_groups: int = 50, log_every_n_groups: int = 1):
-        self.keep_last_k_groups = keep_last_k_groups
-        self.log_every_n_groups = log_every_n_groups
+        self.keep_last_k_groups = max(0, int(keep_last_k_groups))
+        self.log_every_n_groups = max(1, int(log_every_n_groups))
         self._groups: deque[list[dict[str, str | int]]] = deque()
         self._groups_added = 0
 
@@ -722,7 +722,7 @@ class ActorLoop:
                 )
 
                 if self.cfg.wandb.use_wandb and self.wandb_table_enabled:
-                    group_index_value = self.verifier_metrics_step + 1
+                    group_index_value = finished_groups + 1
                     group_entries: list[dict[str, str | int]] = []
                     for result in rollout_results:
                         entry = getattr(result, "verifier_table_entry", None)
