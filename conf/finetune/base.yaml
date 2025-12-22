@@ -113,23 +113,3 @@ rl:
   temperature: ${...llm.parameters.temperature}
   aggregate_loss: sum
   overlong_filtering: false
-
-llm_grader:
-  name: null
-  vllm_kwargs:
-    num_nodes: 1
-    tensor-parallel-size: 1
-    data-parallel-size: 1
-    max-num-batched-tokens: 8192
-    max-num-seqs: 16
-    max-model-len: 32768
-    gpu-memory-utilization: 0.85
-  sampling_kwargs:
-    temperature: 1.0
-    max_output_tokens: 4096
-  reasoning_delimiters: []
-  prompt_name: v0
-  wandb_table:
-    enabled: true
-    keep_last_k_groups: 50
-    log_every_n_groups: 1
