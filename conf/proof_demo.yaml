@@ -51,7 +51,7 @@ llm_grader:
     max_output_tokens: 32768
     reasoning:
       effort: medium
-  prompt_name: v0
+  prompt_name: v1
   wandb_table:
     enabled: true
     keep_last_k_groups: 16
@@ -59,7 +59,6 @@ llm_grader:
 
 actor:
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
-  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
     {task}
 environment:
