@@ -28,6 +28,10 @@ llm:
   parameters:
     max_tokens: 8192
     temperature: 0.8
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 16
+    log_every_n_groups: 4
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
