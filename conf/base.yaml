@@ -45,11 +45,16 @@ preprocess:
 llm:
   parameters:
     # changed
-    max_tokens: 16384 
+    max_tokens: 16384
     # 8192
     # changed
-    temperature: 0.8 
+    temperature: 0.8
     # 1.0
+  reasoning_delimiters: null
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 32
+    log_every_n_groups: 32
 test_llm:
   parameters: 
     max_tokens: 16000

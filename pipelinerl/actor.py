@@ -59,6 +59,49 @@ logger = logging.getLogger(__name__)
 
 
 _WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
+_WANDB_ROLLOUT_TABLE_COLUMNS = [
+    "group_index",
+    "prompt",
+    "prompt_tokens",
+    "reasoning",
+    "reasoning_tokens",
+    "output",
+    "output_tokens",
+    "total_tokens",
+]
+
+
+def split_reasoning_output(
+    completion_text: str, reasoning_delimiters: list[str] | None
+) -> tuple[str, str]:
+    """
+    Split completion text into reasoning and output parts using reasoning delimiters.
+
+    Matching current "strip reasoning" semantics:
+    - Iterate delimiters in list order; for the first delimiter that appears in the text,
+      split on the **last** occurrence:
+      - reasoning = text before delimiter (stripped)
+      - output = text after delimiter (stripped)
+    - If no delimiter matches (or delimiters unset/empty):
+      - reasoning = ""
+      - output = completion_text.strip()
+
+    Args:
+        completion_text: The full completion text from the LLM.
+        reasoning_delimiters: List of delimiter strings (e.g., ["</think>"]).
+
+    Returns:
+        Tuple of (reasoning, output) strings.
+    """
+    if not reasoning_delimiters:
+        return "", completion_text.strip()
+
+    for delim in reasoning_delimiters:
+        if delim in completion_text:
+            prefix, suffix = completion_text.rsplit(delim, 1)
+            return prefix.strip(), suffix.strip()
+
+    return "", completion_text.strip()
 
 
 class VerifierTableBuffer:
@@ -109,6 +152,59 @@ class VerifierTableBuffer:
             return
         table = self.to_wandb_table()
         wandb.log({"tables/verifier_last_k": table})
+
+
+class RolloutTableBuffer:
+    """
+    A bounded ring-buffer for actor rollout table entries.
+
+    Keeps only the last `k` groups' worth of rows. Each group can have multiple
+    rows (one per rollout). When a new group is added and the buffer exceeds `k`
+    groups, the oldest group is evicted.
+    """
+
+    def __init__(self, keep_last_k_groups: int = 32, log_every_n_groups: int = 32):
+        self.keep_last_k_groups = max(0, int(keep_last_k_groups))
+        self.log_every_n_groups = max(1, int(log_every_n_groups))
+        self._groups: deque[list[dict[str, str | int]]] = deque()
+        self._groups_added = 0
+
+    def add_group(self, entries: list[dict[str, str | int]]) -> None:
+        """Add a group of entries (rows) to the buffer."""
+        if not entries:
+            return
+        self._groups.append(entries)
+        self._groups_added += 1
+        while len(self._groups) > self.keep_last_k_groups:
+            self._groups.popleft()
+
+    def should_log(self) -> bool:
+        """Return True if we should log the table this group."""
+        return self._groups_added % self.log_every_n_groups == 0
+
+    def to_wandb_table(self) -> "wandb.Table":
+        """Build a wandb.Table from all rows currently in the buffer."""
+        table = wandb.Table(columns=_WANDB_ROLLOUT_TABLE_COLUMNS)
+        for group_entries in self._groups:
+            for entry in group_entries:
+                table.add_data(
+                    entry.get("group_index", 0),
+                    entry.get("prompt", ""),
+                    entry.get("prompt_tokens", 0),
+                    entry.get("reasoning", ""),
+                    entry.get("reasoning_tokens", 0),
+                    entry.get("output", ""),
+                    entry.get("output_tokens", 0),
+                    entry.get("total_tokens", 0),
+                )
+        return table
+
+    def log_to_wandb(self) -> None:
+        """Publish the current buffer as a table via wandb.log()."""
+        if getattr(wandb, "run", None) is None:
+            return
+        table = self.to_wandb_table()
+        wandb.log({"tables/rollouts_last_k": table})
 
 
 def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> dict[str, float | int]:
@@ -495,6 +591,40 @@ class ActorLoop:
             log_every_n_groups=log_every_n_groups,
         )
 
+        # Setup rollout table buffer for actor rollouts
+        llm_cfg = cfg.get("llm", None)
+        rollout_wandb_table_cfg = llm_cfg.get("wandb_table", None) if llm_cfg is not None else None
+        self.rollout_table_enabled = True
+        rollout_keep_last_k_groups = 32
+        rollout_log_every_n_groups = 32
+        if rollout_wandb_table_cfg is not None:
+            self.rollout_table_enabled = rollout_wandb_table_cfg.get("enabled", True)
+            rollout_keep_last_k_groups = rollout_wandb_table_cfg.get("keep_last_k_groups", 32)
+            rollout_log_every_n_groups = rollout_wandb_table_cfg.get("log_every_n_groups", 32)
+        self.rollout_table_buffer = RolloutTableBuffer(
+            keep_last_k_groups=rollout_keep_last_k_groups,
+            log_every_n_groups=rollout_log_every_n_groups,
+        )
+
+        # Get reasoning delimiters: primary from llm.reasoning_delimiters, fallback to llm_grader.reasoning_delimiters
+        self.reasoning_delimiters: list[str] | None = None
+        if llm_cfg is not None:
+            delims = llm_cfg.get("reasoning_delimiters", None)
+            if delims:
+                self.reasoning_delimiters = list(delims)
+        if self.reasoning_delimiters is None and llm_grader_cfg is not None:
+            delims = llm_grader_cfg.get("reasoning_delimiters", None)
+            if delims:
+                self.reasoning_delimiters = list(delims)
+
+        # Load tokenizer for counting reasoning/output tokens
+        self._tokenizer = None
+        if self.rollout_table_enabled:
+            try:
+                self._tokenizer = llms[0].load_tokenizer()
+            except Exception as e:
+                logger.warning(f"Failed to load tokenizer for rollout table token counting: {e}")
+
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
         attempts = self.cfg.attempts if is_training else 1
@@ -738,7 +868,61 @@ class ActorLoop:
                             except Exception as e:
                                 logger.error(f"Failed to log verifier table to wandb: {e}")
 
-                
+                # Log rollout table entries
+                if self.cfg.wandb.use_wandb and self.rollout_table_enabled:
+                    group_index_value = finished_groups + 1
+                    rollout_group_entries: list[dict[str, str | int]] = []
+                    for result in rollout_results:
+                        if not result.training_texts:
+                            continue
+                        # Use the last TrainingText in the rollout
+                        training_text = result.training_texts[-1]
+                        prompt = training_text.prompt_text
+                        completion = training_text.output_text
+                        prompt_tokens = training_text.prompt_tokens
+                        total_tokens = training_text.output_tokens
+
+                        # Split completion into reasoning and output
+                        reasoning, output = split_reasoning_output(
+                            completion, self.reasoning_delimiters
+                        )
+
+                        # Count reasoning_tokens and output_tokens using tokenizer
+                        reasoning_tokens = 0
+                        output_tokens = 0
+                        if self._tokenizer is not None:
+                            try:
+                                if reasoning:
+                                    reasoning_tokens = len(
+                                        self._tokenizer.encode(reasoning, add_special_tokens=False)
+                                    )
+                                if output:
+                                    output_tokens = len(
+                                        self._tokenizer.encode(output, add_special_tokens=False)
+                                    )
+                            except Exception as e:
+                                logger.warning(f"Failed to tokenize for rollout table: {e}")
+
+                        rollout_entry: dict[str, str | int] = {
+                            "group_index": group_index_value,
+                            "prompt": prompt,
+                            "prompt_tokens": prompt_tokens,
+                            "reasoning": reasoning,
+                            "reasoning_tokens": reasoning_tokens,
+                            "output": output,
+                            "output_tokens": output_tokens,
+                            "total_tokens": total_tokens,
+                        }
+                        rollout_group_entries.append(rollout_entry)
+
+                    if rollout_group_entries:
+                        self.rollout_table_buffer.add_group(rollout_group_entries)
+                        if self.rollout_table_buffer.should_log():
+                            try:
+                                self.rollout_table_buffer.log_to_wandb()
+                            except Exception as e:
+                                logger.error(f"Failed to log rollout table to wandb: {e}")
+
                 self.update_stats(rollout_results=rollout_results)
                 self.log_verifier_metrics_for_group(rollout_results)
 
