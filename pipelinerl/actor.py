@@ -70,7 +70,7 @@ class VerifierTableBuffer:
     groups, the oldest group is evicted.
     """
 
-    def __init__(self, keep_last_k_groups: int = 50, log_every_n_groups: int = 1):
+    def __init__(self, keep_last_k_groups: int = 32, log_every_n_groups: int = 32):
         self.keep_last_k_groups = max(0, int(keep_last_k_groups))
         self.log_every_n_groups = max(1, int(log_every_n_groups))
         self._groups: deque[list[dict[str, str | int]]] = deque()
@@ -484,12 +484,12 @@ class ActorLoop:
         llm_grader_cfg = cfg.get("llm_grader", None)
         wandb_table_cfg = llm_grader_cfg.get("wandb_table", None) if llm_grader_cfg is not None else None
         self.wandb_table_enabled = True
-        keep_last_k_groups = 50
-        log_every_n_groups = 1
+        keep_last_k_groups = 32
+        log_every_n_groups = 32
         if wandb_table_cfg is not None:
             self.wandb_table_enabled = wandb_table_cfg.get("enabled", True)
-            keep_last_k_groups = wandb_table_cfg.get("keep_last_k_groups", 50)
-            log_every_n_groups = wandb_table_cfg.get("log_every_n_groups", 1)
+            keep_last_k_groups = wandb_table_cfg.get("keep_last_k_groups", 32)
+            log_every_n_groups = wandb_table_cfg.get("log_every_n_groups", 32)
         self.verifier_table_buffer = VerifierTableBuffer(
             keep_last_k_groups=keep_last_k_groups,
             log_every_n_groups=log_every_n_groups,
