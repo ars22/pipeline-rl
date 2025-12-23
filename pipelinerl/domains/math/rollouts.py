@@ -14,18 +14,16 @@ from pipelinerl.async_llm import llm_async_generate, make_training_text
 from .verifier_api import verify_answer_rpc, verify_proof, parse_schema
 
 def remove_reasoning(completion: str, reasoning_delimiters: list[str] = None) -> str:
-    if reasoning_delimiters is not None:
+    # Treat empty lists like None (no delimiter-based stripping).
+    if not reasoning_delimiters:
+        return completion
+    else:
         # Split final answer from reasoning content
-        is_reasoning_complete = False
         for delim in reasoning_delimiters:
             if delim in completion:
                 completion = completion.split(delim)[-1]
-                is_reasoning_complete = True
                 return completion.strip()
-        if not is_reasoning_complete:
-            return ""
-    else:
-        return completion
+        return ""
     
 
 class Metrics(BaseMetrics):
