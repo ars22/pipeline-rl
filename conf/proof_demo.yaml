@@ -61,6 +61,8 @@ actor:
   system_prompt: null
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   task_template: |-
+    Generate a rigorous proof to the following question:
+
     {task}
 environment:
   _target_: pipelinerl.domains.math.MathProofEnvironment
