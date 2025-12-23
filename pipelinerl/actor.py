@@ -674,7 +674,12 @@ class ActorLoop:
         if not self.llms:
             return
         try:
-            self._tokenizer = self.llms[0].load_tokenizer()
+            loaded = self.llms[0].load_tokenizer()
+            self._tokenizer = loaded or getattr(self.llms[0], "tokenizer", None)
+            if self._tokenizer is None:
+                logger.warning(
+                    "Tokenizer load succeeded but no tokenizer was set on the LLM; rollout token counts will be 0"
+                )
         except Exception as e:
             logger.warning(f"Failed to load tokenizer for rollout table token counting: {e}")
 
