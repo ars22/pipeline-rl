@@ -71,7 +71,7 @@ llm_grader:
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 4096
-  reasoning_delimiters: []
+  reasoning_delimiters: null
   prompt_name: v0
   wandb_table:
     enabled: true
