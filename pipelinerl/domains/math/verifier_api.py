@@ -407,7 +407,7 @@ async def verify_proof(
     """
 
     collect_metrics = _should_collect_metrics(log_wandb_metrics)
-    collect_table_entry_effective = collect_metrics if collect_table_entry is None else collect_table_entry
+    should_collect_table_entry = collect_metrics if collect_table_entry is None else collect_table_entry
 
     if len(generation.strip()) == 0:
         rollout_metrics = _build_rollout_metrics(success=False, failure_causes=["no_input"], num_retries=0)
@@ -474,7 +474,7 @@ async def verify_proof(
             if match:
                 score = int(match.group(1))
                 table_entry = None
-                if collect_table_entry_effective:
+                if should_collect_table_entry:
                     reasoning_text = _extract_reasoning_from_response(response)
                     table_entry = {
                         "prompt": prompt_text,
@@ -494,7 +494,7 @@ async def verify_proof(
                 )
             else:
                 table_entry = None
-                if collect_table_entry_effective:
+                if should_collect_table_entry:
                     reasoning_text = _extract_reasoning_from_response(response)
                     table_entry = {
                         "prompt": prompt_text,

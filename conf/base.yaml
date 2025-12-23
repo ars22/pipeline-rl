@@ -75,8 +75,8 @@ llm_grader:
   prompt_name: v0
   wandb_table:
     enabled: true
-    keep_last_k_groups: 50
-    log_every_n_groups: 1
+    keep_last_k_groups: 32
+    log_every_n_groups: 32
 
 vllm_config:
   use_v1: false

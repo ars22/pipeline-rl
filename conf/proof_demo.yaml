@@ -58,6 +58,7 @@ llm_grader:
     log_every_n_groups: 4
 
 actor:
+  system_prompt: null
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   task_template: |-
     {task}
