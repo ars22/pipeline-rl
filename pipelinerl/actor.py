@@ -97,6 +97,8 @@ def split_reasoning_output(
         return "", completion_text.strip()
 
     for delim in reasoning_delimiters:
+        if not delim:
+            continue
         if delim in completion_text:
             prefix, suffix = completion_text.rsplit(delim, 1)
             return prefix.strip(), suffix.strip()
@@ -619,11 +621,7 @@ class ActorLoop:
 
         # Load tokenizer for counting reasoning/output tokens
         self._tokenizer = None
-        if self.rollout_table_enabled:
-            try:
-                self._tokenizer = llms[0].load_tokenizer()
-            except Exception as e:
-                logger.warning(f"Failed to load tokenizer for rollout table token counting: {e}")
+        self._tokenizer_load_attempted = False
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
@@ -661,6 +659,24 @@ class ActorLoop:
             )
             process.start()
             self.rollout_processes.append(process)
+
+    def _maybe_load_rollout_tokenizer(self) -> None:
+        """
+        Lazily load a tokenizer for rollout table token counting.
+
+        Important: this must happen after starting rollout worker processes to avoid
+        forking/spawning with a loaded tokenizer (which can be non-pickleable or
+        unsafe to fork depending on backend).
+        """
+        if self._tokenizer is not None or self._tokenizer_load_attempted:
+            return
+        self._tokenizer_load_attempted = True
+        if not self.llms:
+            return
+        try:
+            self._tokenizer = self.llms[0].load_tokenizer()
+        except Exception as e:
+            logger.warning(f"Failed to load tokenizer for rollout table token counting: {e}")
 
     def init_stats(self):
         self.stats = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -870,6 +886,7 @@ class ActorLoop:
 
                 # Log rollout table entries
                 if self.cfg.wandb.use_wandb and self.rollout_table_enabled:
+                    self._maybe_load_rollout_tokenizer()
                     group_index_value = finished_groups + 1
                     rollout_group_entries: list[dict[str, str | int]] = []
                     for result in rollout_results:
