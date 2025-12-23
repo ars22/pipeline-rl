@@ -255,7 +255,7 @@ def load_datasets(
             if config is not None:
                 load_args += (config,)
             dataset = load_dataset(*load_args, split=split, trust_remote_code=trust_remote_code)
-            if hub_id in ["hf-imo-colab/olympiads-proof-schema", "hf-imo-colab/olympiads-proof-schema-benchmark"]:
+            if hub_id in ["hf-imo-colab/olympiads-proof-schema", "hf-imo-colab/olympiads-proof-schema-benchmark", "hf-imo-colab/olympiads-proof-schema-cleaned"]:
                 samples = [s for s in process_proof_problem(dataset, hub_id.split("/")[-1]) if s is not None]
             else:
                 samples = [dict(row) for row in dataset]

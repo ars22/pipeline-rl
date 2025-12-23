@@ -58,6 +58,26 @@ test_llm:
     top_p: 0.95
     top_k: 50
 
+llm_grader:
+  name: null
+  vllm_kwargs:
+    num_nodes: 1
+    tensor-parallel-size: 1
+    data-parallel-size: 1
+    max-num-batched-tokens: 8192
+    max-num-seqs: 16
+    max-model-len: 32768
+    gpu-memory-utilization: 0.85
+  sampling_kwargs:
+    temperature: 1.0
+    max_output_tokens: 4096
+  reasoning_delimiters: null
+  prompt_name: v0
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 32
+    log_every_n_groups: 32
+
 vllm_config:
   use_v1: false
   vllm_kwargs:
@@ -142,5 +162,4 @@ wandb:
   wandb_dir: null
   # Comma-separated list of keywords to tag the run.
   tags: []
-
 

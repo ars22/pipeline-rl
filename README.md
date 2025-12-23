@@ -192,6 +192,8 @@ python -m pipelinerl.launch --config-name hf_demo output_dir=tmp/results/hf_demo
 
 The `dataset` field tags the data source, `task` contains the prompt handed to the actor, and `answer` is the gold solution (Math tasks should already wrap the final value in `\\boxed{}`).
 
+Alternatively, add the dataset repo ID to an existing mapping in [pipelinerl/domains/math/load_datasets.py](pipelinerl/domains/math/load_datasets.py).
+
 # Pipeline RL: fast LLM agent training
 
 [![Github](https://img.shields.io/badge/HF%20Blog%20Post-0000)](https://huggingface.co/blog/ServiceNow/pipelinerl/)
