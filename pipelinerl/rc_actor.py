@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import math
 import multiprocessing as mp
@@ -10,10 +11,12 @@ import time
 from collections import defaultdict
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
+from typing import List, Dict, Any
 
 import aiohttp
 import aiohttp.client_exceptions
 import hydra
+import numpy as np
 import uvloop
 
 # Transient errors that should not crash the entire actor when retries are exhausted.
@@ -178,14 +181,14 @@ class InferenceProblemState:
 
     def get_filled_reasoning_prompt(self) -> str:
         return self.reasoning_prompt_template.format(
-            problem=self.problem,
+            problem=self.problem_text,
             curr_summary=self.curr_summary,
         )
 
     def get_filled_summarization_prompt(self) -> str:
         curr_chunk = self.curr_reasoning
         return self.summarization_prompt_template.format(
-            problem=self.problem,
+            problem=self.problem_text,
             existing_summary=self.curr_summary, 
             reasoning=curr_chunk.strip()
         )
@@ -199,7 +202,6 @@ class InferenceProblemState:
     def __repr__(self) -> str:
         return f"InferenceProblemState(problem_id={self.problem_id}, problem_text={self.problem_text}, \
             sample_id={self.sample_id}, starting_step={self.starting_step}, answer={self.answer}, dataset_name={self.dataset_name})"
-
 
 
 class SlidingWindowData(BaseModel):
@@ -277,13 +279,17 @@ async def schedule_rollouts(
 ):
     """This routine schedules rollouts for a given problem queue and result queue.
 
-    - It runs an asyncio loop for doing many rollouts in parallel using llm_async_generate
-    - For each problem it does exactly `attempts` rollouts (let's call this a group)
-    - It keeps track of how many rollout coroutines are running for each LLM
-    - It uses the LLM that has the least number of running coroutines for each new rollout
-    - When all LLMs are busy it does nothing
-    - It keeps track of how many rollouts are done for each group
-    - When the group is done it puts the result in the result queue
+    For online RC rollouts:
+    - Takes InferenceProblemState from the problem queue
+    - Does multiple reasoning/summarization cycles
+    - Each cycle: generate reasoning, then summarize it
+    - Collects all rollout results across cycles
+    - Puts completed rollouts in result queue
+    
+    Key differences from standard rollouts:
+    - Stateful: maintains InferenceProblemState across cycles
+    - Iterative: multiple reasoning->summarization steps
+    - Single attempt: each problem generates one trajectory
     """
     loop = asyncio.get_running_loop()
 
@@ -294,7 +300,8 @@ async def schedule_rollouts(
     finished_solution_rollouts = [0] * len(llms)
     finished_summarization_rollouts = [0] * len(llms)
     # Track rollouts per problem group
-    group_rollouts = {}
+    group_rollouts = {}  # Maps group_id -> list of RolloutResults
+    group_attempts_completed = {}  # Maps group_id -> number of attempts completed
     solution_rollout_policy = hydra.utils.get_method(cfg.actor.solution_rollout_policy)
     summarization_rollout_policy = hydra.utils.get_method(cfg.actor.summarization_rollout_policy)
     logger.info(f"Use solution rollout policy: {solution_rollout_policy}")
@@ -308,7 +315,7 @@ async def schedule_rollouts(
     retry_queue: asyncio.Queue = asyncio.Queue()
 
     async def rollout_and_maybe_produce_result(
-        problem: dict,
+        problem_state: InferenceProblemState,
         group_id: int,
         rollout_index: int,
         llm_index: int,
@@ -321,50 +328,109 @@ async def schedule_rollouts(
             model_version = trainer_state.propagated_weight_version
             assert model_version is not None
 
-            # Retry loop for transient errors
-            last_error = None
-            for attempt in range(max_retries):
-                try:
-                    solution_rollout_result = await solution_rollout_policy(cfg, llm, problem, session)
-                    processed_solution_rollout_result = process_solution_rollout_result(solution_rollout_result)
-                    summarization_problem = create_summarization_problem(processed_solution_rollout_result)
-                    summarization_rollout_result = await summarization_rollout_policy(cfg, llm, summarization_problem, session)
-                    break
-                except Exception as e:
-                    last_error = e
-                    if attempt < max_retries - 1:
-                        delay = retry_base_delay * (2 ** attempt)
-                        logger.warning(
-                            f"Error in rollout (attempt {attempt + 1}/{max_retries}), "
-                            f"retrying in {delay:.1f}s: {type(e).__name__}: {e}"
-                        )
-                        await asyncio.sleep(delay)
-                    else:
-                        logger.error(
-                            f"Error in rollout after {max_retries} attempts, giving up: "
-                            f"{type(e).__name__}: {e}"
-                        )
-                        raise
-            else:
-                # This shouldn't happen, but just in case
-                raise last_error
-            rollout_result.model_version = model_version
-            # Make a group id that will be different from groups made by another rollout maker
-            full_group_id = f"{scheduler_name}_{group_id}"
-            rollout_result.group_id = full_group_id
-            for step_index, sample in enumerate(rollout_result.training_texts):
-                # Downstream in the pipeline we'll need these fields in every sample
-                sample.metadata["model_version"] = model_version
-                sample.metadata["rollout_index"] = rollout_index
-                sample.metadata["step_index"] = step_index
-                sample.group_id = full_group_id
-            group_rollouts[group_id].append(rollout_result)
-            if len(group_rollouts[group_id]) == attempts:
-                # This is blocking call, but there's just one other thread reading from this queue.
-                random.shuffle(group_rollouts[group_id])
-                result_queue.put(group_rollouts[group_id])
-                del group_rollouts[group_id]
-            finished_solution_rollouts += 1
+            # Get number of reasoning steps from config
+            num_reasoning_steps = cfg.actor.get("num_reasoning_steps", 3)
+            
+            # Online RC workflow: multiple reasoning/summarization cycles
+            all_rollout_results = []
+            
+            for step_idx in range(num_reasoning_steps):
+                # Retry loop for transient errors
+                last_error = None
+                for attempt in range(max_retries):
+                    try:
+                        # 1. Reasoning step: generate reasoning based on current summary
+                        # Create a problem dict with the current state
+                        reasoning_problem = {
+                            "task": problem_state.get_filled_reasoning_prompt(),
+                            "answer": problem_state.answer,
+                            "dataset": problem_state.dataset_name,
+                            "id": problem_state.problem_id,
+                        }
+                        
+                        solution_rollout_result = await solution_rollout_policy(cfg, llm, reasoning_problem, session)
+                        started_solution_rollouts[llm_index] += 1
+                        
+                        # Extract the reasoning text from the rollout result
+                        # Assuming the rollout result has training_texts with the generated content
+                        if solution_rollout_result.training_texts:
+                            # Get the generated text (decode from tokens if needed)
+                            # This depends on your RolloutResult structure
+                            reasoning_text = solution_rollout_result.training_texts[0].text if hasattr(solution_rollout_result.training_texts[0], 'text') else ""
+                            problem_state.update_reasoning([solution_rollout_result], reasoning_text)
+                        
+                        # 2. Summarization step: summarize the reasoning
+                        summarization_problem = {
+                            "task": problem_state.get_filled_summarization_prompt(),
+                            "answer": problem_state.answer,
+                            "dataset": problem_state.dataset_name,
+                            "id": problem_state.problem_id,
+                        }
+                        
+                        summarization_rollout_result = await summarization_rollout_policy(cfg, llm, summarization_problem, session)
+                        started_summarization_rollouts[llm_index] += 1
+                        
+                        # Extract and update the summary
+                        if summarization_rollout_result.training_texts:
+                            summary_text = summarization_rollout_result.training_texts[0].text if hasattr(summarization_rollout_result.training_texts[0], 'text') else ""
+                            problem_state.update_summarization([summarization_rollout_result], summary_text)
+                        
+                        # Store both rollout results
+                        all_rollout_results.append(solution_rollout_result)
+                        all_rollout_results.append(summarization_rollout_result)
+                        
+                        finished_solution_rollouts[llm_index] += 1
+                        finished_summarization_rollouts[llm_index] += 1
+                        break
+                        
+                    except Exception as e:
+                        last_error = e
+                        if attempt < max_retries - 1:
+                            delay = retry_base_delay * (2 ** attempt)
+                            logger.warning(
+                                f"Error in rollout step {step_idx} (attempt {attempt + 1}/{max_retries}), "
+                                f"retrying in {delay:.1f}s: {type(e).__name__}: {e}"
+                            )
+                            await asyncio.sleep(delay)
+                        else:
+                            logger.error(
+                                f"Error in rollout step {step_idx} after {max_retries} attempts, giving up: "
+                                f"{type(e).__name__}: {e}"
+                            )
+                            raise
+                else:
+                    # This shouldn't happen, but just in case
+                    raise last_error
+            
+            # After all reasoning steps, package all rollout results
+            # Each reasoning and summarization step is kept as a separate RolloutResult
+            if all_rollout_results:
+                full_group_id = f"{scheduler_name}_{group_id}"
+                
+                # Set metadata on each rollout result
+                for cycle_step_index, result in enumerate(all_rollout_results):
+                    result.model_version = model_version
+                    result.group_id = full_group_id
+                    
+                    # Update metadata in training texts
+                    for sample in result.training_texts:
+                        sample.metadata["model_version"] = model_version
+                        sample.metadata["rollout_index"] = rollout_index
+                        sample.metadata["cycle_step"] = cycle_step_index  # Which cycle step (0=reasoning1, 1=summary1, 2=reasoning2, etc.)
+                        sample.group_id = full_group_id
+                
+                # Add all rollouts from this attempt to the group
+                group_rollouts[group_id].extend(all_rollout_results)
+                group_attempts_completed[group_id] += 1
+                
+                # Check if we've completed all attempts for this group
+                # For online RC with attempts=1, this means we've done 1 problem trajectory
+                if group_attempts_completed[group_id] == attempts:
+                    # All attempts complete - put all rollouts in result queue
+                    random.shuffle(group_rollouts[group_id])
+                    result_queue.put(group_rollouts[group_id])
+                    del group_rollouts[group_id]
+                    del group_attempts_completed[group_id]
         except TRANSIENT_EXCEPTIONS as e:
             # Transient errors (HTTP/connection issues) that exhausted retries.
             # Re-queue the rollout to try again later, up to MAX_REQUEUE_ATTEMPTS times.
@@ -373,7 +439,7 @@ async def schedule_rollouts(
                     f"Transient error in rollout for group {group_id}, re-queuing "
                     f"(attempt {requeue_count + 1}/{MAX_REQUEUE_ATTEMPTS}): {type(e).__name__}: {e}"
                 )
-                await retry_queue.put((problem, group_id, rollout_index, requeue_count + 1))
+                await retry_queue.put((problem_state, group_id, rollout_index, requeue_count + 1))
             else:
                 # Exhausted all re-queue attempts - this is a fatal error for the group
                 logger.error(
@@ -400,7 +466,7 @@ async def schedule_rollouts(
 
     group_id = -1
     group_rollout_index = attempts
-    problem = None
+    problem_state = None
 
     last_logged = time.time()
     logger.info("Starting rollout scheduler")
@@ -410,12 +476,16 @@ async def schedule_rollouts(
         while True:
             if time.time() - last_logged > 10.0 and sum(active_rollouts):
                 retry_queue_size = retry_queue.qsize()
+                total_started_solution = sum(started_solution_rollouts)
+                total_started_summarization = sum(started_summarization_rollouts)
+                total_finished_solution = sum(finished_solution_rollouts)
+                total_finished_summarization = sum(finished_summarization_rollouts)
                 logger.info(
                     f"{scheduler_name}: "
                     f"rollouts in progress: {sum(active_rollouts)}, "
                     f"groups in progress: {len(group_rollouts)}, "
-                    f"rollouts started so far: {started_rollouts}, "
-                    f"rollouts finished so far: {finished_rollouts}, "
+                    f"solution rollouts: {total_started_solution} started / {total_finished_solution} finished, "
+                    f"summarization rollouts: {total_started_summarization} started / {total_finished_summarization} finished, "
                     f"max group size in bytes: {result_queue.max_actual_entry_size()}, "
                     + (f"retry queue size: {retry_queue_size}" if retry_queue_size > 0 else "")
                 )
@@ -430,7 +500,7 @@ async def schedule_rollouts(
 
             if retry_item is not None:
                 # Re-queue a failed rollout
-                retry_problem, retry_group_id, retry_rollout_index, requeue_count = retry_item
+                retry_problem_state, retry_group_id, retry_rollout_index, requeue_count = retry_item
                 next_llm = active_rollouts.index(min(active_rollouts))
                 if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts:
                     # All LLMs are busy, put item back and wait
@@ -438,10 +508,9 @@ async def schedule_rollouts(
                     await asyncio.sleep(0.01)
                     continue
                 active_rollouts[next_llm] += 1
-                started_rollouts += 1
                 loop.create_task(
                     rollout_and_maybe_produce_result(
-                        problem=retry_problem,
+                        problem_state=retry_problem_state,
                         group_id=retry_group_id,
                         rollout_index=retry_rollout_index,
                         llm_index=next_llm,
@@ -454,13 +523,14 @@ async def schedule_rollouts(
             # Then, check if we need to start a new group
             if group_rollout_index == attempts:
                 try:
-                    problem = problem_queue.get(block=False)
+                    problem_state = problem_queue.get(block=False)
                 except Empty:
                     # give some quality time for other couroutines to work
                     await asyncio.sleep(0.01)
                     continue
                 group_id += 1
                 group_rollouts[group_id] = []
+                group_attempts_completed[group_id] = 0
                 group_rollout_index = 0
 
             next_llm = active_rollouts.index(min(active_rollouts))
@@ -469,11 +539,10 @@ async def schedule_rollouts(
                 await asyncio.sleep(0.01)
                 continue
             active_rollouts[next_llm] += 1
-            started_rollouts += 1
-            assert problem is not None
+            assert problem_state is not None
             loop.create_task(
                 rollout_and_maybe_produce_result(
-                    problem=problem,
+                    problem_state=problem_state,
                     group_id=group_id,
                     rollout_index=group_rollout_index,
                     llm_index=next_llm,
@@ -545,6 +614,10 @@ class RCActorLoop:
         self.debug_mode = bool(cfg.debug.mode)
         self.verifier_metrics_step = 0
         self._last_verifier_timestep: float | None = None
+        
+        # Online rollout configuration
+        self.num_reasoning_steps = cfg.actor.get("num_reasoning_steps", 3)
+        self.num_samples_per_problem = cfg.actor.get("num_samples_per_problem", 1)
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
@@ -709,6 +782,63 @@ class RCActorLoop:
         )
         
         return state
+
+    def broadcast_states(
+        self, 
+        active_states: List[InferenceProblemState], 
+        n: int
+    ) -> List[InferenceProblemState]:
+        """
+        Broadcast states to create n samples from each state.
+        Similar to the reference implementation from verl-stable.
+        """
+        import copy
+        broadcasted_states = []
+        for i, state in enumerate(active_states):
+            for j in range(n):
+                curr_state = copy.deepcopy(state)
+                curr_state.sample_id = j
+                broadcasted_states.append(curr_state)
+        return broadcasted_states
+
+    def compute_online_rollout_metrics(
+        self,
+        online_rollout_states: List[InferenceProblemState],
+        reward_function: Any,
+    ) -> Dict[str, float]:
+        """
+        Compute metrics for online rollouts.
+        Adapted from verl-stable reasoning cache implementation.
+        """
+        initial_scores = []
+        final_scores = []
+        problem_ids = [state.problem_id for state in online_rollout_states]
+        
+        for state in online_rollout_states:
+            if len(state.reasoning_string_complete_store) == 0:
+                continue
+            initial_reasoning_string = state.reasoning_string_complete_store[0]
+            final_reasoning_string = state.reasoning_string_complete_store[-1]
+            initial_reasoning_score = reward_function(initial_reasoning_string, state.answer)
+            final_reasoning_score = reward_function(final_reasoning_string, state.answer)
+            initial_scores.append(initial_reasoning_score)
+            final_scores.append(final_reasoning_score)
+
+        problem_score_dict = defaultdict(list)
+        for p_id, score in zip(problem_ids, final_scores):
+            problem_score_dict[p_id].append(score)
+
+        scores_by_problem = list(problem_score_dict.values())
+        # Best-of-N: check if any sample succeeded
+        bon_by_problem = [1 if any(x == 1 for x in score_list) else 0 for score_list in scores_by_problem]
+
+        metrics = {
+            "online_rollout_initial_score_mean": np.mean(initial_scores) if initial_scores else 0.0,
+            "online_rollout_final_score_mean": np.mean(final_scores) if final_scores else 0.0,
+            "online_rollout_final_score_bon_mean": np.mean(bon_by_problem) if bon_by_problem else 0.0,
+        }
+        return metrics
+
 
 
     def run(self, dataset: list[tuple[str, dict]]):
@@ -955,18 +1085,40 @@ def run_actor_loop(cfg: DictConfig):
         trainer_state.start_listening()
         trainer_state.wait_for_model_version()
 
-    train_loop = ActorLoop(
-        data_stream=data_stream, cfg=cfg, trainer_state=trainer_state, stats_stream=stats_stream, llms=train_llms
+    # Get prompt templates from config
+    reasoning_prompt_template = cfg.actor.get(
+        "reasoning_prompt_template",
+        "Problem: {problem}\n\nCurrent summary: {curr_summary}\n\nContinue reasoning:"
+    )
+    summarization_prompt_template = cfg.actor.get(
+        "summarization_prompt_template",
+        "Problem: {problem}\n\nExisting summary: {existing_summary}\n\nNew reasoning: {reasoning}\n\nProvide an updated summary:"
+    )
+    use_think_tags = cfg.actor.get("use_think_tags", False)
+    
+    train_loop = RCActorLoop(
+        data_stream=data_stream,
+        cfg=cfg,
+        trainer_state=trainer_state,
+        stats_stream=stats_stream,
+        llms=train_llms,
+        reasoning_prompt_template=reasoning_prompt_template,
+        summarization_prompt_template=summarization_prompt_template,
+        use_think_tags=use_think_tags,
+        is_training=True,
     )
     train_loop_run = train_loop.run(
         dataset=train_dataset,
     )
-    test_loop = ActorLoop(
+    test_loop = RCActorLoop(
         data_stream=test_data_stream,
         cfg=cfg,
         trainer_state=trainer_state,
         stats_stream=test_stats_stream,
         llms=test_llms,
+        reasoning_prompt_template=reasoning_prompt_template,
+        summarization_prompt_template=summarization_prompt_template,
+        use_think_tags=use_think_tags,
         is_training=False,
     )
     test_loop_run = None
