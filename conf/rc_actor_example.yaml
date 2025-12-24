@@ -1,0 +1,117 @@
+# Example configuration for Online Reasoning Cache (RC) Actor
+# Simple online rollouts with iterative reasoning and summarization
+
+# Inherit from base config (adjust path as needed)
+defaults:
+  - base_config
+
+actor:
+  # ========================================
+  # Online RC Rollout Configuration
+  # ========================================
+  
+  # Number of reasoning/summarization cycles per problem
+  # Each cycle: generate reasoning → summarize → repeat
+  num_reasoning_steps: 3
+  
+  # Number of samples to generate per problem
+  num_samples_per_problem: 1
+  
+  # ========================================
+  # Prompt Templates
+  # ========================================
+  
+  # Whether to use <think></think> tags in prompts
+  use_think_tags: false
+  
+  # Template for reasoning step
+  # Available variables: {problem}, {curr_summary}
+  reasoning_prompt_template: |
+    You are solving a mathematical problem step by step.
+    
+    Problem: {problem}
+    
+    Previous work and summary: {curr_summary}
+    
+    Continue your reasoning. Show your work clearly:
+  
+  # Template for summarization step
+  # Available variables: {problem}, {existing_summary}, {reasoning}
+  summarization_prompt_template: |
+    Summarize the solution progress so far.
+    
+    Problem: {problem}
+    
+    Previous summary: {existing_summary}
+    
+    New reasoning: {reasoning}
+    
+    Provide a concise updated summary that captures the key progress:
+  
+  # ========================================
+  # Rollout Policies
+  # ========================================
+  
+  # Policy for generating reasoning (solution attempts)
+  solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  
+  # Policy for generating summaries
+  summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  
+  # ========================================
+  # Standard Actor Configuration
+  # ========================================
+  
+  # Number of parallel rollout workers
+  rollout_workers: 4
+  
+  # Maximum concurrent rollouts per LLM
+  llm_max_rollouts: 8
+  
+  # Queue sizes
+  problem_queue_size: 100
+  result_queue_size: 100
+  
+  # Shared memory configuration (in bytes)
+  # Increase if you have large rollouts
+  shared_memory_entry_size: 5242880  # 5MB
+  
+  # Throughput tracking window size
+  throughput_window_size: 10
+  
+  # Retry configuration
+  max_retries: 3
+  retry_base_delay: 1.0
+
+
+# ========================================
+# Example LLM Configuration for RC
+# ========================================
+
+llm:
+  parameters:
+    temperature: 0.7
+    max_tokens: 2048  # Per reasoning/summarization step
+    top_p: 0.95
+
+# Separate config for test/evaluation
+test_llm:
+  parameters:
+    temperature: 0.0  # Greedy for reproducibility
+    max_tokens: 2048
+    top_p: 1.0
+
+
+# ========================================
+# Example Usage Notes
+# ========================================
+
+# To use online RC rollouts:
+# 1. Set the prompt templates above to guide reasoning and summarization
+# 2. Adjust num_reasoning_steps based on problem complexity
+# 3. Make sure solution_rollout_policy and summarization_rollout_policy are set
+# 4. Each problem goes through multiple reasoning/summarization cycles
+
+# Workflow per problem:
+# Problem → State Init → [Reasoning → Summarization] × N → All Rollouts Collected
+
