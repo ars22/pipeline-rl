@@ -163,8 +163,8 @@ class InferenceProblemState:
         self.reasoning_string_complete_store = []
         self.summarization_string_complete_store = []
 
-    def update_reasoning(self, rollouts: list[RolloutResult], response_string: str):
-        self.reasoning_rollout_store.append(rollouts)
+    def update_reasoning(self, rollout: RolloutResult, response_string: str):
+        self.reasoning_rollout_store.append(rollout)
         self.reasoning_string_complete_store.append(response_string)
         processed_response_string = response_string.replace("<think>", "")
         if "</think>" in processed_response_string:
@@ -172,8 +172,8 @@ class InferenceProblemState:
         self.curr_reasoning = processed_response_string.strip()
         self.reasoning_string_store.append(self.curr_reasoning)
 
-    def update_summarization(self, rollouts: list[RolloutResult], response_string: str):
-        self.summarization_rollout_store.append(rollouts)
+    def update_summarization(self, rollout: RolloutResult, response_string: str):
+        self.summarization_rollout_store.append(rollout)
         self.summarization_string_complete_store.append(response_string)
         processed_response_string = response_string.replace("<think>", "").replace("</think>", "").strip()
         self.curr_summary = processed_response_string
@@ -357,7 +357,7 @@ async def schedule_rollouts(
                             # Get the generated text (decode from tokens if needed)
                             # This depends on your RolloutResult structure
                             reasoning_text = solution_rollout_result.training_texts[0].text if hasattr(solution_rollout_result.training_texts[0], 'text') else ""
-                            problem_state.update_reasoning([solution_rollout_result], reasoning_text)
+                            problem_state.update_reasoning(solution_rollout_result, reasoning_text)
                         
                         # 2. Summarization step: summarize the reasoning
                         summarization_problem = {
@@ -373,7 +373,7 @@ async def schedule_rollouts(
                         # Extract and update the summary
                         if summarization_rollout_result.training_texts:
                             summary_text = summarization_rollout_result.training_texts[0].text if hasattr(summarization_rollout_result.training_texts[0], 'text') else ""
-                            problem_state.update_summarization([summarization_rollout_result], summary_text)
+                            problem_state.update_summarization(summarization_rollout_result, summary_text)
                         
                         # Store both rollout results
                         all_rollout_results.append(solution_rollout_result)
