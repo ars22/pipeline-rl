@@ -13,6 +13,9 @@ model_path: Qwen/Qwen3-4B-Instruct-2507
 # Random seed
 seed: 42
 
+# Output directory for test runs
+output_dir: ./runs/test_rc
+
 # vLLM configuration
 vllm_config:
   use_v1: false

@@ -4,23 +4,19 @@ This document describes the online rollout functionality in `rc_actor.py`.
 
 ## Quick Start
 
-Run the RC actor with:
+Run the RC actor with a test configuration:
 
 ```bash
-python -m pipelinerl.rc_actor --config-name base
+python -m pipelinerl.rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor
 ```
 
-Or use a custom config:
+Override parameters on the command line:
 
 ```bash
-python -m pipelinerl.rc_actor --config-name test_rc
+python -m pipelinerl.rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor actor.num_reasoning_steps=5
 ```
 
-Override parameters:
-
-```bash
-python -m pipelinerl.rc_actor --config-name base actor.num_reasoning_steps=5
-```
+**Important**: Your configuration must specify `output_dir` (where results are saved). This can be set in your YAML file or via command line.
 
 ## Overview
 
@@ -34,10 +30,26 @@ Online RC rollouts enable iterative reasoning with summarization:
 ## Key Components
 
 ### 1. InferenceProblemState
-Tracks inference progress for a single problem:
-- **Current state**: `curr_summary`, `curr_reasoning`
-- **History**: Stores all reasoning and summarization rollouts
-- **Prompts**: Generates prompts with current state as context
+Tracks inference progress for a single problem with the following attributes:
+
+**State Tracking:**
+- `curr_summary`: Current summarized state (initially empty, updated after each summarization)
+- `curr_reasoning`: Latest reasoning output (updated after each reasoning step)
+- `reasoning_turn_number`: Counter for reasoning turns (1, 2, 3, ...)
+- `summarization_turn_number`: Counter for summarization turns (1, 2, 3, ...)
+- `overall_cycle_step`: Counter for all steps (0, 1, 2, 3, ...)
+
+**History Storage:**
+- `reasoning_rollout_store`: All reasoning rollout results
+- `summarization_rollout_store`: All summarization rollout results
+- `reasoning_string_store`: Processed reasoning outputs (without think tags)
+- `summarization_string_store`: Processed summaries
+- `reasoning_string_complete_store`: Raw reasoning outputs (with think tags if used)
+- `summarization_string_complete_store`: Raw summaries
+
+**Prompt Generation:**
+- `get_filled_reasoning_prompt()`: Fills template with `{problem}` and `{curr_summary}`
+- `get_filled_summarization_prompt()`: Fills template with `{problem}`, `{existing_summary}`, and `{reasoning}`
 
 ### 2. RCActorLoop
 Orchestrates the online rollout process:
@@ -77,43 +89,116 @@ Main loop reads results and publishes
 
 ## Configuration
 
-Add these parameters to the actor configuration:
+### Required Parameters
+
+Your configuration must include:
+
+```yaml
+# Output directory (REQUIRED)
+output_dir: ./runs/my_experiment
+
+# Model to use
+model_path: Qwen/Qwen3-4B-Instruct-2507
+```
+
+### Actor Configuration
+
+Add these parameters to configure the RC actor:
 
 ```yaml
 actor:
   # Number of reasoning/summarization cycles per problem
   num_reasoning_steps: 3
   
-  # Number of samples to generate per problem
+  # Number of samples to generate per problem (default: 1)
   num_samples_per_problem: 1
   
-  # Whether to use <think></think> tags
+  # Whether to wrap prompts/responses with <think></think> tags
   use_think_tags: false
   
   # Prompt template for reasoning step
-  # Variables: {problem}, {curr_summary}
+  # Available variables: {problem}, {curr_summary}
   reasoning_prompt_template: |
+    Solve this problem step by step.
+    
     Problem: {problem}
     
-    Current summary: {curr_summary}
+    Previous work: {curr_summary}
     
-    Continue reasoning:
+    Continue your reasoning:
   
   # Prompt template for summarization step
-  # Variables: {problem}, {existing_summary}, {reasoning}
+  # Available variables: {problem}, {existing_summary}, {reasoning}
   summarization_prompt_template: |
+    Summarize the solution progress.
+    
     Problem: {problem}
     
-    Existing summary: {existing_summary}
+    Previous summary: {existing_summary}
     
     New reasoning: {reasoning}
     
-    Provide an updated summary:
+    Provide a concise updated summary:
   
-  # Rollout policies
+  # Rollout policies (functions that generate training data from model outputs)
   solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
   summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  
+  # Performance settings
+  rollout_workers: 1           # Number of parallel rollout workers
+  llm_max_rollouts: 16         # Max concurrent rollouts per LLM
+  problem_queue_size: 10       # Size of problem queue
+  result_queue_size: 10        # Size of result queue
+  shared_memory_entry_size: 5242880  # 5MB per entry
+  throughput_window_size: 10   # Window for throughput metrics
+  
+  # Retry configuration for transient errors
+  max_retries: 3
+  retry_base_delay: 1.0
 ```
+
+### LLM Configuration
+
+```yaml
+llm:
+  parameters:
+    temperature: 1.0      # Sampling temperature
+    max_tokens: 16384     # Max tokens per generation
+    top_p: 0.95          # Nucleus sampling
+
+test_llm:
+  parameters:
+    temperature: 1.0
+    max_tokens: 16384
+    top_p: 1.0
+```
+
+### Other Settings
+
+```yaml
+# Random seed
+seed: 42
+
+# Streams backend (where to write rollout data)
+streams:
+  backend: files
+
+# Disable WandB for testing
+wandb:
+  use_wandb: false
+
+# Training attempts (for online RC, typically use 1)
+attempts: 1
+
+# Evaluation frequency (0 = disabled)
+eval_every_n_versions: 0
+
+# Debug mode
+debug:
+  mode: true
+```
+
+See `conf/test_rc.yaml` for a complete example configuration.
 
 ## Metadata
 
