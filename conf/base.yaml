@@ -50,7 +50,7 @@ llm:
     # changed
     temperature: 0.8
     # 1.0
-  reasoning_delimiters: null
+  reasoning_delimiters: ["</think>"]
   wandb_table:
     enabled: true
     keep_last_k_groups: 32
@@ -76,7 +76,7 @@ llm_grader:
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 4096
-  reasoning_delimiters: null
+  reasoning_delimiters: ["</think>"]
   prompt_name: v0
   wandb_table:
     enabled: true

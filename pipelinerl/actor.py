@@ -76,24 +76,8 @@ def split_reasoning_output(
 ) -> tuple[str, str]:
     """
     Split completion text into reasoning and output parts using reasoning delimiters.
-
-    Matching current "strip reasoning" semantics:
-    - Iterate delimiters in list order; for the first delimiter that appears in the text,
-      split on the **last** occurrence:
-      - reasoning = text before delimiter (stripped)
-      - output = text after delimiter (stripped)
-    - If no delimiter matches (or delimiters unset/empty):
-      - reasoning = ""
-      - output = completion_text.strip()
-
-    Args:
-        completion_text: The full completion text from the LLM.
-        reasoning_delimiters: List of delimiter strings (e.g., ["</think>"]).
-
-    Returns:
-        Tuple of (reasoning, output) strings.
     """
-    if not reasoning_delimiters:
+    if reasoning_delimiters is None:
         return "", completion_text.strip()
 
     for delim in reasoning_delimiters:
@@ -103,7 +87,7 @@ def split_reasoning_output(
             prefix, suffix = completion_text.rsplit(delim, 1)
             return prefix.strip(), suffix.strip()
 
-    return "", completion_text.strip()
+    return completion_text.strip(), ""
 
 
 class VerifierTableBuffer:
