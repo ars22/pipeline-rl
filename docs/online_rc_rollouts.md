@@ -2,6 +2,26 @@
 
 This document describes the online rollout functionality in `rc_actor.py`.
 
+## Quick Start
+
+Run the RC actor with:
+
+```bash
+python -m pipelinerl.rc_actor --config-name base
+```
+
+Or use a custom config:
+
+```bash
+python -m pipelinerl.rc_actor --config-name test_rc
+```
+
+Override parameters:
+
+```bash
+python -m pipelinerl.rc_actor --config-name base actor.num_reasoning_steps=5
+```
+
 ## Overview
 
 Online RC rollouts enable iterative reasoning with summarization:

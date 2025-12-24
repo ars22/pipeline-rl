@@ -1214,3 +1214,13 @@ def run_actor_loop(cfg: DictConfig):
 
         # 3. Keep running the training loop
         _ = next(train_loop_run)
+
+
+@hydra.main(config_path="../conf", config_name="base", version_base="1.3.2")
+def main(cfg: DictConfig):
+    """Main entry point for RC actor"""
+    run_actor_loop(cfg)
+
+
+if __name__ == "__main__":
+    main()

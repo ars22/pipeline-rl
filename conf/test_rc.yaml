@@ -1,0 +1,104 @@
+# Test configuration for RC Actor
+# Minimal config for testing online reasoning/summarization rollouts
+# Usage: python test_rc_actor.py --config-name test_rc
+
+# Inherit from base
+defaults:
+  - base
+
+# Model - use small model for fast testing
+model_path: Qwen/Qwen3-4B-Instruct-2507
+
+# Random seed
+seed: 42
+
+# vLLM configuration
+vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.95
+    num-scheduler-steps: 16
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 64000
+    no-enable-prefix-caching: ""
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    generation-config: vllm
+
+
+# RC Actor configuration
+actor:
+  # Number of reasoning/summarization cycles per problem
+  num_reasoning_steps: 2
+  
+  # Prompt templates
+  reasoning_prompt_template: |
+    Solve this problem step by step.
+    
+    Problem: {problem}
+    
+    Previous work: {curr_summary}
+    
+    Continue your reasoning:
+  
+  summarization_prompt_template: |
+    Summarize the solution progress.
+    
+    Problem: {problem}
+    
+    Previous summary: {existing_summary}
+    
+    New reasoning: {reasoning}
+    
+    Provide a concise updated summary:
+  
+  # Rollout configuration
+  rollout_workers: 1
+  llm_max_rollouts: 16
+  problem_queue_size: 10
+  result_queue_size: 10
+  shared_memory_entry_size: 5242880  # 5MB
+  throughput_window_size: 10
+  
+  # Retry configuration
+  max_retries: 3
+  retry_base_delay: 1.0
+
+# LLM generation parameters
+llm:
+  parameters:
+    temperature: 1.0
+    max_tokens: 16384
+    top_p: 0.95
+
+test_llm:
+  parameters:
+    temperature: 1.0
+    max_tokens: 16384
+    top_p: 1.0
+
+# Streams backend
+streams:
+  backend: files
+
+# Disable WandB for testing
+wandb:
+  use_wandb: false
+
+# Training attempts (for online RC, use 1)
+attempts: 1
+
+# Disable eval during test
+eval_every_n_versions: 0
+
+# Debug mode
+debug:
+  mode: true
+
+# Finetune config (minimal for state management)
+finetune:
+  max_lag: null
+
