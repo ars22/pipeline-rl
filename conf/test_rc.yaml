@@ -32,6 +32,11 @@ vllm_config:
     return-tokens-as-token-ids: ""
     generation-config: vllm
 
+# Test world configuration (simplified version of world config)
+# Only actor_fraction is used for testing - determines GPU allocation for LLM servers
+test_world:
+  actor_fraction: 2  # Use 100% of available GPUs for actor LLMs
+
 
 # RC Actor configuration
 actor:
@@ -110,10 +115,11 @@ debug:
 finetune:
   max_lag: null
 
+
 # Dataset configuration - using POPE hard dataset
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - pope_hard_no_guide_test
+  - pope_512
 test_dataset_names:
-  - pope_hard_no_guide_test
+  - pope_512
 

@@ -121,23 +121,27 @@ def process_open_reasoner(dataset, dataset_name):
         yield {"dataset": dataset_name, "task": task, "answer": answer}
 
 def process_pope_local(dataset, dataset_name):
-    for id, item in enumerate(dataset):
+    index = 0
+    for item in dataset:
         task = item['prompt'][0]['content']
         answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
-        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer, "id": id}
+        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer, "id": index}
+        index += 1
 
 def process_pope(dataset, dataset_name):
-    for id, item in enumerate(dataset):
+    for index, item in dataset.iterrows():
         task = item['prompt'][0]['content']
         answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
-        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer, "id": id}
+        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer, "id": index}
 
 
 def process_pope_mix(dataset, dataset_name):
-    for id, item in enumerate(dataset):
+    index = 0
+    for item in dataset:
         task = item['prompt'][0]['content']
         answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
-        yield {"dataset": dataset_name + f"_{item['level'].replace('-', '_')}", "task": task, "answer": answer, "id": id}
+        yield {"dataset": dataset_name + f"_{item['level'].replace('-', '_')}", "task": task, "answer": answer, "id": index}
+        index += 1
 
 
 def process_gpqa(dataset, dataset_name):
