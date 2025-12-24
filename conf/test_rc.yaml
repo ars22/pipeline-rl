@@ -5,6 +5,7 @@
 # Inherit from base
 defaults:
   - base
+  - _self_
 
 # Model - use small model for fast testing
 model_path: Qwen/Qwen3-4B-Instruct-2507
