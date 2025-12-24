@@ -57,6 +57,11 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+try:
+    from pipelinerl.finetune.data import MASKED_TOKEN_ID
+except Exception:
+    MASKED_TOKEN_ID = -100
+
 
 _WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
 _WANDB_ROLLOUT_TABLE_COLUMNS = [
@@ -667,6 +672,17 @@ class ActorLoop:
         except Exception as e:
             logger.warning(f"Failed to load tokenizer for rollout table token counting: {e}")
 
+    def _decode_completion_from_training_text(self, training_text) -> str:
+        labels = getattr(training_text, "labels", None) or []
+        if self._tokenizer is not None and labels:
+            try:
+                generated_token_ids = [tid for tid in labels if tid != MASKED_TOKEN_ID]
+                if generated_token_ids:
+                    return self._tokenizer.decode(generated_token_ids, skip_special_tokens=False)
+            except Exception as e:
+                logger.warning(f"Failed to decode completion from token IDs: {e}")
+        return getattr(training_text, "output_text", "") or ""
+
     def init_stats(self):
         self.stats = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         self.latency_list = []
@@ -884,7 +900,7 @@ class ActorLoop:
                         # Use the last TrainingText in the rollout
                         training_text = result.training_texts[-1]
                         prompt = training_text.prompt_text
-                        completion = training_text.output_text
+                        completion = self._decode_completion_from_training_text(training_text)
                         prompt_tokens = training_text.prompt_tokens
                         total_tokens = training_text.output_tokens
 
