@@ -20,7 +20,7 @@ finetune:
   train_batch_size: 32
   valid_batch_size: 32
   gradient_accumulation_passes: 16
-  seq_length: 49920
+  seq_length: 50532 # Longer prompt template
   seq_parallel: 2
   learning_rate: 1.0e-6
   lr_scheduler_type: constant_with_warmup
