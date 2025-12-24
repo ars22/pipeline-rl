@@ -162,8 +162,32 @@ class InferenceProblemState:
         self.summarization_string_store = []
         self.reasoning_string_complete_store = []
         self.summarization_string_complete_store = []
+        
+        # Track turn numbers for metadata
+        self.reasoning_turn_number = 0
+        self.summarization_turn_number = 0
+        self.overall_cycle_step = 0
 
-    def update_reasoning(self, rollout: RolloutResult, response_string: str):
+    def update_reasoning(self, rollout: RolloutResult, response_string: str, model_version: int, rollout_index: int, group_id: str):
+        # Increment reasoning turn counter
+        self.reasoning_turn_number += 1
+        
+        # Add metadata to rollout result immediately
+        rollout.model_version = model_version
+        rollout.group_id = group_id
+        
+        for sample in rollout.training_texts:
+            sample.metadata["model_version"] = model_version
+            sample.metadata["rollout_index"] = rollout_index
+            sample.metadata["cycle_step"] = self.overall_cycle_step
+            sample.metadata["turn_type"] = "reasoning"
+            sample.metadata["turn_number"] = self.reasoning_turn_number
+            sample.group_id = group_id
+        
+        # Increment overall cycle step
+        self.overall_cycle_step += 1
+        
+        # Store rollout and process response
         self.reasoning_rollout_store.append(rollout)
         self.reasoning_string_complete_store.append(response_string)
         processed_response_string = response_string.replace("<think>", "")
@@ -172,7 +196,26 @@ class InferenceProblemState:
         self.curr_reasoning = processed_response_string.strip()
         self.reasoning_string_store.append(self.curr_reasoning)
 
-    def update_summarization(self, rollout: RolloutResult, response_string: str):
+    def update_summarization(self, rollout: RolloutResult, response_string: str, model_version: int, rollout_index: int, group_id: str):
+        # Increment summarization turn counter
+        self.summarization_turn_number += 1
+        
+        # Add metadata to rollout result immediately
+        rollout.model_version = model_version
+        rollout.group_id = group_id
+        
+        for sample in rollout.training_texts:
+            sample.metadata["model_version"] = model_version
+            sample.metadata["rollout_index"] = rollout_index
+            sample.metadata["cycle_step"] = self.overall_cycle_step
+            sample.metadata["turn_type"] = "summarization"
+            sample.metadata["turn_number"] = self.summarization_turn_number
+            sample.group_id = group_id
+        
+        # Increment overall cycle step
+        self.overall_cycle_step += 1
+        
+        # Store rollout and process response
         self.summarization_rollout_store.append(rollout)
         self.summarization_string_complete_store.append(response_string)
         processed_response_string = response_string.replace("<think>", "").replace("</think>", "").strip()
@@ -201,7 +244,8 @@ class InferenceProblemState:
     
     def __repr__(self) -> str:
         return f"InferenceProblemState(problem_id={self.problem_id}, problem_text={self.problem_text}, \
-            sample_id={self.sample_id}, starting_step={self.starting_step}, answer={self.answer}, dataset_name={self.dataset_name})"
+            sample_id={self.sample_id}, starting_step={self.starting_step}, answer={self.answer}, dataset_name={self.dataset_name}, \
+            reasoning_turn={self.reasoning_turn_number}, summarization_turn={self.summarization_turn_number}, cycle_step={self.overall_cycle_step})"
 
 
 class SlidingWindowData(BaseModel):
@@ -328,6 +372,9 @@ async def schedule_rollouts(
             model_version = trainer_state.propagated_weight_version
             assert model_version is not None
 
+            # Create full group ID
+            full_group_id = f"{scheduler_name}_{group_id}"
+
             # Get number of reasoning steps from config
             num_reasoning_steps = cfg.actor.get("num_reasoning_steps", 3)
             
@@ -357,7 +404,14 @@ async def schedule_rollouts(
                             # Get the generated text (decode from tokens if needed)
                             # This depends on your RolloutResult structure
                             reasoning_text = solution_rollout_result.training_texts[0].text if hasattr(solution_rollout_result.training_texts[0], 'text') else ""
-                            problem_state.update_reasoning(solution_rollout_result, reasoning_text)
+                            # Update reasoning with metadata
+                            problem_state.update_reasoning(
+                                solution_rollout_result, 
+                                reasoning_text,
+                                model_version,
+                                rollout_index,
+                                full_group_id
+                            )
                         
                         # 2. Summarization step: summarize the reasoning
                         summarization_problem = {
@@ -373,7 +427,14 @@ async def schedule_rollouts(
                         # Extract and update the summary
                         if summarization_rollout_result.training_texts:
                             summary_text = summarization_rollout_result.training_texts[0].text if hasattr(summarization_rollout_result.training_texts[0], 'text') else ""
-                            problem_state.update_summarization(summarization_rollout_result, summary_text)
+                            # Update summarization with metadata
+                            problem_state.update_summarization(
+                                summarization_rollout_result, 
+                                summary_text,
+                                model_version,
+                                rollout_index,
+                                full_group_id
+                            )
                         
                         # Store both rollout results
                         all_rollout_results.append(solution_rollout_result)
@@ -404,21 +465,8 @@ async def schedule_rollouts(
             
             # After all reasoning steps, package all rollout results
             # Each reasoning and summarization step is kept as a separate RolloutResult
+            # Metadata was already set in update_reasoning and update_summarization
             if all_rollout_results:
-                full_group_id = f"{scheduler_name}_{group_id}"
-                
-                # Set metadata on each rollout result
-                for cycle_step_index, result in enumerate(all_rollout_results):
-                    result.model_version = model_version
-                    result.group_id = full_group_id
-                    
-                    # Update metadata in training texts
-                    for sample in result.training_texts:
-                        sample.metadata["model_version"] = model_version
-                        sample.metadata["rollout_index"] = rollout_index
-                        sample.metadata["cycle_step"] = cycle_step_index  # Which cycle step (0=reasoning1, 1=summary1, 2=reasoning2, etc.)
-                        sample.group_id = full_group_id
-                
                 # Add all rollouts from this attempt to the group
                 group_rollouts[group_id].extend(all_rollout_results)
                 group_attempts_completed[group_id] += 1
@@ -532,6 +580,7 @@ async def schedule_rollouts(
                 group_rollouts[group_id] = []
                 group_attempts_completed[group_id] = 0
                 group_rollout_index = 0
+                logger.info(f"{scheduler_name}: Started a new group {group_id}")
 
             next_llm = active_rollouts.index(min(active_rollouts))
             if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts:
@@ -550,7 +599,7 @@ async def schedule_rollouts(
                 )
             )
             group_rollout_index += 1
-    logger.info("Rollout scheduler finished")
+            
 
 
 def rollout_maker_entrypoint(
@@ -841,7 +890,7 @@ class RCActorLoop:
 
 
 
-    def run(self, dataset: list[tuple[str, dict]]):
+    def run(self, dataset: list[tuple[str, dict]], cfg: DictConfig):
         loop_start_time = time.time()
         self.init_stats()
 
@@ -909,16 +958,18 @@ class RCActorLoop:
                     logger.error("Stop actor loop due to error")
                     raise rollout_results
 
-                assert isinstance(rollout_results, list)
-                assert isinstance(rollout_results[0], RolloutResult)
-                group_samples = sum(len(r.training_texts) for r in rollout_results)
+                assert isinstance(rollout_results, list) # each group is a list of size attempts. Every attempt is a list of rollout results, one for each cycle step.
+                assert isinstance(rollout_results[0], list) # each attempt is a list of rollout results
+                assert isinstance(rollout_results[0][0], RolloutResult) # each cycle step is a RolloutResult
+                group_samples = sum(len(attempt) for attempt in rollout_results) # number of cycle steps
 
                 published_samples += group_samples
-                samples_in_queue = self.result_queue.qsize() * attempts
+                samples_in_queue = self.result_queue.qsize() * attempts * cfg.actor.num_reasoning_steps
                 all_text_dumps = []
-                for r in rollout_results:
-                    for text in r.training_texts:
-                        all_text_dumps.append(text.model_dump())
+                for attempt in rollout_results:
+                    for cycle_step in attempt:
+                        for text in cycle_step.training_texts:
+                            all_text_dumps.append(text.model_dump())
                 data_stream_writer.write(all_text_dumps)
                 in_progress = submitted_groups - finished_groups
                 logger.info(
@@ -1109,6 +1160,7 @@ def run_actor_loop(cfg: DictConfig):
     )
     train_loop_run = train_loop.run(
         dataset=train_dataset,
+        cfg=cfg,
     )
     test_loop = RCActorLoop(
         data_stream=test_data_stream,
@@ -1143,7 +1195,8 @@ def run_actor_loop(cfg: DictConfig):
         ):
             logger.info("Create test loop")
             test_loop_run = test_loop.run(
-                dataset=test_dataset,
+                dataset=test_dataset,   
+                cfg=cfg,
             )
             train_loop.is_scheduling_paused = True
             current_eval = next_regular_eval

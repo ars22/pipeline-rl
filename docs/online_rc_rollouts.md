@@ -1,6 +1,6 @@
 # Online Reasoning Cache (RC) Rollouts
 
-This document describes the online rollout functionality in `rc_actor.py`, inspired by the [verl-stable reasoning cache implementation](https://raw.githubusercontent.com/IanYHWu/verl-stable/refs/heads/reasoning_cache_offline/projects/reasoning_cache/rollouts.py).
+This document describes the online rollout functionality in `rc_actor.py`.
 
 ## Overview
 
@@ -94,4 +94,40 @@ actor:
   solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
   summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
 ```
+
+## Metadata
+
+Each `TrainingText` in the rollout results includes the following metadata, which is **set immediately** when the rollout is created (not at the end):
+
+```python
+{
+    "model_version": 0,           # Model version used for this rollout
+    "rollout_index": 0,           # Which attempt this was (typically 0 for attempts=1)
+    "cycle_step": 2,              # Overall cycle step index (0, 1, 2, 3, 4, 5, ...)
+    "turn_type": "reasoning",     # Type of turn: "reasoning" or "summarization"
+    "turn_number": 2,             # Which turn of that type (1, 2, 3, ...)
+}
+```
+
+The turn numbers are tracked in `InferenceProblemState`:
+- `reasoning_turn_number`: Incremented each time a reasoning rollout is completed
+- `summarization_turn_number`: Incremented each time a summarization rollout is completed
+- `overall_cycle_step`: Incremented after each rollout (reasoning or summarization)
+
+### Example with `num_reasoning_steps=3`:
+
+| cycle_step | turn_type      | turn_number | Description              |
+|------------|----------------|-------------|--------------------------|
+| 0          | reasoning      | 1           | First reasoning turn     |
+| 1          | summarization  | 1           | First summarization turn |
+| 2          | reasoning      | 2           | Second reasoning turn    |
+| 3          | summarization  | 2           | Second summarization turn|
+| 4          | reasoning      | 3           | Third reasoning turn     |
+| 5          | summarization  | 3           | Third summarization turn |
+
+This metadata allows you to:
+- Filter rollouts by turn type (e.g., only use reasoning turns for training)
+- Weight different turns differently (e.g., higher weight for later turns)
+- Analyze performance by turn number
+- Track progression through the reasoning/summarization cycles
 
