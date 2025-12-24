@@ -38,6 +38,10 @@ actor:
   # Number of reasoning/summarization cycles per problem
   num_reasoning_steps: 2
   
+  # Rollout policies
+  solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+
   # Prompt templates
   reasoning_prompt_template: |
     Solve this problem step by step.
@@ -105,4 +109,11 @@ debug:
 # Finetune config (minimal for state management)
 finetune:
   max_lag: null
+
+# Dataset configuration - using POPE hard dataset
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - pope_hard_no_guide_test
+test_dataset_names:
+  - pope_hard_no_guide_test
 

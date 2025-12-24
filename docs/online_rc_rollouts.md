@@ -4,6 +4,17 @@ This document describes the online rollout functionality in `rc_actor.py`.
 
 ## Quick Start
 
+### Prerequisites
+
+Before running the RC actor, you need a running vLLM inference server:
+
+```bash
+# Start vLLM server (in a separate terminal)
+vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8000
+```
+
+### Running the RC Actor
+
 Run the RC actor with a test configuration:
 
 ```bash
@@ -16,7 +27,31 @@ Override parameters on the command line:
 python -m pipelinerl.rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor actor.num_reasoning_steps=5
 ```
 
-**Important**: Your configuration must specify `output_dir` (where results are saved). This can be set in your YAML file or via command line.
+Specify a custom vLLM server URL:
+
+```bash
+python -m pipelinerl.rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor me.llm_urls=http://localhost:8000/v1
+```
+
+**Using the Test Script:**
+
+For easier testing with automatic vLLM server management:
+
+```bash
+python test_rc_actor.py --config-name test_rc
+```
+
+The test script (`test_rc_actor.py`) automatically:
+- Creates `llm_urls` programmatically (same pattern as `launch.py`)
+- Starts vLLM servers on ports 8080+
+- Waits for servers to be ready
+- Runs the RC actor
+- Cleans up servers on exit
+
+**Important Requirements:**
+- `output_dir`: Where results are saved (set in YAML or command line)
+- `me.llm_urls`: URL of the vLLM inference server (default: `http://localhost:8000/v1`)
+- A running vLLM server at the specified URL
 
 ## Overview
 
@@ -99,6 +134,27 @@ output_dir: ./runs/my_experiment
 
 # Model to use
 model_path: Qwen/Qwen3-4B-Instruct-2507
+
+# LLM inference server URLs (REQUIRED when running rc_actor.py directly)
+# Note: test_rc_actor.py sets this automatically
+# For direct runs, must be provided via command line:
+#   me.llm_urls=http://localhost:8000/v1
+
+# Dataset configuration (REQUIRED)
+dataset_loader: pipelinerl.domains.math.load_datasets
+
+# Option 1: POPE hard dataset (recommended for testing)
+train_dataset_names:
+  - pope_hard_no_guide_test
+test_dataset_names:
+  - pope_hard_no_guide_test
+
+# Option 2: MATH dataset from HuggingFace
+# train_dataset_names:
+#   - hub_id: lighteval/MATH
+#     split: train
+#     trust_remote_code: true
+# test_dataset_names: []
 ```
 
 ### Actor Configuration

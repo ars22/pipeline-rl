@@ -193,14 +193,19 @@ async def simple_rollout_policy(cfg, llm, problem, session):
 
 
 
+def get_actor_urls(num_llms: int) -> list[str]:
+    """Get actor LLM URLs (same pattern as world_map.get_actor_urls() in launch.py)"""
+    return [f"http://localhost:{8080 + i}/v1" for i in range(num_llms)]
+
+
 def prepare_config_for_test(cfg: DictConfig, output_dir: Path, num_llms: int):
     """Prepare config for testing"""
     
     # Set output directory
     cfg.output_dir = str(output_dir)
     
-    # Create LLM URLs
-    llm_urls = "+".join([f"http://localhost:{8080 + i}/v1" for i in range(num_llms)])
+    # Create LLM URLs (same pattern as launch.py: line 187, 198)
+    llm_urls = "+".join(get_actor_urls(num_llms))
     if not hasattr(cfg, 'me'):
         cfg.me = {}
     cfg.me.llm_urls = llm_urls
