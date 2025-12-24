@@ -57,10 +57,7 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
-try:
-    from pipelinerl.finetune.data import MASKED_TOKEN_ID
-except Exception:
-    MASKED_TOKEN_ID = -100
+from pipelinerl.finetune.data import MASKED_TOKEN_ID
 
 
 _WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
