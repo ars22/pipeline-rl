@@ -36,7 +36,9 @@ vllm_config:
 # Only actor_fraction is used for testing - determines GPU allocation for LLM servers
 test_world:
   actor_fraction: 2  # Use 100% of available GPUs for actor LLMs
-
+  env_replicas: 2
+  environment_start_port: 7777
+  actor_group_port: 9000
 
 # RC Actor configuration
 actor:
@@ -45,7 +47,11 @@ actor:
   
   # Rollout policies
   solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
-  summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_summarization_rollout
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+
 
   # Prompt templates
   reasoning_prompt_template: |
@@ -122,4 +128,20 @@ train_dataset_names:
   - pope_512
 test_dataset_names:
   - pope_512
+
+# Environment configuration 
+environment:
+  _target_: pipelinerl.domains.math.MathEnvironment
+
+# LLM Grader configuration
+llm_grader:
+  name: openai/gpt-oss-20b
+  vllm_kwargs:
+    num_nodes: 2                    # number of nodes for the grader server
+    data-parallel-size: 16          # data parallelism
+    tensor-parallel-size: 1         # tensor parallelism
+    max-num-batched-tokens: 8192    # tokenizer budget per batch
+    max-num-seqs: 16                # concurrent sequences
+    max-model-len: 32768            # prompt + output budget
+    gpu-memory-utilization: 0.85    # fraction of GPU memory vLLM can use
 

@@ -18,20 +18,14 @@ vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8000
 Run the RC actor with a test configuration:
 
 ```bash
-python -m pipelinerl.rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor
+python -m pipelinerl.test_rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor
 ```
 
 Override parameters on the command line:
 
 ```bash
-python -m pipelinerl.rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor actor.num_reasoning_steps=5
-```
+python -m pipelinerl.test_rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor actor.num_reasoning_steps=5
 
-Specify a custom vLLM server URL:
-
-```bash
-python -m pipelinerl.rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor me.llm_urls=http://localhost:8000/v1
-```
 
 **Using the Test Script:**
 

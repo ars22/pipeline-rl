@@ -188,3 +188,46 @@ async def generate_math_rollout(
         verifier_metrics=verifier_metrics,
         verifier_table_entry=verifier_table_entry,
     )
+
+
+async def generate_summarization_rollout(
+    cfg: DictConfig,
+    llm: TrainableLLM,
+    problem: dict,
+    session: aiohttp.ClientSession,
+) -> RolloutResult:
+    """
+    Simplified rollout for summarization tasks.
+    No system prompt, no scoring - just generates text with reward=0.
+    """
+    # Create prompt without system message
+    messages = [{"role": "user", "content": problem.get("task", "")}]
+    prompt = Prompt(messages=messages)
+
+    time_start = time.time()
+    llm_call = await llm_async_generate(llm, prompt, session)
+    latency = time.time() - time_start
+
+    assert llm_call.output.content is not None
+    
+    # Create training trace with zero reward
+    trace = make_training_text(llm, llm_call)
+    trace.reward = 0.0
+
+    # Simple metrics - no scoring
+    metrics = Metrics(
+        reward=0.0,
+        success=True,  # Always "successful" since we're not verifying
+        no_error=True,
+        no_answer=False,
+        penalty=0.0,
+    )
+
+    return RolloutResult(
+        training_texts=[trace],
+        metrics=metrics,
+        latency=latency,
+        dataset_name=problem.get("dataset"),
+        verifier_metrics={},
+        verifier_table_entry=None,
+    )
