@@ -101,7 +101,7 @@ test_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
     split: IMO2025
   - hub_id: hf-imo-colab/olympiads-proof-schema-cleaned
-    config: qwen3-4b-thinking_gpt-oss-20b_reward@128_max-0.7_std-lt-0.08
+    config: qwen3-4b-thinking_reward@128_max-0.7_std-lt-0.08
     split: train
 
 vllm_config:
