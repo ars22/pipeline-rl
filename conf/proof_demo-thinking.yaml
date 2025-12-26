@@ -5,7 +5,7 @@ defaults:
     - base
     - _self_
 
-model_path: Qwen/Qwen3-4B-Instruct-2507
+model_path: Qwen/Qwen3-4B-Thinking-2507
 # Uncomment to skip test set rollouts
 eval_every_n_versions: 0
 
@@ -18,7 +18,7 @@ finetune:
   seq_parallel: 1
   save_checkpoint_steps: 50
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Instruct-2507-Proof-Demo
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof-Demo
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
@@ -28,6 +28,11 @@ llm:
   parameters:
     max_tokens: 8192
     temperature: 0.8
+  reasoning_delimiters: ["</think>"]
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 16
+    log_every_n_groups: 4
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
@@ -52,6 +57,7 @@ llm_grader:
     reasoning:
       effort: medium
   prompt_name: v1
+  reasoning_delimiters: ${llm.reasoning_delimiters}
   wandb_table:
     enabled: true
     keep_last_k_groups: 16

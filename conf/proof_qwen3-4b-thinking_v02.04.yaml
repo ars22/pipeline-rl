@@ -27,12 +27,11 @@ finetune:
   num_warmup_steps: 0
   rl:
     entropy_bonus: 0.0001
-    final_entropy_bonus: ${finetune.rl.entropy_bonus}
-    overlong_filtering: false
+    overlong_filtering: true
   save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: v02.03
+  hub_model_revision: v02.04
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
