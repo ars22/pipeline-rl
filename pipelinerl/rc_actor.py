@@ -88,16 +88,17 @@ def _log_verifier_table_entry(entry: dict[str, str | int]):
     wandb.log({"tables/verifier": table})
 
 
-def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> dict[str, float | int]:
+def _aggregate_group_verifier_metrics(rollout_results: list[list[RolloutResult]]) -> dict[str, float | int]:
     runtime_values: defaultdict[str, list[float]] = defaultdict(list)
     count_totals: defaultdict[str, int] = defaultdict(int)
-    for result in rollout_results:
-        metrics = getattr(result, "verifier_metrics", {}) or {}
-        for key, value in metrics.items():
-            if key.startswith("verifier/failures/") or key.startswith("verifier/rollouts/"):
-                count_totals[key] += int(value)
-            else:
-                runtime_values[key].append(float(value))
+    for attempt in rollout_results:
+        for result in attempt:
+            metrics = getattr(result, "verifier_metrics", {}) or {}
+            for key, value in metrics.items():
+                if key.startswith("verifier/failures/") or key.startswith("verifier/rollouts/"):
+                    count_totals[key] += int(value)
+                else:
+                    runtime_values[key].append(float(value))
     aggregated: dict[str, float | int] = {}
     for key, values in runtime_values.items():
         if values:
@@ -107,7 +108,7 @@ def _aggregate_group_verifier_metrics(rollout_results: list[RolloutResult]) -> d
             aggregated[f"{key}_max"] = max(values)
     aggregated.update(count_totals)
 
-    total_rollouts = len(rollout_results)
+    total_rollouts = sum(len(attempt) for attempt in rollout_results)
     if total_rollouts:
         normalized_keys = [
             key
@@ -468,7 +469,7 @@ async def schedule_rollouts(
             # Metadata was already set in update_reasoning and update_summarization
             if all_rollout_results:
                 # Add all rollouts from this attempt to the group
-                group_rollouts[group_id].extend(all_rollout_results)
+                group_rollouts[group_id].append(all_rollout_results)
                 group_attempts_completed[group_id] += 1
                 
                 # Check if we've completed all attempts for this group
@@ -721,26 +722,27 @@ class RCActorLoop:
         
         return metrics
 
-    def update_stats(self, rollout_results: list[RolloutResult]):
-        for result in rollout_results:
-            assert result.model_version is not None
-            assert isinstance(result.metrics, BaseMetrics), "Metrics should be an instance of BaseMetrics"
-            dataset_name = result.dataset_name
-            group_id = result.group_id
-            self.latency_list.append(result.latency)
-            self.model_versions_list.append(result.model_version)
-            domain_agnostic_metrics = self.compute_domain_agnostic_metrics(result) 
-            all_metrics = result.metrics.model_dump() | domain_agnostic_metrics
-            for k, v in all_metrics.items():
-                if isinstance(v, list):
-                    self.stats[k][dataset_name][group_id] += v
-                elif isinstance(v, float) | isinstance(v, bool) | isinstance(v, int):
-                    self.stats[k][dataset_name][group_id].append(v)
-                else:
-                    raise ValueError(f"Unsupported metric type: {type(v)} for key {k}")
+    def update_stats(self, rollout_results: list[list[RolloutResult]]):
+        for attempt in rollout_results:
+            for result in attempt:
+                assert result.model_version is not None
+                assert isinstance(result.metrics, BaseMetrics), "Metrics should be an instance of BaseMetrics"
+                dataset_name = result.dataset_name
+                group_id = result.group_id
+                self.latency_list.append(result.latency)
+                self.model_versions_list.append(result.model_version)
+                domain_agnostic_metrics = self.compute_domain_agnostic_metrics(result) 
+                all_metrics = result.metrics.model_dump() | domain_agnostic_metrics
+                for k, v in all_metrics.items():
+                    if isinstance(v, list):
+                        self.stats[k][dataset_name][group_id] += v
+                    elif isinstance(v, float) | isinstance(v, bool) | isinstance(v, int):
+                        self.stats[k][dataset_name][group_id].append(v)
+                    else:
+                        raise ValueError(f"Unsupported metric type: {type(v)} for key {k}")
         
-        prompt_length_tokens = [training_text.prompt_tokens for result in rollout_results for training_text in result.training_texts]
-        output_length_tokens = [training_text.output_tokens for result in rollout_results for training_text in result.training_texts]
+        prompt_length_tokens = [training_text.prompt_tokens for attempt in rollout_results for result in attempt for training_text in result.training_texts]
+        output_length_tokens = [training_text.output_tokens for attempt in rollout_results for result in attempt for training_text in result.training_texts]
         self.sliding_aggregator.update(prompt_length_tokens, output_length_tokens)
         sliding_window_stats = self.sliding_aggregator.get_stats()
         if sliding_window_stats is not None:
@@ -758,7 +760,7 @@ class RCActorLoop:
             return None
         return now - last
 
-    def log_verifier_metrics_for_group(self, rollout_results: list[RolloutResult]) -> None:
+    def log_verifier_metrics_for_group(self, rollout_results: list[list[RolloutResult]]) -> None:
         if (
             not self.is_training
             or not self.cfg.wandb.use_wandb
@@ -958,9 +960,15 @@ class RCActorLoop:
                     logger.error("Stop actor loop due to error")
                     raise rollout_results
 
-                assert isinstance(rollout_results, list) # each group is a list of size attempts. Every attempt is a list of rollout results, one for each cycle step.
-                assert isinstance(rollout_results[0], list) # each attempt is a list of rollout results
-                assert isinstance(rollout_results[0][0], RolloutResult) # each cycle step is a RolloutResult
+                try:
+                    assert isinstance(rollout_results, list), f"rollout_results is not a list: {type(rollout_results)}" # each group is a list of size attempts. Every attempt is a list of rollout results, one for each cycle step.
+                    assert isinstance(rollout_results[0], list), f"rollout_results[0] is not a list: {type(rollout_results[0])}" # each attempt is a list of rollout results
+                    assert isinstance(rollout_results[0][0], RolloutResult), f"rollout_results[0][0] is not a RolloutResult: {type(rollout_results[0][0])}" # each cycle step is a RolloutResult
+                except Exception as e:
+                    logger.error(f"rollout_results: {rollout_results}")
+                    logger.error(f"Error in rollout_results: {e}")
+                    raise e
+                
                 group_samples = sum(len(attempt) for attempt in rollout_results) # number of cycle steps
 
                 published_samples += group_samples
