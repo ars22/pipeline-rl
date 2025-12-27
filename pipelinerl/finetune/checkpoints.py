@@ -46,8 +46,11 @@ def get_auto_model_class(
             raise ValueError(f"Unsupported model class: {model_class}")
 
 
-def load_tokenizer(config_name):
-    tokenizer = AutoTokenizer.from_pretrained(config_name, use_fast=True)
+def load_tokenizer(config_name: str, revision: str | None = None):
+    tokenizer_kwargs: dict[str, Any] = {"use_fast": True}
+    if revision:
+        tokenizer_kwargs["revision"] = str(revision)
+    tokenizer = AutoTokenizer.from_pretrained(config_name, **tokenizer_kwargs)
     if not isinstance(tokenizer, transformers.PreTrainedTokenizerFast):
         raise ValueError(f"tokenizer {tokenizer} is not fast")
     if tokenizer.pad_token is None:
@@ -62,10 +65,13 @@ def load_tokenizer(config_name):
     return tokenizer
 
 
-def load_processor(config_name):
+def load_processor(config_name: str, revision: str | None = None):
     """Load AutoProcessor for vision-language models."""
     try:
-        processor = AutoProcessor.from_pretrained(config_name)
+        processor_kwargs: dict[str, Any] = {}
+        if revision:
+            processor_kwargs["revision"] = str(revision)
+        processor = AutoProcessor.from_pretrained(config_name, **processor_kwargs)
         return processor
     except Exception as e:
         logger.warning(f"Failed to load processor for {config_name}: {e}")
@@ -90,6 +96,9 @@ def load_model(args, model_class, current_dir):
         trust_remote_code=args.trust_remote_code,
         low_cpu_mem_usage=True,  # this is essential for quick model loading as it does not spend time on a random weights initialization. It cuts loading time of a 15B params model from 100 sec to 12 sec.
     )
+    model_revision = getattr(args, "model_revision", None)
+    if model_revision:
+        loading_args["revision"] = str(model_revision)
     if args.use_flash_attention:
         assert version.parse(transformers.__version__) >= version.parse("4.34.0"), (
             "flash_attention is only supported for transformers>=4.34.0. Please upgrade transformers to use it"

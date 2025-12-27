@@ -338,7 +338,7 @@ def run_finetuning_loop(
     logger.info(f"Saving experiment to {output_dir}")
     dt = log_time(dt, time_stats, "finetune/startup")
 
-    tokenizer = load_tokenizer(args.config_name)
+    tokenizer = load_tokenizer(args.config_name, revision=getattr(args, "model_revision", None))
     logger.info("About to load model")
     model = load_model(args, args.model_class, current_dir)
     logger.info(f"Model loaded in dtype {model.dtype}")
