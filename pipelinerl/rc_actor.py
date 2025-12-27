@@ -320,6 +320,7 @@ async def schedule_rollouts(
     result_queue: SharedMemoryQueue,
     trainer_state: TrainerState,
     llms: list[TrainableLLM],
+    summarization_llms: list[TrainableLLM] | None,
     scheduler_name: str,
 ):
     """This routine schedules rollouts for a given problem queue and result queue.
@@ -335,18 +336,31 @@ async def schedule_rollouts(
     - Stateful: maintains InferenceProblemState across cycles
     - Iterative: multiple reasoning->summarization steps
     - Single attempt: each problem generates one trajectory
+    
+    Args:
+        summarization_llms: Optional separate LLMs for summarization. If None, uses the same LLMs as solution generation.
     """
     loop = asyncio.get_running_loop()
 
+    # Use separate summarization LLMs if provided, otherwise use the same LLMs
+    actual_summarization_llms = summarization_llms if summarization_llms is not None else llms
+    
     # Track active tasks per LLM
     active_rollouts = [0] * len(llms)
+    active_summarization_rollouts = [0] * len(actual_summarization_llms)
     started_solution_rollouts = [0] * len(llms)
-    started_summarization_rollouts = [0] * len(llms)
+    started_summarization_rollouts = [0] * len(actual_summarization_llms)
     finished_solution_rollouts = [0] * len(llms)
-    finished_summarization_rollouts = [0] * len(llms)
-    # Track rollouts per problem group
-    group_rollouts = {}  # Maps group_id -> list of RolloutResults
+    finished_summarization_rollouts = [0] * len(actual_summarization_llms)
+    
+    # Track rollouts per problem group with separate tracking for generation and summarization
+    group_rollouts = {}  # Maps group_id -> list of RolloutResults (final ordered results)
     group_attempts_completed = {}  # Maps group_id -> number of attempts completed
+    
+    # Separate tracking for each turn's generation and summarization results
+    # group_turn_results[group_id][turn_idx] = {"generation": RolloutResult, "summarization": RolloutResult}
+    group_turn_results = {}  # Maps group_id -> dict[turn_idx -> dict with "generation" and "summarization"]
+    
     solution_rollout_policy = hydra.utils.get_method(cfg.actor.solution_rollout_policy)
     summarization_rollout_policy = hydra.utils.get_method(cfg.actor.summarization_rollout_policy)
     logger.info(f"Use solution rollout policy: {solution_rollout_policy}")
@@ -355,8 +369,12 @@ async def schedule_rollouts(
     max_retries = cfg.actor.get("max_retries", 3)
     retry_base_delay = cfg.actor.get("retry_base_delay", 1.0)
 
+    # Separate queues for generation and summarization tasks
+    # Each item is (problem_state, group_id, turn_idx, rollout_index, requeue_count)
+    generation_queue: asyncio.Queue = asyncio.Queue()
+    summarization_queue: asyncio.Queue = asyncio.Queue()
+    
     # Queue for rollouts that failed with transient errors and need to be retried
-    # Each item is (problem, group_id, rollout_index, requeue_count)
     retry_queue: asyncio.Queue = asyncio.Queue()
 
     async def rollout_and_maybe_produce_result(
@@ -364,12 +382,14 @@ async def schedule_rollouts(
         group_id: int,
         rollout_index: int,
         llm_index: int,
+        summarization_llm_index: int,
         session: aiohttp.ClientSession,
         requeue_count: int = 0,
     ):
         nonlocal started_solution_rollouts, started_summarization_rollouts, finished_solution_rollouts, finished_summarization_rollouts
         try:
             llm = llms[llm_index]
+            summarization_llm = actual_summarization_llms[summarization_llm_index]
             model_version = trainer_state.propagated_weight_version
             assert model_version is not None
 
@@ -414,7 +434,7 @@ async def schedule_rollouts(
                                 full_group_id
                             )
                         
-                        # 2. Summarization step: summarize the reasoning
+                        # 2. Summarization step: summarize the reasoning (use summarization_llm)
                         summarization_problem = {
                             "task": problem_state.get_filled_summarization_prompt(),
                             "answer": problem_state.answer,
@@ -422,8 +442,8 @@ async def schedule_rollouts(
                             "id": problem_state.problem_id,
                         }
                         
-                        summarization_rollout_result = await summarization_rollout_policy(cfg, llm, summarization_problem, session)
-                        started_summarization_rollouts[llm_index] += 1
+                        summarization_rollout_result = await summarization_rollout_policy(cfg, summarization_llm, summarization_problem, session)
+                        started_summarization_rollouts[summarization_llm_index] += 1
                         
                         # Extract and update the summary
                         if summarization_rollout_result.training_texts:
@@ -442,7 +462,7 @@ async def schedule_rollouts(
                         all_rollout_results.append(summarization_rollout_result)
                         
                         finished_solution_rollouts[llm_index] += 1
-                        finished_summarization_rollouts[llm_index] += 1
+                        finished_summarization_rollouts[summarization_llm_index] += 1
                         break
                         
                     except Exception as e:
@@ -512,6 +532,7 @@ async def schedule_rollouts(
             logger.error("Stopped all tasks and put exception in the result queue")
         finally:
             active_rollouts[llm_index] -= 1
+            active_summarization_rollouts[summarization_llm_index] -= 1
 
     group_id = -1
     group_rollout_index = attempts
@@ -551,18 +572,21 @@ async def schedule_rollouts(
                 # Re-queue a failed rollout
                 retry_problem_state, retry_group_id, retry_rollout_index, requeue_count = retry_item
                 next_llm = active_rollouts.index(min(active_rollouts))
-                if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts:
+                next_summarization_llm = active_summarization_rollouts.index(min(active_summarization_rollouts))
+                if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts or active_summarization_rollouts[next_summarization_llm] == cfg.actor.llm_max_rollouts:
                     # All LLMs are busy, put item back and wait
                     await retry_queue.put(retry_item)
                     await asyncio.sleep(0.01)
                     continue
                 active_rollouts[next_llm] += 1
+                active_summarization_rollouts[next_summarization_llm] += 1
                 loop.create_task(
                     rollout_and_maybe_produce_result(
                         problem_state=retry_problem_state,
                         group_id=retry_group_id,
                         rollout_index=retry_rollout_index,
                         llm_index=next_llm,
+                        summarization_llm_index=next_summarization_llm,
                         session=session,
                         requeue_count=requeue_count,
                     )
@@ -584,11 +608,13 @@ async def schedule_rollouts(
                 logger.info(f"{scheduler_name}: Started a new group {group_id}")
 
             next_llm = active_rollouts.index(min(active_rollouts))
-            if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts:
+            next_summarization_llm = active_summarization_rollouts.index(min(active_summarization_rollouts))
+            if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts or active_summarization_rollouts[next_summarization_llm] == cfg.actor.llm_max_rollouts:
                 # all llms are busy, wait for one to finish
                 await asyncio.sleep(0.01)
                 continue
             active_rollouts[next_llm] += 1
+            active_summarization_rollouts[next_summarization_llm] += 1
             assert problem_state is not None
             loop.create_task(
                 rollout_and_maybe_produce_result(
@@ -596,6 +622,7 @@ async def schedule_rollouts(
                     group_id=group_id,
                     rollout_index=group_rollout_index,
                     llm_index=next_llm,
+                    summarization_llm_index=next_summarization_llm,
                     session=session,
                 )
             )
@@ -609,6 +636,7 @@ def rollout_maker_entrypoint(
     problem_queue: SharedMemoryQueue,
     result_queue: SharedMemoryQueue,
     llms: list[TrainableLLM],
+    summarization_llms: list[TrainableLLM] | None,
     scheduler_name: str,
 ):
     trainer_state = TrainerState(Path(cfg.output_dir))
@@ -620,7 +648,7 @@ def rollout_maker_entrypoint(
     loop = uvloop.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(
-        schedule_rollouts(cfg, attempts, problem_queue, result_queue, trainer_state, llms, scheduler_name)
+        schedule_rollouts(cfg, attempts, problem_queue, result_queue, trainer_state, llms, summarization_llms, scheduler_name)
     )
     loop.close()
     logger.info("Rollout maker loop closed")
@@ -641,6 +669,7 @@ class RCActorLoop:
         self,
         cfg: DictConfig,
         llms: list[TrainableLLM],
+        summarization_llms: list[TrainableLLM] | None,
         data_stream: StreamSpec,
         stats_stream: StreamSpec,
         trainer_state: TrainerState,
@@ -657,6 +686,7 @@ class RCActorLoop:
         self.use_think_tags = use_think_tags
         self.sliding_aggregator = SlidingWindowAggregator(window_size=cfg.actor.throughput_window_size)
         self.llms = llms
+        self.summarization_llms = summarization_llms if summarization_llms is not None else llms
         self.loop_start_time = -1
         self.cfg = cfg
         self.is_training = is_training
@@ -677,6 +707,11 @@ class RCActorLoop:
         llm_groups = [[] for _ in range(num_processes)]
         for i, llm in enumerate(self.llms):
             llm_groups[i % num_processes].append((i, llm))
+        
+        # Divide summarization LLMs across processes (same pattern)
+        summarization_llm_groups = [[] for _ in range(num_processes)]
+        for i, llm in enumerate(self.summarization_llms):
+            summarization_llm_groups[i % num_processes].append((i, llm))
 
         self.smm = SharedMemoryManager()
         self.smm.start()
@@ -692,16 +727,17 @@ class RCActorLoop:
 
         # Create and start multiple rollout processes
         self.rollout_processes = []
-        for llm_group in llm_groups:
+        for llm_group, summarization_llm_group in zip(llm_groups, summarization_llm_groups):
             assert llm_group
             llm_idxs = [llm[0] for llm in llm_group]
             llms = [llm[1] for llm in llm_group]
+            summarization_llms_for_process = [llm[1] for llm in summarization_llm_group]
             scheduler_name = (
                 f"{'train' if self.is_training else 'test'} RC scheduler for llms {','.join([str(i) for i in llm_idxs])}"
             )
             process = mp.Process(
                 target=rollout_maker_entrypoint,
-                args=(self.cfg, attempts, self.problem_queue, self.result_queue, llms, scheduler_name),
+                args=(self.cfg, attempts, self.problem_queue, self.result_queue, llms, summarization_llms_for_process, scheduler_name),
             )
             process.start()
             self.rollout_processes.append(process)
@@ -1087,6 +1123,14 @@ def run_actor_loop(cfg: DictConfig):
             raise ValueError("Failed to initialize wandb run")
         wandb.define_metric("verifier/*", step_metric="verifier/group_index")
     llm_urls = str(cfg.me.llm_urls).split("+")
+    
+    # Check if separate summarization LLMs are configured
+    summarization_llm_urls = None
+    if hasattr(cfg.me, 'summarization_llm_urls') and cfg.me.summarization_llm_urls:
+        summarization_llm_urls = str(cfg.me.summarization_llm_urls).split("+")
+        logger.info(f"Using separate summarization LLMs: {summarization_llm_urls}")
+    else:
+        logger.info("Using the same LLMs for summarization as for solution generation")
 
     stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats")
     test_stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats_test")
@@ -1109,6 +1153,20 @@ def run_actor_loop(cfg: DictConfig):
         actor_model_path = finetune_model_path
     else:
         actor_model_path = cfg.model_path
+    
+    # Determine summarization model path
+    if cfg.get('summarization_model_path'):
+        summarization_model_path = cfg.summarization_model_path
+        logger.info(f"Using separate summarization model: {summarization_model_path}")
+    else:
+        summarization_model_path = actor_model_path
+        logger.info("Using the same model for summarization as for solution generation")
+    
+    # Get LLM parameters for summarization
+    if cfg.get('summarization_llm') and cfg.summarization_llm.get('parameters'):
+        summarization_llm_params = cfg.summarization_llm.parameters
+    else:
+        summarization_llm_params = cfg.llm.parameters
     
     train_llms = [
         TrainableLLM(
@@ -1134,8 +1192,39 @@ def run_actor_loop(cfg: DictConfig):
         )
         for url in llm_urls
     ]
+    
+    # Initialize separate summarization LLMs if configured
+    train_summarization_llms = None
+    test_summarization_llms = None
+    if summarization_llm_urls:
+        train_summarization_llms = [
+            TrainableLLM(
+                base_url=url,
+                model_name=str(summarization_model_path),
+                tokenizer_name=str(summarization_model_path),
+                parameters=summarization_llm_params,
+                use_cache=False,
+                collect_logprobs=True,
+                observe_llm_calls=False,
+            )
+            for url in summarization_llm_urls
+        ]
+        test_summarization_llms = [
+            TrainableLLM(
+                base_url=url,
+                model_name=str(summarization_model_path),
+                tokenizer_name=str(summarization_model_path),
+                parameters=summarization_llm_params,
+                use_cache=False,
+                collect_logprobs=True,
+                observe_llm_calls=False,
+            )
+            for url in summarization_llm_urls
+        ]
 
     wait_for_inference_servers(llm_urls)
+    if summarization_llm_urls:
+        wait_for_inference_servers(summarization_llm_urls)
     wait_for_environments(cfg)
     trainer_state = TrainerState(exp_path)
     if cfg.debug.mode:
@@ -1161,6 +1250,7 @@ def run_actor_loop(cfg: DictConfig):
         trainer_state=trainer_state,
         stats_stream=stats_stream,
         llms=train_llms,
+        summarization_llms=train_summarization_llms,
         reasoning_prompt_template=reasoning_prompt_template,
         summarization_prompt_template=summarization_prompt_template,
         use_think_tags=use_think_tags,
@@ -1176,6 +1266,7 @@ def run_actor_loop(cfg: DictConfig):
         trainer_state=trainer_state,
         stats_stream=test_stats_stream,
         llms=test_llms,
+        summarization_llms=test_summarization_llms,
         reasoning_prompt_template=reasoning_prompt_template,
         summarization_prompt_template=summarization_prompt_template,
         use_think_tags=use_think_tags,
