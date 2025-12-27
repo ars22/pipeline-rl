@@ -1,6 +1,6 @@
 # ----------------------
 # Config for:
-#  generator: 8 nodes
+#  generator: 11 nodes
 #  grader: 1 node
 #  trainer: 4 nodes
 # ----------------------
@@ -9,8 +9,8 @@ defaults:
     - _self_
 
 model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
-# Eval every 25 steps (each batch is 24 samples with grad accumulation of 24 -> 576 updates per eval)
-eval_every_n_versions: 0 #19200
+# Eval every 25 steps (each batch is 16 samples with grad accumulation of 32 -> 512 updates per eval)
+eval_every_n_versions: 12800
 
 preprocess:
   shared_memory_entry_size: 2000000000
@@ -123,7 +123,7 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 64
+  actor_fraction: 88
   preprocessor_fraction: 0
   finetune_fraction: 32
   env_replicas: 1
