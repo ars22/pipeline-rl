@@ -118,6 +118,7 @@ eval_every_n_versions: 12800
 # changed
 model_path: Qwen/Qwen3-4B-Instruct-2507 
 # Qwen/Qwen2.5-7B
+model_revision: null
 
 # will use default based on the chosen backend
 accelerate_config: null
@@ -167,4 +168,3 @@ wandb:
   wandb_dir: null
   # Comma-separated list of keywords to tag the run.
   tags: []
-

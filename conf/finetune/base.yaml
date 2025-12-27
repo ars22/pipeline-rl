@@ -3,6 +3,8 @@ data: null
 model_class: causal-language-modeling
 # Model name or path of model to be trained.
 config_name: ${..model_path}
+# Optional Hugging Face Hub revision (branch / tag / commit).
+model_revision: ${..model_revision}
 # Optimizer type, supported: adamw_torch, adafactor, cpuadam, lion
 optim: adamw_torch
 # use half precision training, full bf16 without mixed precision copies at all
