@@ -58,6 +58,14 @@ test_llm:
     top_p: 0.95
     top_k: 50
 
+# LLM parameters for summarization (optional)
+# If not set, uses the same parameters as solution generation
+summarization_llm:
+  parameters:
+    max_tokens: 4096
+    temperature: 0.7
+    top_p: 0.95
+
 vllm_config:
   use_v1: false
   vllm_kwargs:
@@ -78,6 +86,7 @@ world:
   replicas: 1
   
   actor_fraction: 4
+  summarization_fraction: 0  # Set to >0 to use separate summarization LLMs
   preprocessor_fraction: 0
   finetune_fraction: 4
 
@@ -93,6 +102,14 @@ eval_every_n_versions: 12800
 # changed
 model_path: Qwen/Qwen3-4B-Instruct-2507 
 # Qwen/Qwen2.5-7B
+
+# Separate model for summarization (optional)
+# If not set or null, uses the same model as actor
+summarization_model_path: null
+
+# vLLM config for summarization LLMs (optional)
+# If not set, uses the same config as actor LLMs
+summarization_vllm_config: null
 
 # will use default based on the chosen backend
 accelerate_config: null

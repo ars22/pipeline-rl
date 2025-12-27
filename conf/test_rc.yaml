@@ -36,6 +36,7 @@ vllm_config:
 # Only actor_fraction is used for testing - determines GPU allocation for LLM servers
 test_world:
   actor_fraction: 2  # Use 100% of available GPUs for actor LLMs
+  summarization_fraction: 0  # Set to >0 to use separate summarization LLMs (e.g., 1 for 1 GPU)
   env_replicas: 2
   environment_start_port: 7777
   actor_group_port: 9000

@@ -105,6 +105,69 @@ def start_actor_llm(
     return process
 
 
+def start_summarization_llm(
+    cfg: DictConfig,
+    summarization_llm_idx: int,
+    local_idx: int,
+    gpus: list[int],
+    exp_dir: Path
+):
+    """Start a summarization LLM server (same logic as actor LLM but with different model/config)"""
+    
+    # Use summarization model if configured, otherwise use actor model
+    if cfg.get('summarization_model_path'):
+        summarization_model_path = cfg.summarization_model_path
+    else:
+        finetune_model_path = exp_dir / "finetune" / "current"
+        if os.path.exists(finetune_model_path):
+            summarization_model_path = finetune_model_path
+        else:
+            summarization_model_path = cfg.model_path
+
+    log_dir = exp_dir / f"summarization_vllm_{summarization_llm_idx}"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Use summarization-specific port (8180+)
+    cmd = [
+        "python",
+        "-m",
+        "vllm.entrypoints.openai.api_server",
+        "--model",
+        str(summarization_model_path),
+        "--host",
+        "0.0.0.0",
+        "--port",
+        str(8180 + summarization_llm_idx),
+        "--seed",
+        str(cfg.seed + 1000 + summarization_llm_idx),  # Different seed space
+    ]
+
+    # Add vLLM kwargs - use summarization config if available, otherwise actor config
+    vllm_config = cfg.get('summarization_vllm_config') if cfg.get('summarization_vllm_config') else cfg.vllm_config
+    if hasattr(vllm_config, 'vllm_kwargs') and vllm_config.vllm_kwargs:
+        for k, v in vllm_config.vllm_kwargs.items():
+            cmd.append(f"--{k}")
+            if v not in [None, ""]:
+                cmd.append(str(v))
+
+    gpu_str = ",".join([str(gpu) for gpu in gpus])
+    logger.info(f"Starting summarization_llm {summarization_llm_idx} with command: {' '.join(cmd)} on gpus: {gpu_str}")
+    save_command(log_dir, cmd)
+    
+    log_file_path = os.path.join(log_dir, "stdout.log")
+    err_file_path = os.path.join(log_dir, "stderr.log")
+    
+    with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
+        process = _popen(
+            cmd,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            stdout=log_file,
+            stderr=err_file,
+        )
+    
+    return process
+
+
 def wait_for_llm_server(port: int, timeout: int = 300) -> bool:
     """Wait for LLM server to be ready"""
     import requests
@@ -267,7 +330,7 @@ def get_actor_urls(num_llms: int, gpus_per_llm: int = 1) -> list[str]:
     return urls
 
 
-def prepare_config_for_test(cfg: DictConfig, output_dir: Path, num_llms: int, gpus_per_llm: int = 1, num_envs: int = 1, env_start_port: int = 9000):
+def prepare_config_for_test(cfg: DictConfig, output_dir: Path, num_llms: int, gpus_per_llm: int = 1, num_summarization_llms: int = 0, summarization_gpus_per_llm: int = 1, num_envs: int = 1, env_start_port: int = 9000):
     """Prepare config for testing. Mainly for setting the llm_urls and job info. Rest everything is set in the config file."""
     
     # Set output directory
@@ -283,6 +346,17 @@ def prepare_config_for_test(cfg: DictConfig, output_dir: Path, num_llms: int, gp
     # Temporarily disable struct mode to add llm_urls
     OmegaConf.set_struct(cfg.me, False)
     cfg.me.llm_urls = llm_urls
+    
+    # Create separate summarization LLM URLs if configured
+    if num_summarization_llms > 0:
+        # Summarization LLMs start at a different base port (e.g., 8180)
+        summarization_urls = []
+        base_gpu_offset = num_llms * gpus_per_llm  # Start after actor GPUs
+        for i in range(num_summarization_llms):
+            local_idx = base_gpu_offset + (i * summarization_gpus_per_llm)
+            summarization_urls.append(f"http://localhost:{8180 + i}")
+        cfg.me.summarization_llm_urls = "+".join(summarization_urls)
+    
     OmegaConf.set_struct(cfg.me, True)
     
     # Create job information for environments (needed by rollout functions)
@@ -327,12 +401,31 @@ def main(cfg: DictConfig):
     
     # For testing, we use actor fraction from config
     num_llms = cfg.get('test_world', {}).get('actor_fraction', 1)
+    num_summarization_llms = cfg.get('test_world', {}).get('summarization_fraction', 0)
+    
+    # Get summarization vLLM config (if different from actor)
+    if cfg.get('summarization_vllm_config') and cfg.summarization_vllm_config.get('vllm_kwargs'):
+        summarization_llm_kwargs = cfg.summarization_vllm_config.vllm_kwargs
+        summarization_tp = summarization_llm_kwargs.get("tensor-parallel-size", 1)
+        summarization_pp = summarization_llm_kwargs.get("pipeline-parallel-size", 1)
+        summarization_gpus_per_llm = summarization_tp * summarization_pp
+    else:
+        summarization_gpus_per_llm = gpus_per_llm
     
     # Allocate GPUs: each LLM gets gpus_per_llm consecutive GPUs
     gpu_ids = []
     for llm_idx in range(num_llms):
         llm_gpus = list(range(llm_idx * gpus_per_llm, (llm_idx + 1) * gpus_per_llm))
         gpu_ids.extend(llm_gpus)
+    
+    # Allocate GPUs for summarization LLMs (after actor LLMs)
+    summarization_gpu_ids = []
+    if num_summarization_llms > 0:
+        base_gpu_offset = num_llms * gpus_per_llm
+        for llm_idx in range(num_summarization_llms):
+            llm_gpus = list(range(base_gpu_offset + llm_idx * summarization_gpus_per_llm, 
+                                base_gpu_offset + (llm_idx + 1) * summarization_gpus_per_llm))
+            summarization_gpu_ids.extend(llm_gpus)
     
     # Create output directory
     output_dir = Path("/tmp/test_rc_actor_" + str(int(time.time())))
@@ -349,14 +442,18 @@ def main(cfg: DictConfig):
     logger.info(f"Model: {cfg.model_path}")
     logger.info(f"GPUs per LLM: {gpus_per_llm}")
     logger.info(f"Number of LLM servers: {num_llms}")
+    logger.info(f"Number of summarization LLM servers: {num_summarization_llms}")
     logger.info(f"Number of environment servers: {num_envs}")
     logger.info(f"Number of reasoning steps: {cfg.actor.num_reasoning_steps}")
-    logger.info(f"GPU allocation: {gpu_ids}")
+    logger.info(f"Actor GPU allocation: {gpu_ids}")
+    if num_summarization_llms > 0:
+        logger.info(f"Summarization GPU allocation: {summarization_gpu_ids}")
+        logger.info(f"Summarization model: {cfg.get('summarization_model_path', cfg.model_path)}")
     logger.info(f"Output directory: {output_dir}")
     logger.info("=" * 80)
     
     # Prepare config (includes job information)
-    cfg = prepare_config_for_test(cfg, output_dir, num_llms, gpus_per_llm, num_envs, env_start_port)
+    cfg = prepare_config_for_test(cfg, output_dir, num_llms, gpus_per_llm, num_summarization_llms, summarization_gpus_per_llm, num_envs, env_start_port)
     
     # Save config (environments need to read this)
     config_dir = output_dir / "conf"
@@ -430,9 +527,42 @@ def main(cfg: DictConfig):
         
         logger.info("✅ All vLLM servers are ready!")
         
+        # Step 3: Start summarization LLM servers (if configured)
+        summarization_llm_ports = []
+        if num_summarization_llms > 0:
+            logger.info("=" * 80)
+            logger.info("Step 3: Starting summarization LLM servers")
+            logger.info("=" * 80)
+            
+            base_gpu_offset = num_llms * gpus_per_llm
+            for i in range(num_summarization_llms):
+                # Allocate GPUs for this summarization LLM
+                llm_gpus = list(range(base_gpu_offset + i * summarization_gpus_per_llm,
+                                    base_gpu_offset + (i + 1) * summarization_gpus_per_llm))
+                port = 8180 + i
+                summarization_llm_ports.append(port)
+                logger.info(f"Starting summarization LLM {i} on GPUs {llm_gpus}, port {port}")
+                process = start_summarization_llm(cfg, i, i, llm_gpus, output_dir)
+                processes.append(process)
+            
+            # Wait for all summarization LLM servers to be ready
+            logger.info("\nWaiting for all summarization LLM servers to be ready...")
+            all_summarization_llm_ready = True
+            for port in summarization_llm_ports:
+                if not wait_for_llm_server(port, timeout=300):
+                    all_summarization_llm_ready = False
+                    logger.error(f"Summarization LLM server on port {port} failed to start!")
+            
+            if not all_summarization_llm_ready:
+                logger.error("Not all summarization LLM servers started successfully!")
+                return 1
+            
+            logger.info("✅ All summarization LLM servers are ready!")
+        
         # Run RC actor
         logger.info("=" * 80)
-        logger.info("Step 3: Running RC Actor")
+        step_num = 4 if num_summarization_llms > 0 else 3
+        logger.info(f"Step {step_num}: Running RC Actor")
         logger.info("=" * 80)
         
         # Import and run
