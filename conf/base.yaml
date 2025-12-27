@@ -118,7 +118,7 @@ eval_every_n_versions: 12800
 # changed
 model_path: Qwen/Qwen3-4B-Instruct-2507 
 # Qwen/Qwen2.5-7B
-model_revision: null
+model_revision: main
 
 # will use default based on the chosen backend
 accelerate_config: null
