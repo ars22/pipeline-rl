@@ -101,6 +101,10 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
         str(cfg.seed + preprocessor_llm_idx),
     ]
 
+    model_revision = getattr(cfg, "model_revision", None)
+    if model_revision and not Path(str(cfg.model_path)).exists():
+        cmd.extend(["--revision", str(model_revision)])
+
     # Add vLLM kwargs as separate arguments
     for k, v in kwargs.items():
         cmd.append(f"--{k}")
@@ -156,6 +160,10 @@ def run_actor_llm(
         "--weight-update-group-world-size",
         str(world_map.weight_update_group_size),
     ]
+
+    model_revision = getattr(cfg, "model_revision", None)
+    if model_revision and not Path(str(actor_model_path)).exists():
+        cmd.extend(["--revision", str(model_revision)])
 
     # Add vLLM kwargs as separate arguments
     if cfg.vllm_config.vllm_kwargs:
