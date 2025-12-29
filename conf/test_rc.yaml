@@ -10,13 +10,17 @@ defaults:
 # Model - use small model for fast testing
 model_path: Qwen/Qwen3-4B-Instruct-2507
 
+# Optional: Use a different (smaller/faster) model for summarization
+# Uncomment to enable separate summarization model
+summarization_model_path: Qwen/Qwen3-4B-Instruct-2507
+
 # Random seed
 seed: 42
 
 # Output directory for test runs
 output_dir: ./runs/test_rc
 
-# vLLM configuration
+# vLLM configuration for generation/actor LLMs
 vllm_config:
   use_v1: false
   vllm_kwargs:
@@ -26,17 +30,38 @@ vllm_config:
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
-    max-num-batched-tokens: 64000
+    max-num-batched-tokens: 96000
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
     generation-config: vllm
+    tensor-parallel-size: 1
+    max-model-len: 131072  # Set explicit context limit (128K tokens)
+
+# vLLM configuration for summarization LLMs 
+summarization_vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    enforce-eager: ""  # for summarization LLMs, to avoid TMA issues when trying to set aside GPU memory for CUDA optimizations.
+    dtype: bfloat16
+    gpu-memory-utilization: 0.90
+    num-scheduler-steps: 16
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}  
+    max-num-batched-tokens: 96000  
+    no-enable-prefix-caching: ""
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    generation-config: vllm
+    tensor-parallel-size: 1
+    max-model-len: 131072  # Set explicit context limit (128K tokens)
 
 # Test world configuration (simplified version of world config)
-# Only actor_fraction is used for testing - determines GPU allocation for LLM servers
+# Controls GPU allocation for different LLM types
 test_world:
-  actor_fraction: 2  # Use 100% of available GPUs for actor LLMs
-  summarization_fraction: 0  # Set to >0 to use separate summarization LLMs (e.g., 1 for 1 GPU)
+  actor_fraction: 6  # Number of LLMs for actor/generation LLMs
+  summarization_fraction: 2  # Number of LLMs for summarization LLMs (0 = use same LLMs as actor)
   env_replicas: 2
   environment_start_port: 7777
   actor_group_port: 9000
@@ -44,42 +69,26 @@ test_world:
 # RC Actor configuration
 actor:
   # Number of reasoning/summarization cycles per problem
-  num_reasoning_steps: 2
+  num_reasoning_steps: 16
   
   # Rollout policies
   solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
   summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_summarization_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  
+  # Prompt template files (loaded from files)
+  reasoning_prompt_file: prompts/rc_reasoning_prompt.txt
+  summarization_prompt_file: prompts/rc_summarization_prompt.txt
+  
+  # Task template for formatting the problem
   task_template: |-
     {task}
-
-
-  # Prompt templates
-  reasoning_prompt_template: |
-    Solve this problem step by step.
-    
-    Problem: {problem}
-    
-    Previous work: {curr_summary}
-    
-    Continue your reasoning:
-  
-  summarization_prompt_template: |
-    Summarize the solution progress.
-    
-    Problem: {problem}
-    
-    Previous summary: {existing_summary}
-    
-    New reasoning: {reasoning}
-    
-    Provide a concise updated summary:
   
   # Rollout configuration
   rollout_workers: 1
-  llm_max_rollouts: 16
-  problem_queue_size: 10
-  result_queue_size: 10
+  llm_max_rollouts: 256
+  problem_queue_size: 8
+  result_queue_size: 8
   shared_memory_entry_size: 5242880  # 5MB
   throughput_window_size: 10
   
@@ -87,12 +96,19 @@ actor:
   max_retries: 3
   retry_base_delay: 1.0
 
-# LLM generation parameters
+# LLM generation parameters for reasoning/solution generation
 llm:
   parameters:
-    temperature: 1.0
-    max_tokens: 16384
-    top_p: 0.95
+    temperature: 1.0  
+    max_tokens: 16384  # Longer reasoning chains
+    top_p: 0.9
+
+# LLM generation parameters for summarization 
+summarization_llm:
+  parameters:
+    temperature: 1.0  
+    max_tokens: 2048  # Shorter summaries
+    top_p: 0.90  
 
 test_llm:
   parameters:
@@ -108,11 +124,14 @@ streams:
 wandb:
   use_wandb: false
 
-# Training attempts (for online RC, use 1)
-attempts: 1
+# Training attempts (for online RC, we use 1 for training and higher values for evaluation)
+attempts: 4
 
 # Disable eval during test
 eval_every_n_versions: 0
+
+# Eval only mode
+eval_only: true
 
 # Debug mode
 debug:
@@ -126,9 +145,9 @@ finetune:
 # Dataset configuration - using POPE hard dataset
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - pope_512
+  - imo_answer_bench
 test_dataset_names:
-  - pope_512
+  - imo_answer_bench
 
 # Environment configuration 
 environment:

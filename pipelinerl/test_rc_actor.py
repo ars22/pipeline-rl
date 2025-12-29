@@ -127,7 +127,7 @@ def start_summarization_llm(
     log_dir = exp_dir / f"summarization_vllm_{summarization_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
     
-    # Use summarization-specific port (8180+)
+    # Use summarization-specific port (8280+)
     cmd = [
         "python",
         "-m",
@@ -137,7 +137,7 @@ def start_summarization_llm(
         "--host",
         "0.0.0.0",
         "--port",
-        str(8180 + summarization_llm_idx),
+        str(8280 + summarization_llm_idx),
         "--seed",
         str(cfg.seed + 1000 + summarization_llm_idx),  # Different seed space
     ]
@@ -349,12 +349,12 @@ def prepare_config_for_test(cfg: DictConfig, output_dir: Path, num_llms: int, gp
     
     # Create separate summarization LLM URLs if configured
     if num_summarization_llms > 0:
-        # Summarization LLMs start at a different base port (e.g., 8180)
+        # Summarization LLMs start at a different base port (e.g., 8280)
         summarization_urls = []
         base_gpu_offset = num_llms * gpus_per_llm  # Start after actor GPUs
         for i in range(num_summarization_llms):
             local_idx = base_gpu_offset + (i * summarization_gpus_per_llm)
-            summarization_urls.append(f"http://localhost:{8180 + i}")
+            summarization_urls.append(f"http://localhost:{8280 + i}")
         cfg.me.summarization_llm_urls = "+".join(summarization_urls)
     
     OmegaConf.set_struct(cfg.me, True)
@@ -539,7 +539,7 @@ def main(cfg: DictConfig):
                 # Allocate GPUs for this summarization LLM
                 llm_gpus = list(range(base_gpu_offset + i * summarization_gpus_per_llm,
                                     base_gpu_offset + (i + 1) * summarization_gpus_per_llm))
-                port = 8180 + i
+                port = 8280 + i
                 summarization_llm_ports.append(port)
                 logger.info(f"Starting summarization LLM {i} on GPUs {llm_gpus}, port {port}")
                 process = start_summarization_llm(cfg, i, i, llm_gpus, output_dir)

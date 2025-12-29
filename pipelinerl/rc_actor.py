@@ -183,6 +183,8 @@ class InferenceProblemState:
             sample.metadata["cycle_step"] = self.overall_cycle_step
             sample.metadata["turn_type"] = "reasoning"
             sample.metadata["turn_number"] = self.reasoning_turn_number
+            sample.metadata["problem_id"] = self.problem_id
+            sample.metadata["sample_id"] = self.sample_id
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -196,6 +198,11 @@ class InferenceProblemState:
             processed_response_string = processed_response_string.split("</think>")[0]
         self.curr_reasoning = processed_response_string.strip()
         self.reasoning_string_store.append(self.curr_reasoning)
+        
+        logger.info(f"[REASONING UPDATE] problem_id={self.problem_id}, "
+                   f"turn={self.reasoning_turn_number}, "
+                   f"reasoning_len={len(self.curr_reasoning)} chars, "
+                   f"output_tokens={rollout.training_texts[0].output_tokens if rollout.training_texts else 0}")
 
     def update_summarization(self, rollout: RolloutResult, response_string: str, model_version: int, rollout_index: int, group_id: str):
         # Increment summarization turn counter
@@ -211,6 +218,8 @@ class InferenceProblemState:
             sample.metadata["cycle_step"] = self.overall_cycle_step
             sample.metadata["turn_type"] = "summarization"
             sample.metadata["turn_number"] = self.summarization_turn_number
+            sample.metadata["problem_id"] = self.problem_id
+            sample.metadata["sample_id"] = self.sample_id
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -222,20 +231,36 @@ class InferenceProblemState:
         processed_response_string = response_string.replace("<think>", "").replace("</think>", "").strip()
         self.curr_summary = processed_response_string
         self.summarization_string_store.append(self.curr_summary)
+        
+        # logger.info(f"[SUMMARIZATION UPDATE] problem_id={self.problem_id}, "
+        #            f"turn={self.summarization_turn_number}, "
+        #            f"summary_len={len(self.curr_summary)} chars, "
+        #            f"output_tokens={rollout.training_texts[0].output_tokens if rollout.training_texts else 0}")
 
     def get_filled_reasoning_prompt(self) -> str:
-        return self.reasoning_prompt_template.format(
+        prompt = self.reasoning_prompt_template.format(
             problem=self.problem_text,
             curr_summary=self.curr_summary,
         )
+        # logger.info(f"[REASONING PROMPT] Turn {self.reasoning_turn_number}: "
+        #            f"problem_len={len(self.problem_text)} chars, "
+        #            f"summary_len={len(self.curr_summary)} chars, "
+        #            f"total_prompt_len={len(prompt)} chars")
+        return prompt
 
     def get_filled_summarization_prompt(self) -> str:
         curr_chunk = self.curr_reasoning
-        return self.summarization_prompt_template.format(
+        prompt = self.summarization_prompt_template.format(
             problem=self.problem_text,
             existing_summary=self.curr_summary, 
             reasoning=curr_chunk.strip()
         )
+        # logger.info(f"[SUMMARIZATION PROMPT] Turn {self.summarization_turn_number}: "
+        #            f"problem_len={len(self.problem_text)} chars, "
+        #            f"existing_summary_len={len(self.curr_summary)} chars, "
+        #            f"reasoning_len={len(curr_chunk)} chars, "
+        #            f"total_prompt_len={len(prompt)} chars")
+        return prompt
 
     def reset_stores(self):
         self.reasoning_rollout_store = []
@@ -369,10 +394,6 @@ async def schedule_rollouts(
     max_retries = cfg.actor.get("max_retries", 3)
     retry_base_delay = cfg.actor.get("retry_base_delay", 1.0)
 
-    # Separate queues for generation and summarization tasks
-    # Each item is (problem_state, group_id, turn_idx, rollout_index, requeue_count)
-    generation_queue: asyncio.Queue = asyncio.Queue()
-    summarization_queue: asyncio.Queue = asyncio.Queue()
     
     # Queue for rollouts that failed with transient errors and need to be retried
     retry_queue: asyncio.Queue = asyncio.Queue()
@@ -420,20 +441,21 @@ async def schedule_rollouts(
                         started_solution_rollouts[llm_index] += 1
                         
                         # Extract the reasoning text from the rollout result
-                        # Assuming the rollout result has training_texts with the generated content
-                        if solution_rollout_result.training_texts:
-                            # Get the generated text (decode from tokens if needed)
-                            # This depends on your RolloutResult structure
-                            reasoning_text = solution_rollout_result.training_texts[0].text if hasattr(solution_rollout_result.training_texts[0], 'text') else ""
-                            # Update reasoning with metadata
-                            problem_state.update_reasoning(
-                                solution_rollout_result, 
-                                reasoning_text,
-                                model_version,
-                                rollout_index,
-                                full_group_id
-                            )
-                        
+                        try:
+                            reasoning_text = solution_rollout_result.training_texts[0].output_text
+                        except Exception as e:
+                            logger.error(f"Error extracting reasoning text: {e}")
+                            reasoning_text = ""
+
+                        # Update reasoning with metadata
+                        problem_state.update_reasoning(
+                            solution_rollout_result, 
+                            reasoning_text,
+                            model_version,
+                            rollout_index,
+                            full_group_id
+                        )
+                    
                         # 2. Summarization step: summarize the reasoning (use summarization_llm)
                         summarization_problem = {
                             "task": problem_state.get_filled_summarization_prompt(),
@@ -446,16 +468,19 @@ async def schedule_rollouts(
                         started_summarization_rollouts[summarization_llm_index] += 1
                         
                         # Extract and update the summary
-                        if summarization_rollout_result.training_texts:
-                            summary_text = summarization_rollout_result.training_texts[0].text if hasattr(summarization_rollout_result.training_texts[0], 'text') else ""
-                            # Update summarization with metadata
-                            problem_state.update_summarization(
-                                summarization_rollout_result, 
-                                summary_text,
-                                model_version,
-                                rollout_index,
-                                full_group_id
-                            )
+                        try:
+                            summary_text = summarization_rollout_result.training_texts[0].output_text
+                        except AttributeError as e:
+                            logger.error(f"Error extracting summary text: {e}")
+                            summary_text = ""
+                        # Update summarization with metadata
+                        problem_state.update_summarization(
+                            summarization_rollout_result, 
+                            summary_text,
+                            model_version,
+                            rollout_index,
+                            full_group_id
+                        )
                         
                         # Store both rollout results
                         all_rollout_results.append(solution_rollout_result)
@@ -856,6 +881,9 @@ class RCActorLoop:
         Prepare init state for an RC rollout.
         """
         
+        logger.info(f"[INIT PROBLEM] problem_id={problem['id']}, "
+                   f"problem_text_len={len(problem['task'])} chars")
+        
         state = InferenceProblemState(
             problem_text=problem['task'],
             problem_id=problem['id'],
@@ -1109,6 +1137,7 @@ class RCActorLoop:
 
 
 def run_actor_loop(cfg: DictConfig):
+
     set_streams_backend(**cfg.streams)
 
     # set seed for reproducibility (mostly intended for dataset loading)
@@ -1168,6 +1197,9 @@ def run_actor_loop(cfg: DictConfig):
     else:
         summarization_llm_params = cfg.llm.parameters
     
+    # In eval-only mode, we don't need to collect logprobs since we're not creating training data
+    eval_only_mode = cfg.get('eval_only', False)
+    
     train_llms = [
         TrainableLLM(
             base_url=url,
@@ -1187,7 +1219,7 @@ def run_actor_loop(cfg: DictConfig):
             tokenizer_name=str(actor_model_path),
             parameters=cfg.test_llm.parameters,
             use_cache=False,
-            collect_logprobs=True,
+            collect_logprobs=not eval_only_mode,  # Don't collect logprobs in eval-only mode
             observe_llm_calls=False,
         )
         for url in llm_urls
@@ -1216,7 +1248,7 @@ def run_actor_loop(cfg: DictConfig):
                 tokenizer_name=str(summarization_model_path),
                 parameters=summarization_llm_params,
                 use_cache=False,
-                collect_logprobs=True,
+                collect_logprobs=not eval_only_mode,  # Don't collect logprobs in eval-only mode
                 observe_llm_calls=False,
             )
             for url in summarization_llm_urls
@@ -1233,33 +1265,44 @@ def run_actor_loop(cfg: DictConfig):
         trainer_state.start_listening()
         trainer_state.wait_for_model_version()
 
-    # Get prompt templates from config
-    reasoning_prompt_template = cfg.actor.get(
-        "reasoning_prompt_template",
-        "Problem: {problem}\n\nCurrent summary: {curr_summary}\n\nContinue reasoning:"
-    )
-    summarization_prompt_template = cfg.actor.get(
-        "summarization_prompt_template",
-        "Problem: {problem}\n\nExisting summary: {existing_summary}\n\nNew reasoning: {reasoning}\n\nProvide an updated summary:"
-    )
-    use_think_tags = cfg.actor.get("use_think_tags", False)
+    # Load prompt templates from files
+    def load_prompt_template(prompt_path: str, fallback: str) -> str:
+        """Load prompt template from file, or use fallback if file doesn't exist"""
+        if prompt_path:
+            try:
+                # Try relative to current working directory
+                full_path = Path(prompt_path)
+                if not full_path.exists():
+                    # Try relative to experiment path
+                    full_path = exp_path.parent / prompt_path
+                
+                if full_path.exists():
+                    with open(full_path, 'r') as f:
+                        template = f.read()
+                    logger.info(f"Loaded prompt template from: {full_path}")
+                    return template
+                else:
+                    logger.warning(f"Prompt file not found: {prompt_path}, using fallback")
+            except Exception as e:
+                logger.warning(f"Error loading prompt file {prompt_path}: {e}, using fallback")
+        return fallback
     
-    train_loop = RCActorLoop(
-        data_stream=data_stream,
-        cfg=cfg,
-        trainer_state=trainer_state,
-        stats_stream=stats_stream,
-        llms=train_llms,
-        summarization_llms=train_summarization_llms,
-        reasoning_prompt_template=reasoning_prompt_template,
-        summarization_prompt_template=summarization_prompt_template,
-        use_think_tags=use_think_tags,
-        is_training=True,
+    # Get prompt templates from config files or use defaults
+    reasoning_prompt_file = cfg.actor.get("reasoning_prompt_file", None)
+    summarization_prompt_file = cfg.actor.get("summarization_prompt_file", None)
+    
+    reasoning_prompt_template = load_prompt_template(
+        reasoning_prompt_file,
+        fallback="Problem: {problem}\n\nCurrent summary: {curr_summary}\n\nContinue reasoning:"
     )
-    train_loop_run = train_loop.run(
-        dataset=train_dataset,
-        cfg=cfg,
+    summarization_prompt_template = load_prompt_template(
+        summarization_prompt_file,
+        fallback="Problem: {problem}\n\nExisting summary: {existing_summary}\n\nNew reasoning: {reasoning}\n\nProvide an updated summary:"
     )
+    
+    use_think_tags = cfg.actor.get("use_think_tags", False)
+
+    # 0. If eval_only is True, set up the test loop and run it
     test_loop = RCActorLoop(
         data_stream=test_data_stream,
         cfg=cfg,
@@ -1272,54 +1315,76 @@ def run_actor_loop(cfg: DictConfig):
         use_think_tags=use_think_tags,
         is_training=False,
     )
-    test_loop_run = None
-
-    last_regular_eval = -1
-    current_eval = -1
-    while True:
-        assert trainer_state.propagated_weight_version is not None
-
-        # 1. Start a new test loop if needed
-        next_regular_eval = (
-            trainer_state.propagated_weight_version
-            if last_regular_eval == -1
-            else last_regular_eval + cfg.eval_every_n_versions
+    if cfg.eval_only:
+        logger.info("Create test loop")
+        logger.info("Running test loop in eval-only mode")
+        test_loop_run = test_loop.run(
+            dataset=test_dataset,   
+            cfg=cfg,
         )
-        if (
-            cfg.eval_every_n_versions
-            and not cfg.debug.mode
-            and trainer_state.propagated_weight_version >= next_regular_eval
-            and test_dataset
-            and test_loop_run is None
-        ):
-            logger.info("Create test loop")
-            test_loop_run = test_loop.run(
-                dataset=test_dataset,   
-                cfg=cfg,
+        while True:
+            if test_loop_run is not None:
+                try:
+                    _ = next(test_loop_run)
+                except StopIteration:
+                    logger.info("Test loop finished")
+                    test_loop_run = None
+    else:
+        test_loop_run = None
+
+        train_loop = RCActorLoop(
+            data_stream=data_stream,
+            cfg=cfg,
+            trainer_state=trainer_state,
+            stats_stream=stats_stream,
+            llms=train_llms,
+            summarization_llms=train_summarization_llms,
+            reasoning_prompt_template=reasoning_prompt_template,
+            summarization_prompt_template=summarization_prompt_template,
+            use_think_tags=use_think_tags,
+            is_training=True,
+        )
+        train_loop_run = train_loop.run(
+            dataset=train_dataset,
+            cfg=cfg,
+        )
+        
+
+        last_regular_eval = -1
+        current_eval = -1
+        while True:
+            assert trainer_state.propagated_weight_version is not None
+            # 1. Start a new test loop if needed
+            next_regular_eval = (
+                trainer_state.propagated_weight_version
+                if last_regular_eval == -1
+                else last_regular_eval + cfg.eval_every_n_versions
             )
-            train_loop.is_scheduling_paused = True
-            current_eval = next_regular_eval
+            if (
+                cfg.eval_every_n_versions
+                and not cfg.debug.mode
+                and trainer_state.propagated_weight_version >= next_regular_eval
+                and test_dataset
+                and test_loop_run is None
+            ):
+                logger.info("Create test loop")
+                test_loop_run = test_loop.run(
+                    dataset=test_dataset,   
+                    cfg=cfg,
+                )
+                train_loop.is_scheduling_paused = True
+                current_eval = next_regular_eval
 
-        # 2. If there is an active test loop, keep it running
-        if test_loop_run is not None:
-            try:
-                _ = next(test_loop_run)
-            except StopIteration:
-                # 2.1 If the test loop is finished, resume scheduling the training loop
-                test_loop_run = None
-                last_regular_eval = current_eval
-                train_loop.is_scheduling_paused = False
-                logger.info("Test loop finished")
+            # 2. If there is an active test loop, keep it running
+            if test_loop_run is not None:
+                try:
+                    _ = next(test_loop_run)
+                except StopIteration:
+                    # 2.1 If the test loop is finished, resume scheduling the training loop
+                    test_loop_run = None
+                    last_regular_eval = current_eval
+                    train_loop.is_scheduling_paused = False
+                    logger.info("Test loop finished")
 
-        # 3. Keep running the training loop
-        _ = next(train_loop_run)
-
-
-@hydra.main(config_path="../conf", config_name="base", version_base="1.3.2")
-def main(cfg: DictConfig):
-    """Main entry point for RC actor"""
-    run_actor_loop(cfg)
-
-
-if __name__ == "__main__":
-    main()
+            # 3. Keep running the training loop
+            _ = next(train_loop_run)

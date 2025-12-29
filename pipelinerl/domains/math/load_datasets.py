@@ -229,6 +229,18 @@ def add_ids(dataset: list[dict]):
     return dataset
 
 
+def process_answer_bench(dataset, dataset_name):
+    index = 0
+    for item in dataset:
+        yield {
+            "dataset": dataset_name,
+            "task": item["Problem"],
+            "answer": item["Short Answer"],
+            "id": index
+        }
+        index += 1
+
+
 def load_datasets(
     dataset_names: List[str | Dict[str, Any]] | Dict[str, Any] | str | None, seed: int | None = None
 ) -> List[Tuple[str, Dict]]:
@@ -297,6 +309,12 @@ def load_datasets(
         dataset = load_dataset("hendrycks/competition_math", split="train", trust_remote_code=True)
         samples = [s for s in process_math(dataset, "math_train") if s is not None]
         logger.info(f"Loading math train dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "imo_answer_bench" in dataset_names:
+        dataset = load_dataset("Hwilner/imo-answerbench", split="train", trust_remote_code=True)
+        samples = [s for s in process_answer_bench(dataset, "answer_bench") if s is not None]
+        logger.info(f"Loading answer bench dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "math_simplerl_train" in dataset_names:
