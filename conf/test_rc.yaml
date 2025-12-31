@@ -29,8 +29,8 @@ vllm_config:
     num-scheduler-steps: 16
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: ${actor.llm_max_rollouts}
-    max-num-batched-tokens: 96000
+    max-num-seqs: 256
+    max-num-batched-tokens: 256000
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
@@ -48,8 +48,8 @@ summarization_vllm_config:
     num-scheduler-steps: 16
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: ${actor.llm_max_rollouts}  
-    max-num-batched-tokens: 96000  
+    max-num-seqs: 256
+    max-num-batched-tokens: 256000  
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
@@ -60,8 +60,8 @@ summarization_vllm_config:
 # Test world configuration (simplified version of world config)
 # Controls GPU allocation for different LLM types
 test_world:
-  actor_fraction: 6  # Number of LLMs for actor/generation LLMs
-  summarization_fraction: 2  # Number of LLMs for summarization LLMs (0 = use same LLMs as actor)
+  actor_fraction: 7  # Number of LLMs for actor/generation LLMs
+  summarization_fraction: 1  # Number of LLMs for summarization LLMs (0 = use same LLMs as actor)
   env_replicas: 2
   environment_start_port: 7777
   actor_group_port: 9000
@@ -86,10 +86,9 @@ actor:
   
   # Rollout configuration
   rollout_workers: 1
-  llm_max_rollouts: 256
-  problem_queue_size: 8
-  result_queue_size: 8
-  shared_memory_entry_size: 5242880  # 5MB
+  problem_queue_size: 128
+  result_queue_size: 128
+  shared_memory_entry_size: 15728640  # 15MB
   throughput_window_size: 10
   
   # Retry configuration
@@ -99,22 +98,25 @@ actor:
 # LLM generation parameters for reasoning/solution generation
 llm:
   parameters:
-    temperature: 1.0  
+    temperature: 0.7  
     max_tokens: 16384  # Longer reasoning chains
-    top_p: 0.9
+    top_p: 0.8
+    top_k: 20
 
 # LLM generation parameters for summarization 
 summarization_llm:
   parameters:
-    temperature: 1.0  
+    temperature: 0.7  
     max_tokens: 2048  # Shorter summaries
-    top_p: 0.90  
+    top_p: 0.8
+    top_k: 20
 
 test_llm:
   parameters:
-    temperature: 1.0
+    temperature: 0.7
     max_tokens: 16384
-    top_p: 1.0
+    top_p: 0.8
+    top_k: 20
 
 # Streams backend
 streams:

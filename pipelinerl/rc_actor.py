@@ -18,6 +18,7 @@ import aiohttp.client_exceptions
 import hydra
 import numpy as np
 import uvloop
+import copy
 
 # Transient errors that should not crash the entire actor when retries are exhausted.
 # Instead, we re-queue the rollout to try again later.
@@ -199,10 +200,9 @@ class InferenceProblemState:
         self.curr_reasoning = processed_response_string.strip()
         self.reasoning_string_store.append(self.curr_reasoning)
         
-        logger.info(f"[REASONING UPDATE] problem_id={self.problem_id}, "
+        logger.info(f"[R UPDATE] problem_id={self.problem_id}, sample_id={self.sample_id}, "
                    f"turn={self.reasoning_turn_number}, "
-                   f"reasoning_len={len(self.curr_reasoning)} chars, "
-                   f"output_tokens={rollout.training_texts[0].output_tokens if rollout.training_texts else 0}")
+                   f"n_tok={rollout.training_texts[0].output_tokens if rollout.training_texts else 0}")
 
     def update_summarization(self, rollout: RolloutResult, response_string: str, model_version: int, rollout_index: int, group_id: str):
         # Increment summarization turn counter
@@ -622,6 +622,8 @@ async def schedule_rollouts(
             if group_rollout_index == attempts:
                 try:
                     problem_state = problem_queue.get(block=False)
+                    logger.info(f"{scheduler_name}: Got a new problem {problem_state.problem_id}")
+                    init_problem_state_copy = copy.deepcopy(problem_state)
                 except Empty:
                     # give some quality time for other couroutines to work
                     await asyncio.sleep(0.01)
@@ -641,6 +643,8 @@ async def schedule_rollouts(
             active_rollouts[next_llm] += 1
             active_summarization_rollouts[next_summarization_llm] += 1
             assert problem_state is not None
+            problem_state = copy.deepcopy(init_problem_state_copy)
+            problem_state.sample_id = group_rollout_index
             loop.create_task(
                 rollout_and_maybe_produce_result(
                     problem_state=problem_state,
@@ -726,7 +730,8 @@ class RCActorLoop:
 
         # Determine the number of processes to use
         num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
-        attempts = 1 # for online RC, always use 1 attempt
+        attempts = 1 if self.is_training else cfg.attempts # for online RC, always use 1 attempt
+        logger.info(f"Using {attempts} attempts for {'train' if self.is_training else 'test'} RC")
 
         # Divide LLMs approximately equally across processes
         llm_groups = [[] for _ in range(num_processes)]
