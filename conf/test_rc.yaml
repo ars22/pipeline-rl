@@ -7,8 +7,9 @@ defaults:
   - base
   - _self_
 
-# Model - use small model for fast testing
-model_path: Qwen/Qwen3-4B-Instruct-2507
+
+model_path: /root/pipeline-rl/models/Qwen3-4B-Thinking-2507-Proof-v03.00-step-000500 
+# Qwen/Qwen3-4B-Instruct-2507
 
 # Optional: Use a different (smaller/faster) model for summarization
 # Uncomment to enable separate summarization model
@@ -25,11 +26,11 @@ vllm_config:
   use_v1: false
   vllm_kwargs:
     dtype: bfloat16
-    gpu-memory-utilization: 0.95
-    num-scheduler-steps: 16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 256
+    max-num-seqs: 128
     max-num-batched-tokens: 256000
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
@@ -44,11 +45,11 @@ summarization_vllm_config:
   vllm_kwargs:
     enforce-eager: ""  # for summarization LLMs, to avoid TMA issues when trying to set aside GPU memory for CUDA optimizations.
     dtype: bfloat16
-    gpu-memory-utilization: 0.90
-    num-scheduler-steps: 16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 256
+    max-num-seqs: 128
     max-num-batched-tokens: 256000  
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
@@ -69,12 +70,13 @@ test_world:
 # RC Actor configuration
 actor:
   # Number of reasoning/summarization cycles per problem
-  num_reasoning_steps: 16
+  num_reasoning_steps: 8
   
   # Rollout policies
   solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
   summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_summarization_rollout
-  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  system_prompt: null
+  # Please reason step by step, and put your final answer within \boxed{}.
   
   # Prompt template files (loaded from files)
   reasoning_prompt_file: prompts/rc_reasoning_prompt.txt
@@ -98,9 +100,9 @@ actor:
 # LLM generation parameters for reasoning/solution generation
 llm:
   parameters:
-    temperature: 0.7  
-    max_tokens: 16384  # Longer reasoning chains
-    top_p: 0.8
+    temperature: 0.6  
+    max_tokens: 32768 # 32768  # Longer reasoning chains
+    top_p: 0.95
     top_k: 20
 
 # LLM generation parameters for summarization 
@@ -113,9 +115,9 @@ summarization_llm:
 
 test_llm:
   parameters:
-    temperature: 0.7
-    max_tokens: 16384
-    top_p: 0.8
+    temperature: 0.6
+    max_tokens: 32768 # 32768
+    top_p: 0.95
     top_k: 20
 
 # Streams backend
@@ -147,23 +149,33 @@ finetune:
 # Dataset configuration - using POPE hard dataset
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - imo_answer_bench
+  - imo_proof_bench
+  # - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
+  #   split: IMO2025
+  # - imo_answer_bench
 test_dataset_names:
-  - imo_answer_bench
+  - imo_proof_bench
+  # - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
+  #   split: IMO2025
+  # - imo_answer_bench
 
 # Environment configuration 
-environment:
-  _target_: pipelinerl.domains.math.MathEnvironment
+# environment:
+#   _target_: pipelinerl.domains.math.MathEnvironment
 
-# LLM Grader configuration
+environment:
+  _target_: pipelinerl.domains.math.MathProofEnvironment
+  model_name: ${llm_grader.name}
+  sampling_kwargs: ${llm_grader.sampling_kwargs}
+  prompt_name: ${llm_grader.prompt_name}
+
 llm_grader:
-  name: openai/gpt-oss-20b
-  vllm_kwargs:
-    num_nodes: 2                    # number of nodes for the grader server
-    data-parallel-size: 16          # data parallelism
-    tensor-parallel-size: 1         # tensor parallelism
-    max-num-batched-tokens: 8192    # tokenizer budget per batch
-    max-num-seqs: 16                # concurrent sequences
-    max-model-len: 32768            # prompt + output budget
-    gpu-memory-utilization: 0.85    # fraction of GPU memory vLLM can use
+  name: openai/gpt-oss-20b # gpt-oss-20b-reh # or gpt-oss-120b-twj if running via inference endpoints
+  sampling_kwargs:
+    temperature: 1.0
+    max_output_tokens: 81920
+    reasoning:
+      effort: medium
+  reasoning_delimiters: ["</think>"]
+  prompt_name: v1
 

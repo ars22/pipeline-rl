@@ -29,6 +29,16 @@ def process_proof_problem(dataset, dataset_name):
             "schema": row["schema_0"],        # marking scheme
         }
 
+
+def process_proofbench_problem(dataset, dataset_name):
+    for row in dataset:
+        yield {
+            "dataset": dataset_name,
+            "task": row["Problem"],           # problem statement
+            "answer": row["Solution"],        # reference solution
+            "schema": row["Grading guidelines"],        # marking scheme
+        }
+
 def process_eurus(dataset):
     for item in dataset:
         if item["ability"] != "math":
@@ -309,6 +319,12 @@ def load_datasets(
         dataset = load_dataset("hendrycks/competition_math", split="train", trust_remote_code=True)
         samples = [s for s in process_math(dataset, "math_train") if s is not None]
         logger.info(f"Loading math train dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "imo_proof_bench" in dataset_names:
+        dataset = load_dataset("Hwilner/imo-proofbench", split="train", trust_remote_code=True)
+        samples = [s for s in process_proofbench_problem(dataset, "imo_proof_bench") if s is not None]
+        logger.info(f"Loading imo proof bench dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "imo_answer_bench" in dataset_names:
