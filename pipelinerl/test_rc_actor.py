@@ -428,7 +428,7 @@ def main(cfg: DictConfig):
             summarization_gpu_ids.extend(llm_gpus)
     
     # Create output directory
-    output_dir = Path("/tmp/test_rc_actor_" + str(int(time.time())))
+    output_dir = Path(cfg.output_dir + "_" + str(int(time.time())))
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Environment configuration

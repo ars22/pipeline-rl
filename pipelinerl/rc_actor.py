@@ -144,7 +144,11 @@ class InferenceProblemState:
         problem_id: int,
         sample_id: int,
         starting_step: int,
+        schema: str = None,
         use_think_tags: bool = False,
+        model_class: str = "qwen",
+        reasoning_prompt_style: str = "structured",
+        summarization_style: str = "summ",
     ):
         self.problem_text = problem_text
         self.reasoning_prompt_template = reasoning_prompt_template
@@ -157,7 +161,11 @@ class InferenceProblemState:
         self.curr_summary = ""
         self.curr_reasoning = ""
         self.final_reward = None
-
+        self.use_think_tags = use_think_tags
+        self.model_class = model_class
+        self.reasoning_prompt_style = reasoning_prompt_style
+        self.summarization_style = summarization_style
+        self.schema = schema
         self.reasoning_rollout_store = []
         self.summarization_rollout_store = []
         self.reasoning_string_store = []
@@ -200,7 +208,7 @@ class InferenceProblemState:
         self.curr_reasoning = processed_response_string.strip()
         self.reasoning_string_store.append(self.curr_reasoning)
         
-        logger.info(f"[R UPDATE] problem_id={self.problem_id}, sample_id={self.sample_id}, "
+        logger.info(f"[R UPDATE] problem_id={self.problem_id}, sample_id={self.sample_id}, reward={rollout.metrics.reward}, "
                    f"turn={self.reasoning_turn_number}, "
                    f"n_tok={rollout.training_texts[0].output_tokens if rollout.training_texts else 0}")
 
@@ -228,8 +236,17 @@ class InferenceProblemState:
         # Store rollout and process response
         self.summarization_rollout_store.append(rollout)
         self.summarization_string_complete_store.append(response_string)
-        processed_response_string = response_string.replace("<think>", "").replace("</think>", "").strip()
-        self.curr_summary = processed_response_string
+        # Process response - handle both thinking and non-thinking models
+        if "<think>" in response_string:
+            processed_response_string = response_string.replace("<think>", "").replace("</think>", "").strip()
+        else:
+            processed_response_string = response_string.strip()
+        
+        # Update summary based on summarization style
+        if self.summarization_style == "summ":
+            self.curr_summary = processed_response_string
+        else:  # sequential style
+            self.curr_summary = f"{self.curr_summary}\n\n{processed_response_string}"
         self.summarization_string_store.append(self.curr_summary)
         
         # logger.info(f"[SUMMARIZATION UPDATE] problem_id={self.problem_id}, "
@@ -237,30 +254,94 @@ class InferenceProblemState:
         #            f"summary_len={len(self.curr_summary)} chars, "
         #            f"output_tokens={rollout.training_texts[0].output_tokens if rollout.training_texts else 0}")
 
-    def get_filled_reasoning_prompt(self) -> str:
-        prompt = self.reasoning_prompt_template.format(
-            problem=self.problem_text,
-            curr_summary=self.curr_summary,
-        )
-        # logger.info(f"[REASONING PROMPT] Turn {self.reasoning_turn_number}: "
-        #            f"problem_len={len(self.problem_text)} chars, "
-        #            f"summary_len={len(self.curr_summary)} chars, "
-        #            f"total_prompt_len={len(prompt)} chars")
-        return prompt
+    def get_filled_reasoning_prompt(self, tokenizer=None) -> str:
+        """
+        Get the filled reasoning prompt. If using 'structured' style and a tokenizer is provided,
+        applies chat template. Otherwise returns the filled template as-is.
+        """
+        if self.reasoning_prompt_style == "completion":
+            # For completion style, just return the problem text with current summary
+            prompt = self.reasoning_prompt_template.format(
+                problem=self.problem_text,
+                curr_summary=self.curr_summary,
+            )
+            # Add think tags if needed for completion style
+            if self.use_think_tags and self.model_class != "gptoss" and "<think>" not in prompt:
+                if self.curr_summary:
+                    prompt = f"{prompt}\n\n{self.curr_summary}\n\n<think>"
+                else:
+                    prompt = f"{prompt}<think>"
+            elif self.curr_summary:
+                prompt = f"{prompt}\n\n{self.curr_summary}"
+            return prompt
+        else:
+            # For structured style, format the template
+            filled_prompt = self.reasoning_prompt_template.format(
+                problem=self.problem_text,
+                curr_summary=self.curr_summary,
+            )
+            
+            # Apply chat template if tokenizer is provided
+            if tokenizer is not None:
+                if self.model_class == "gptoss":
+                    templated_prompt = tokenizer.apply_chat_template(
+                        [{"role": "user", "content": filled_prompt}],
+                        add_generation_prompt=True,
+                        tokenize=False,
+                        reasoning_effort="high",
+                    )
+                else:
+                    templated_prompt = tokenizer.apply_chat_template(
+                        [{"role": "user", "content": filled_prompt}],
+                        add_generation_prompt=True,
+                        tokenize=False,
+                        enable_thinking=self.use_think_tags,
+                    )
+                
+                # Add think tags if needed
+                if self.use_think_tags and self.model_class != "gptoss" and "<think>" not in templated_prompt:
+                    return f"{templated_prompt}<think>"
+                return templated_prompt
+            else:
+                # No tokenizer, just return the filled prompt
+                return filled_prompt
 
-    def get_filled_summarization_prompt(self) -> str:
-        curr_chunk = self.curr_reasoning
-        prompt = self.summarization_prompt_template.format(
+    def get_filled_summarization_prompt(self, tokenizer=None) -> str:
+        """
+        Get the filled summarization prompt. If tokenizer is provided, applies chat template.
+        """
+        # Extract current reasoning chunk
+        if "<think>" in self.curr_reasoning:
+            curr_chunk = self.curr_reasoning.split("<think>")[1]
+            if "</think>" in curr_chunk:
+                curr_chunk = curr_chunk.split("</think>")[0]
+        else:
+            curr_chunk = self.curr_reasoning
+        
+        filled_prompt = self.summarization_prompt_template.format(
             problem=self.problem_text,
             existing_summary=self.curr_summary, 
             reasoning=curr_chunk.strip()
         )
-        # logger.info(f"[SUMMARIZATION PROMPT] Turn {self.summarization_turn_number}: "
-        #            f"problem_len={len(self.problem_text)} chars, "
-        #            f"existing_summary_len={len(self.curr_summary)} chars, "
-        #            f"reasoning_len={len(curr_chunk)} chars, "
-        #            f"total_prompt_len={len(prompt)} chars")
-        return prompt
+        
+        # Apply chat template if tokenizer is provided
+        if tokenizer is not None:
+            if self.model_class == "gptoss":
+                return tokenizer.apply_chat_template(
+                    [{"role": "user", "content": filled_prompt}],
+                    add_generation_prompt=True,
+                    tokenize=False,
+                    reasoning_effort="medium",  # Use medium for summarization
+                )
+            else:
+                return tokenizer.apply_chat_template(
+                    [{"role": "user", "content": filled_prompt}],
+                    add_generation_prompt=True,
+                    tokenize=False,
+                    enable_thinking=False,  # Summarization doesn't use thinking tags
+                )
+        else:
+            return filled_prompt
 
     def reset_stores(self):
         self.reasoning_rollout_store = []
@@ -435,7 +516,9 @@ async def schedule_rollouts(
                             "answer": problem_state.answer,
                             "dataset": problem_state.dataset_name,
                             "id": problem_state.problem_id,
+                            "schema": problem_state.schema,
                         }
+                        # logger.info(f"Reasoning problem: {reasoning_problem}")
                         
                         solution_rollout_result = await solution_rollout_policy(cfg, llm, reasoning_problem, session)
                         started_solution_rollouts[llm_index] += 1
@@ -444,7 +527,7 @@ async def schedule_rollouts(
                         try:
                             reasoning_text = solution_rollout_result.training_texts[0].output_text
                         except Exception as e:
-                            logger.error(f"Error extracting reasoning text: {e}")
+                            logger.error(f"Error in solution rollout step {step_idx} (attempt {attempt + 1}/{max_retries}), extracting reasoning text: {e}")
                             reasoning_text = ""
 
                         # Update reasoning with metadata
@@ -463,6 +546,7 @@ async def schedule_rollouts(
                             "dataset": problem_state.dataset_name,
                             "id": problem_state.problem_id,
                         }
+                        # logger.info(f"Summarization problem: {summarization_problem}")
                         
                         summarization_rollout_result = await summarization_rollout_policy(cfg, summarization_llm, summarization_problem, session)
                         started_summarization_rollouts[summarization_llm_index] += 1
@@ -616,6 +700,7 @@ async def schedule_rollouts(
                         requeue_count=requeue_count,
                     )
                 )
+                logger.info(f"{scheduler_name}: Retrying rollout problem id {retry_problem_state.problem_id} with group id {retry_group_id} and actor llm {next_llm} and summarization llm {next_summarization_llm}")
                 continue
 
             # Then, check if we need to start a new group
@@ -632,16 +717,17 @@ async def schedule_rollouts(
                 group_rollouts[group_id] = []
                 group_attempts_completed[group_id] = 0
                 group_rollout_index = 0
-                logger.info(f"{scheduler_name}: Started a new group {group_id}")
-
+                
             next_llm = active_rollouts.index(min(active_rollouts))
             next_summarization_llm = active_summarization_rollouts.index(min(active_summarization_rollouts))
             if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts or active_summarization_rollouts[next_summarization_llm] == cfg.actor.llm_max_rollouts:
                 # all llms are busy, wait for one to finish
-                await asyncio.sleep(0.01)
+                logger.info(f"{scheduler_name}: All LLMs are busy, waiting for one to finish. Current active rollouts {active_rollouts}")
+                await asyncio.sleep(1.0)
                 continue
             active_rollouts[next_llm] += 1
             active_summarization_rollouts[next_summarization_llm] += 1
+            logger.info(f"{scheduler_name}: Started a new rollout for problem id {problem_state.problem_id} with group id {group_id} and actor llm {next_llm} and summarization llm {next_summarization_llm}")
             assert problem_state is not None
             problem_state = copy.deepcopy(init_problem_state_copy)
             problem_state.sample_id = group_rollout_index
@@ -704,15 +790,23 @@ class RCActorLoop:
         trainer_state: TrainerState,
         reasoning_prompt_template: str,
         summarization_prompt_template: str,
+        tokenizer=None,
         is_training: bool = True,
         use_think_tags: bool = False,
+        model_class: str = "qwen",
+        reasoning_prompt_style: str = "structured",
+        summarization_style: str = "summ",
     ) -> None:
         self.data_stream = data_stream
         self.trainer_state = trainer_state
         self.stats_stream = stats_stream
         self.reasoning_prompt_template = reasoning_prompt_template
         self.summarization_prompt_template = summarization_prompt_template
+        self.tokenizer = tokenizer
         self.use_think_tags = use_think_tags
+        self.model_class = model_class
+        self.reasoning_prompt_style = reasoning_prompt_style
+        self.summarization_style = summarization_style
         self.sliding_aggregator = SlidingWindowAggregator(window_size=cfg.actor.throughput_window_size)
         self.llms = llms
         self.summarization_llms = summarization_llms if summarization_llms is not None else llms
@@ -868,7 +962,10 @@ class RCActorLoop:
             **snapshot,
             reasoning_prompt_template=self.reasoning_prompt_template,
             summarization_prompt_template=self.summarization_prompt_template,
-            use_think_tags=self.use_think_tags
+            use_think_tags=self.use_think_tags,
+            model_class=self.model_class,
+            reasoning_prompt_style=self.reasoning_prompt_style,
+            summarization_style=self.summarization_style,
         )
 
         if len(thinking_strings) > 0:
@@ -898,7 +995,11 @@ class RCActorLoop:
             reasoning_prompt_template=self.reasoning_prompt_template,
             summarization_prompt_template=self.summarization_prompt_template,
             use_think_tags=self.use_think_tags,
-            starting_step=0
+            model_class=self.model_class,
+            reasoning_prompt_style=self.reasoning_prompt_style,
+            summarization_style=self.summarization_style,
+            starting_step=0,
+            schema=problem['schema'] if 'schema' in problem else None
         )
         
         return state
@@ -1196,6 +1297,15 @@ def run_actor_loop(cfg: DictConfig):
         summarization_model_path = actor_model_path
         logger.info("Using the same model for summarization as for solution generation")
     
+    # Load tokenizer for chat template support
+    from transformers import AutoTokenizer
+    actor_tokenizer_path = cfg.get('tokenizer_path', actor_model_path)
+    logger.info(f"Loading actor tokenizer from: {actor_tokenizer_path}")
+    actor_tokenizer = AutoTokenizer.from_pretrained(actor_tokenizer_path)
+    summarization_tokenizer_path = cfg.get('summarization_tokenizer_path', summarization_model_path)
+    logger.info(f"Loading summarization tokenizer from: {summarization_tokenizer_path}")
+    summarization_tokenizer = AutoTokenizer.from_pretrained(summarization_tokenizer_path)
+    
     # Get LLM parameters for summarization
     if cfg.get('summarization_llm') and cfg.summarization_llm.get('parameters'):
         summarization_llm_params = cfg.summarization_llm.parameters
@@ -1209,7 +1319,7 @@ def run_actor_loop(cfg: DictConfig):
         TrainableLLM(
             base_url=url,
             model_name=str(actor_model_path),
-            tokenizer_name=str(actor_model_path),
+            tokenizer_name=str(actor_tokenizer_path),
             parameters=cfg.llm.parameters,
             use_cache=False,
             collect_logprobs=True,
@@ -1221,7 +1331,7 @@ def run_actor_loop(cfg: DictConfig):
         TrainableLLM(
             base_url=url,
             model_name=str(actor_model_path),
-            tokenizer_name=str(actor_model_path),
+            tokenizer_name=str(actor_tokenizer_path),
             parameters=cfg.test_llm.parameters,
             use_cache=False,
             collect_logprobs=not eval_only_mode,  # Don't collect logprobs in eval-only mode
@@ -1238,7 +1348,7 @@ def run_actor_loop(cfg: DictConfig):
             TrainableLLM(
                 base_url=url,
                 model_name=str(summarization_model_path),
-                tokenizer_name=str(summarization_model_path),
+                tokenizer_name=str(summarization_tokenizer_path),
                 parameters=summarization_llm_params,
                 use_cache=False,
                 collect_logprobs=True,
@@ -1250,7 +1360,7 @@ def run_actor_loop(cfg: DictConfig):
             TrainableLLM(
                 base_url=url,
                 model_name=str(summarization_model_path),
-                tokenizer_name=str(summarization_model_path),
+                tokenizer_name=str(summarization_tokenizer_path),
                 parameters=summarization_llm_params,
                 use_cache=False,
                 collect_logprobs=not eval_only_mode,  # Don't collect logprobs in eval-only mode
@@ -1306,6 +1416,14 @@ def run_actor_loop(cfg: DictConfig):
     )
     
     use_think_tags = cfg.actor.get("use_think_tags", False)
+    model_class = cfg.actor.get("model_class", "qwen")
+    reasoning_prompt_style = cfg.actor.get("reasoning_prompt_style", "structured")
+    summarization_style = cfg.actor.get("summarization_style", "summ")
+    
+    logger.info(f"Model class: {model_class}")
+    logger.info(f"Reasoning prompt style: {reasoning_prompt_style}")
+    logger.info(f"Summarization style: {summarization_style}")
+    logger.info(f"Use think tags: {use_think_tags}")
 
     # 0. If eval_only is True, set up the test loop and run it
     test_loop = RCActorLoop(
@@ -1317,7 +1435,11 @@ def run_actor_loop(cfg: DictConfig):
         summarization_llms=test_summarization_llms,
         reasoning_prompt_template=reasoning_prompt_template,
         summarization_prompt_template=summarization_prompt_template,
+        tokenizer=actor_tokenizer,
         use_think_tags=use_think_tags,
+        model_class=model_class,
+        reasoning_prompt_style=reasoning_prompt_style,
+        summarization_style=summarization_style,
         is_training=False,
     )
     if cfg.eval_only:
@@ -1346,7 +1468,11 @@ def run_actor_loop(cfg: DictConfig):
             summarization_llms=train_summarization_llms,
             reasoning_prompt_template=reasoning_prompt_template,
             summarization_prompt_template=summarization_prompt_template,
+            tokenizer=actor_tokenizer,
             use_think_tags=use_think_tags,
+            model_class=model_class,
+            reasoning_prompt_style=reasoning_prompt_style,
+            summarization_style=summarization_style,
             is_training=True,
         )
         train_loop_run = train_loop.run(

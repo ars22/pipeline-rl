@@ -13,6 +13,13 @@ from tapeagents.llms.trainable import TrainableLLM
 from pipelinerl.async_llm import llm_async_generate, make_training_text
 from .verifier_api import verify_answer_rpc, verify_proof, parse_schema
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 def remove_reasoning(completion: str, reasoning_delimiters: list[str] = None) -> str:
     if reasoning_delimiters is not None:
         # Split final answer from reasoning content
@@ -57,11 +64,11 @@ async def generate_math_rollout(
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
     messages = []
-    if cfg.actor.system_prompt:
+    if cfg.actor.system_prompt is not None:
         messages.append({"role": "system", "content": cfg.actor.system_prompt})
     messages.append({"role": "user", "content": cfg.actor.task_template.format(task=problem["task"])})
     prompt = Prompt(messages=messages)
-
+    # logger.info(f"Reasoning prompt: {prompt}")
     time_start = time.time()
     llm_call = await llm_async_generate(llm, prompt, session)
     latency = time.time() - time_start
@@ -79,6 +86,9 @@ async def generate_math_rollout(
 
     trace = make_training_text(llm, llm_call)
 
+    # logger.info(f"Generated training text. Now verifying with verifier API.")
+    # logger.info(f"Verifying generated reasoning: {generation_final_answer[:100]}")
+
     # ===========================================================
     # PROOF-BASED SCORING BRANCH
     # ===========================================================
@@ -86,6 +96,7 @@ async def generate_math_rollout(
     verifier_table_entry: dict[str, str | int] | None = None
     if "schema" in problem:
         schema_text = parse_schema(problem["schema"])
+        # logger.info(f"Making verifier API call with schema: {schema_text[:100]}")
         verification = await verify_proof(
             problem=problem["task"],
             ref_solution=problem["answer"],
@@ -223,6 +234,7 @@ async def generate_summarization_rollout(
         penalty=0.0,
     )
 
+   
     return RolloutResult(
         training_texts=[trace],
         metrics=metrics,

@@ -184,6 +184,7 @@ async def verify_answer_rpc(
         "strict": strict,
         "max_prediction_length": max_prediction_length,
     }
+    # logger.info(f"Verifying answer with request: prediction: {prediction[:100]}, gold: {gold[:100]}, strict: {strict}, max_prediction_length: {max_prediction_length}")
     async with session.post(
         f"http://{host}:{port}/verify_answer",
         json=json,
@@ -367,8 +368,10 @@ def get_openai_client():
     """
     global _openai_client
     if _openai_client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        base_url = os.getenv("OPENAI_BASE_URL")
+        api_key = "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"
+        # os.getenv("OPENAI_API_KEY")
+        base_url = "https://mtllv6vkucczkopr.us-east-2.aws.endpoints.huggingface.cloud/v1/"
+        # os.getenv("OPENAI_BASE_URL")
         if not api_key or not base_url:
             raise RuntimeError("Missing OPENAI_API_KEY or OPENAI_BASE_URL environment variable")
         _openai_client = openai.OpenAI(
