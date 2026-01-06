@@ -722,7 +722,7 @@ async def schedule_rollouts(
             next_summarization_llm = active_summarization_rollouts.index(min(active_summarization_rollouts))
             if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts or active_summarization_rollouts[next_summarization_llm] == cfg.actor.llm_max_rollouts:
                 # all llms are busy, wait for one to finish
-                logger.info(f"{scheduler_name}: All LLMs are busy, waiting for one to finish. Current active rollouts {active_rollouts}")
+                logger.info(f"{scheduler_name}: All LLMs are busy, waiting for one to finish. Current active rollouts {active_rollouts}. Current active summarization rollouts {active_summarization_rollouts}.")
                 await asyncio.sleep(1.0)
                 continue
             active_rollouts[next_llm] += 1
