@@ -465,9 +465,12 @@ def stream_iter(stream_reader, num_samples_per_batch: int = 3, is_training: bool
             problem = {
                 "task": sample.get("prompt_text", ""),
                 "answer": sample.get("metadata", {}).get("answer", ""),  
-                "dataset": sample.get("metadata", {}).get("dataset_name", "unknown"),
+                "dataset": sample.get("metadata", {}).get("dataset_name", "unknown") + "_turn_" + str(sample.get("metadata", {}).get("turn_number", 0)),
                 "id": sample.get("metadata", {}).get("problem_id", 0),
             }
+            # Add schema if present (for LLM-based proof verification)
+            if "schema" in sample.get("metadata", {}):
+                problem["schema"] = sample["metadata"]["schema"]
             yield problem
 
 
@@ -622,6 +625,7 @@ class ActorLoop:
         published_samples = 0
         submitted_groups = 0
         finished_groups = 0
+        trainer_version_to_publish = None
         
         # Check if dataset is an iterator/generator or a list
         # Simple check: lists have __len__, generators/iterators don't
@@ -729,7 +733,11 @@ class ActorLoop:
                 all_text_dumps = []
                 for r in rollout_results:
                     for text in r.training_texts:
-                        all_text_dumps.append(text.model_dump())
+                        dump = text.model_dump()
+                        # Explicitly include properties that aren't automatically dumped
+                        dump['prompt_text'] = text.prompt_text
+                        dump['output_text'] = text.output_text
+                        all_text_dumps.append(dump)
                 data_stream_writer.write(all_text_dumps)
                 in_progress = submitted_groups - finished_groups
                 logger.info(

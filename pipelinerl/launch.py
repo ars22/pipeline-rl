@@ -80,7 +80,7 @@ def validate_config(cfg: DictConfig):
 
 
 def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path):
-    kwargs = cfg.vllm_config.vllm_kwargs
+    kwargs = cfg.actor_vllm_config.vllm_kwargs
     if kwargs["num-scheduler-steps"] > 1:
         kwargs["num-scheduler-steps"] = 1
         logger.warning("Set num-scheduler-steps to 1 for reference vLLM")
@@ -127,7 +127,7 @@ def run_summarization_llm(
     model_path = cfg.get("summarization_model_path", cfg.model_path) or cfg.model_path
     
     # Use summarization vllm config if specified, otherwise use main vllm config
-    vllm_cfg = cfg.get("summarization_vllm_config", None) or cfg.vllm_config
+    vllm_cfg = cfg.get("summarization_vllm_config", None) or cfg.summarization_vllm_config
     kwargs = vllm_cfg.vllm_kwargs.copy() if vllm_cfg.vllm_kwargs else {}
     
     log_dir = exp_dir / f"summarization_vllm_{summarization_llm_idx}"
@@ -176,7 +176,7 @@ def run_actor_llm(
         actor_model_path = cfg.model_path
 
     # Use actor_vllm_config if specified, otherwise use main vllm_config
-    vllm_cfg = cfg.get("actor_vllm_config", None) or cfg.vllm_config
+    vllm_cfg = cfg.get("actor_vllm_config", None) or cfg.actor_vllm_config
 
     # TODO: add support for tensor and process parallelism
     log_dir = exp_dir / f"actor_vllm_{actor_llm_idx}"
@@ -243,7 +243,7 @@ def run_rc_actor_llm(
     os.makedirs(log_dir, exist_ok=True)
     entrypoint = (
         "pipelinerl.entrypoints.run_vllm1" 
-        if cfg.vllm_config.use_v1 else 
+        if cfg.rc_actor_vllm_config.use_v1 else 
         "pipelinerl.entrypoints.run_vllm0"
     )
     cmd = [
@@ -267,8 +267,8 @@ def run_rc_actor_llm(
     ]
 
     # Add vLLM kwargs as separate arguments
-    if cfg.vllm_config.vllm_kwargs:
-        for k, v in cfg.vllm_config.vllm_kwargs.items():
+    if cfg.rc_actor_vllm_config.vllm_kwargs:
+        for k, v in cfg.rc_actor_vllm_config.vllm_kwargs.items():
             cmd.append(f"--{k}")
             if v not in [None, ""]:
                 cmd.append(str(v))

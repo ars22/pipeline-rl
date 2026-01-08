@@ -368,8 +368,10 @@ def get_openai_client():
     """
     global _openai_client
     if _openai_client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        base_url = os.getenv("OPENAI_BASE_URL")
+        # api_key = os.getenv("OPENAI_API_KEY")
+        api_key = "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"
+        # base_url = os.getenv("OPENAI_BASE_URL")
+        base_url = "https://mtllv6vkucczkopr.us-east-2.aws.endpoints.huggingface.cloud/v1/"
         if not api_key or not base_url:
             raise RuntimeError("Missing OPENAI_API_KEY or OPENAI_BASE_URL environment variable")
         _openai_client = openai.OpenAI(

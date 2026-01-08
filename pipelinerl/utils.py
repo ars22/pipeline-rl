@@ -87,21 +87,27 @@ def init_wandb(
         logger.warning(f"wandb_name: {wandb_name} is longer than 128 characters. Truncating to 128 characters.")
 
     logging.info(f"Initializing W&B with\nname: {wandb_name[:128]}\nid: {wandb_id}\nresume: {resume}")
-    run = wandb.init(
-        name=wandb_name[:128],  # wandb limits name to 128 characters
-        entity=cfg.wandb.wandb_entity_name,
-        project=cfg.wandb.wandb_project_name,
-        group=cfg.wandb.wandb_group,
-        dir=cfg.wandb.wandb_dir,
-        config=config_for_wandb,  # type: ignore
-        resume=resume,
-        id=wandb_id,
-        tags=cfg.wandb.tags,
-    )
-    if not isinstance(run, wandb_run.Run):
-        raise ValueError("W&B init failed")
-    _maybe_upload_config_to_wandb(cfg, run)
-    return run
+    try:
+        run = wandb.init(
+            name=wandb_name[:128],  # wandb limits name to 128 characters
+            entity=cfg.wandb.wandb_entity_name,
+            project=cfg.wandb.wandb_project_name,
+            group=cfg.wandb.wandb_group,
+            dir=cfg.wandb.wandb_dir,
+            config=config_for_wandb,  # type: ignore
+            resume=resume,
+            id=wandb_id,
+            tags=cfg.wandb.tags,
+            settings=wandb.Settings(init_timeout=300, start_method="thread"),  # Increase timeout to 5 minutes
+        )
+        if not isinstance(run, wandb_run.Run):
+            raise ValueError("W&B init failed")
+        _maybe_upload_config_to_wandb(cfg, run)
+        return run
+    except Exception as e:
+        logger.error(f"Failed to initialize WandB after 300s timeout: {e}")
+        logger.error("If you don't need WandB, set wandb.use_wandb=false in your config")
+        raise
 
 
 def generate_cuda_device_strings(total_gpus: int, gpus_per_model: int) -> List[str]:

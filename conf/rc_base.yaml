@@ -1,18 +1,35 @@
 defaults:
+  - streams: files
   - finetune: grpo 
   - rewards: pure_success
-  - streams: files
   - _self_
 
 seed: 42
 
 finetune:
-  seed: ${..seed}
+  seed: ${seed}
+  attempts: 8
+  train_batch_size: 16
+  valid_batch_size: 16
+  gradient_accumulation_passes: 16
+  seq_length: 36000
+  seq_parallel: 2
+  learning_rate: 1.0e-6
+  save_checkpoint_steps: 10
+  push_to_hub: true
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
+  hub_model_revision: v00.00
+  hub_ignore_patterns:
+    - "*.pt"
+    - "*.pth"
+
+eval_only: false # set to true to only evaluate the model with RC actor
 
 # RC Actor configuration
 rc_actor:
   log_each_n_secs: 0
-  llm_max_rollouts: 64
+  llm_max_rollouts: 32
+  summarization_max_rollouts: 32
   rollout_workers: 1
   discount_factor: 1
   problem_queue_size: 64
@@ -24,11 +41,12 @@ rc_actor:
   retry_base_delay: 1.0
   
   # RC-specific configuration
-  num_reasoning_steps: 3  # Number of reasoning/summarization cycles
+  num_reasoning_steps: 2  # Number of reasoning/summarization cycles
   num_samples_per_problem: 1  # Number of samples per problem (for training use 1)
-  
+  attempts: 1  # Number of attempts per problem (for training use 1)
+
   # Solution and summarization rollout policies
-  solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_solution_rollout
+  solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout_rc
   summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_summarization_rollout
 
   # Prompt template files (loaded from files)
@@ -40,7 +58,7 @@ rc_actor:
   task_template: |-
     {task}
   
-  # Model configuration
+  # RC specific Model configuration
   use_think_tags: false
   model_class: "qwen"  # Options: "qwen", "gptoss", etc.
   reasoning_prompt_style: "structured"  # Options: "structured", "completion"
@@ -49,7 +67,7 @@ rc_actor:
 # Regular Actor configuration - now reads from RC actor stream
 actor:
   log_each_n_secs: 0
-  llm_max_rollouts: 64
+  llm_max_rollouts: 32
   rollout_workers: 1
   discount_factor: 1
   problem_queue_size: 64
@@ -66,9 +84,13 @@ actor:
   rc_stream_samples_per_batch: 2  # Number of reasoning samples to subsample per batch
   
   # Regular rollout policy (used for K attempts per RC state)
-  rollout_policy: pipelinerl.domains.math.rollouts.generate_solution_rollout
+  rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  system_prompt: null
 
-  
+  # task template for formatting the problem
+  task_template: |-
+    {task}
+
 
 preprocess:
   input: actor  # Preprocessor reads from regular actor as before
@@ -128,7 +150,7 @@ actor_vllm_config:
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 128
+    max-num-seqs: 256
     max-num-batched-tokens: 256000
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
@@ -147,7 +169,7 @@ rc_actor_vllm_config:
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 128
+    max-num-seqs: 256
     max-num-batched-tokens: 256000
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
@@ -166,7 +188,7 @@ summarization_vllm_config:
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 128
+    max-num-seqs: 256
     max-num-batched-tokens: 256000  
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
@@ -200,7 +222,7 @@ jobs: []
 eval_every_n_versions: 12800
 
 # Main model path for RC actor and regular actor
-model_path: Qwen/Qwen3-4B-Instruct-2507 
+model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof 
 
 # Separate model for summarization (optional)
 # If not set or null, uses the same model as RC actor
@@ -270,6 +292,8 @@ environment:
   model_name: ${llm_grader.name}
   sampling_kwargs: ${llm_grader.sampling_kwargs}
   prompt_name: ${llm_grader.prompt_name}
+  # Note: The environment server is only used as fallback for problems without schema.
+  # For problems with schema field, LLM grader is called directly via verify_proof().
 
 llm_grader:
   local: false

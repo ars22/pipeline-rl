@@ -94,13 +94,13 @@ class WorldMap:
         self.gpus_per_rc_actor_llm = rc_actor_tp * rc_actor_pp
         
         # Regular Actor LLMs (use actor_vllm_config if available, else vllm_config)
-        actor_llm_kwargs = self.cfg.get("actor_vllm_config", self.cfg.vllm_config).vllm_kwargs
+        actor_llm_kwargs = self.cfg.get("actor_vllm_config", self.cfg.actor_vllm_config).vllm_kwargs
         actor_tp = actor_llm_kwargs.get("tensor-parallel-size", 1)
         actor_pp = actor_llm_kwargs.get("pipeline-parallel-size", 1)
         self.gpus_per_actor_llm = actor_tp * actor_pp
         
         # Summarization LLMs (use summarization_vllm_config if available, else vllm_config)
-        summ_llm_kwargs = self.cfg.get("summarization_vllm_config", self.cfg.vllm_config).vllm_kwargs
+        summ_llm_kwargs = self.cfg.get("summarization_vllm_config", self.cfg.summarization_vllm_config).vllm_kwargs
         summ_tp = summ_llm_kwargs.get("tensor-parallel-size", 1)
         summ_pp = summ_llm_kwargs.get("pipeline-parallel-size", 1)
         self.gpus_per_summarization_llm = summ_tp * summ_pp

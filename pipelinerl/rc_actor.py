@@ -196,6 +196,7 @@ class InferenceProblemState:
             sample.metadata["sample_id"] = self.sample_id
             sample.metadata["answer"] = self.answer
             sample.metadata["dataset_name"] = self.dataset_name
+            sample.metadata["schema"] = self.schema
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -232,6 +233,7 @@ class InferenceProblemState:
             sample.metadata["sample_id"] = self.sample_id
             sample.metadata["answer"] = self.answer
             sample.metadata["dataset_name"] = self.dataset_name
+            sample.metadata["schema"] = self.schema
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -471,13 +473,13 @@ async def schedule_rollouts(
     # group_turn_results[group_id][turn_idx] = {"generation": RolloutResult, "summarization": RolloutResult}
     group_turn_results = {}  # Maps group_id -> dict[turn_idx -> dict with "generation" and "summarization"]
     
-    solution_rollout_policy = hydra.utils.get_method(cfg.actor.solution_rollout_policy)
-    summarization_rollout_policy = hydra.utils.get_method(cfg.actor.summarization_rollout_policy)
+    solution_rollout_policy = hydra.utils.get_method(cfg.rc_actor.solution_rollout_policy)
+    summarization_rollout_policy = hydra.utils.get_method(cfg.rc_actor.summarization_rollout_policy)
     logger.info(f"Use solution rollout policy: {solution_rollout_policy}")
     logger.info(f"Use summarization rollout policy: {summarization_rollout_policy}")
 
-    max_retries = cfg.actor.get("max_retries", 3)
-    retry_base_delay = cfg.actor.get("retry_base_delay", 1.0)
+    max_retries = cfg.rc_actor.get("max_retries", 3)
+    retry_base_delay = cfg.rc_actor.get("retry_base_delay", 1.0)
 
     
     # Queue for rollouts that failed with transient errors and need to be retried
@@ -503,7 +505,7 @@ async def schedule_rollouts(
             full_group_id = f"{scheduler_name}_{group_id}"
 
             # Get number of reasoning steps from config
-            num_reasoning_steps = cfg.actor.get("num_reasoning_steps", 3)
+            num_reasoning_steps = cfg.rc_actor.get("num_reasoning_steps", 3)
             
             # Online RC workflow: multiple reasoning/summarization cycles
             all_rollout_results = []
@@ -686,7 +688,7 @@ async def schedule_rollouts(
                 retry_problem_state, retry_group_id, retry_rollout_index, requeue_count = retry_item
                 next_llm = active_rollouts.index(min(active_rollouts))
                 next_summarization_llm = active_summarization_rollouts.index(min(active_summarization_rollouts))
-                if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts or active_summarization_rollouts[next_summarization_llm] == cfg.actor.llm_max_rollouts:
+                if active_rollouts[next_llm] == cfg.rc_actor.llm_max_rollouts or active_summarization_rollouts[next_summarization_llm] == cfg.rc_actor.summarization_max_rollouts:
                     # All LLMs are busy, put item back and wait
                     await retry_queue.put(retry_item)
                     await asyncio.sleep(0.01)
@@ -724,7 +726,7 @@ async def schedule_rollouts(
                 
             next_llm = active_rollouts.index(min(active_rollouts))
             next_summarization_llm = active_summarization_rollouts.index(min(active_summarization_rollouts))
-            if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts or active_summarization_rollouts[next_summarization_llm] == cfg.actor.llm_max_rollouts:
+            if active_rollouts[next_llm] == cfg.rc_actor.llm_max_rollouts or active_summarization_rollouts[next_summarization_llm] == cfg.rc_actor.summarization_max_rollouts:
                 # all llms are busy, wait for one to finish
                 logger.info(f"{scheduler_name}: All LLMs are busy, waiting for one to finish. Current active rollouts {active_rollouts}. Current active summarization rollouts {active_summarization_rollouts}.")
                 await asyncio.sleep(1.0)
@@ -811,7 +813,7 @@ class RCActorLoop:
         self.model_class = model_class
         self.reasoning_prompt_style = reasoning_prompt_style
         self.summarization_style = summarization_style
-        self.sliding_aggregator = SlidingWindowAggregator(window_size=cfg.actor.throughput_window_size)
+        self.sliding_aggregator = SlidingWindowAggregator(window_size=cfg.rc_actor.throughput_window_size)
         self.llms = llms
         self.summarization_llms = summarization_llms if summarization_llms is not None else llms
         self.loop_start_time = -1
@@ -823,12 +825,12 @@ class RCActorLoop:
         self._last_verifier_timestep: float | None = None
         
         # Online rollout configuration
-        self.num_reasoning_steps = cfg.actor.get("num_reasoning_steps", 3)
-        self.num_samples_per_problem = cfg.actor.get("num_samples_per_problem", 1)
+        self.num_reasoning_steps = cfg.rc_actor.get("num_reasoning_steps", 3)
+        self.num_samples_per_problem = cfg.rc_actor.get("num_samples_per_problem", 1)
 
         # Determine the number of processes to use
-        num_processes = min(self.cfg.actor.rollout_workers, len(self.llms))
-        attempts = 1 if self.is_training else cfg.attempts # for online RC, always use 1 attempt
+        num_processes = min(self.cfg.rc_actor.rollout_workers, len(self.llms))
+        attempts = 1 if self.is_training else cfg.rc_actor.attempts # for online RC, always use 1 attempt
         logger.info(f"Using {attempts} attempts for {'train' if self.is_training else 'test'} RC")
 
         # Divide LLMs approximately equally across processes
@@ -846,8 +848,8 @@ class RCActorLoop:
 
         
         # Use SharedMemoryQueue instead of separate problem_queue, result_queue, and io_buffer
-        self.problem_queue = SharedMemoryQueue(self.smm, self.cfg.actor.problem_queue_size, cfg.actor.shared_memory_entry_size)
-        self.result_queue = SharedMemoryQueue(self.smm, self.cfg.actor.result_queue_size, cfg.actor.shared_memory_entry_size)
+        self.problem_queue = SharedMemoryQueue(self.smm, self.cfg.rc_actor.problem_queue_size, cfg.rc_actor.shared_memory_entry_size)
+        self.result_queue = SharedMemoryQueue(self.smm, self.cfg.rc_actor.result_queue_size, cfg.rc_actor.shared_memory_entry_size)
         
         logger.info(f"Initialized {'train' if self.is_training else 'test'} RC actor loop")
         logger.info(f"Problem queue size: {self.problem_queue.max_size}, result queue size: {self.result_queue.max_size}")
@@ -1146,12 +1148,16 @@ class RCActorLoop:
                 group_samples = sum(len(attempt) for attempt in rollout_results) # number of cycle steps
 
                 published_samples += group_samples
-                samples_in_queue = self.result_queue.qsize() * attempts * cfg.actor.num_reasoning_steps
+                samples_in_queue = self.result_queue.qsize() * attempts * cfg.rc_actor.num_reasoning_steps
                 all_text_dumps = []
                 for attempt in rollout_results:
                     for cycle_step in attempt:
                         for text in cycle_step.training_texts:
-                            all_text_dumps.append(text.model_dump())
+                            dump = text.model_dump()
+                            # Explicitly include properties that aren't automatically dumped
+                            dump['prompt_text'] = text.prompt_text
+                            dump['output_text'] = text.output_text
+                            all_text_dumps.append(dump)
                 data_stream_writer.write(all_text_dumps)
                 in_progress = submitted_groups - finished_groups
                 logger.info(
@@ -1273,8 +1279,8 @@ def run_actor_loop(cfg: DictConfig):
 
     stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats")
     test_stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats_test")
-    data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor")
-    test_data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor_test")
+    data_stream = SingleStreamSpec(exp_path=exp_path, topic="rc_actor")
+    test_data_stream = SingleStreamSpec(exp_path=exp_path, topic="rc_actor_test")
 
     dataset_loader = hydra.utils.get_method(cfg.dataset_loader)
     # Get dataset loader parameters if they exist in config, otherwise use empty dict
@@ -1407,8 +1413,8 @@ def run_actor_loop(cfg: DictConfig):
         return fallback
     
     # Get prompt templates from config files or use defaults
-    reasoning_prompt_file = cfg.actor.get("reasoning_prompt_file", None)
-    summarization_prompt_file = cfg.actor.get("summarization_prompt_file", None)
+    reasoning_prompt_file = cfg.rc_actor.get("reasoning_prompt_file", None)
+    summarization_prompt_file = cfg.rc_actor.get("summarization_prompt_file", None)
     
     reasoning_prompt_template = load_prompt_template(
         reasoning_prompt_file,
@@ -1419,10 +1425,10 @@ def run_actor_loop(cfg: DictConfig):
         fallback="Problem: {problem}\n\nExisting summary: {existing_summary}\n\nNew reasoning: {reasoning}\n\nProvide an updated summary:"
     )
     
-    use_think_tags = cfg.actor.get("use_think_tags", False)
-    model_class = cfg.actor.get("model_class", "qwen")
-    reasoning_prompt_style = cfg.actor.get("reasoning_prompt_style", "structured")
-    summarization_style = cfg.actor.get("summarization_style", "summ")
+    use_think_tags = cfg.rc_actor.get("use_think_tags", False)
+    model_class = cfg.rc_actor.get("model_class", "qwen")
+    reasoning_prompt_style = cfg.rc_actor.get("reasoning_prompt_style", "structured")
+    summarization_style = cfg.rc_actor.get("summarization_style", "summ")
     
     logger.info(f"Model class: {model_class}")
     logger.info(f"Reasoning prompt style: {reasoning_prompt_style}")

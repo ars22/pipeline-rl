@@ -57,16 +57,27 @@ def length_penalty(max_length: int, sequence_length: int, buffer_tokens: int) ->
         return ((max_length - buffer_tokens) - sequence_length) / buffer_tokens
     return 0.
 
-async def generate_math_rollout(
+async def generate_math_rollout_rc(
     cfg: DictConfig,
     llm: TrainableLLM,
     problem: dict,
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
+    return await generate_math_rollout(cfg, llm, problem, session, rc_actor=True)
+
+
+async def generate_math_rollout(
+    cfg: DictConfig,
+    llm: TrainableLLM,
+    problem: dict,
+    session: aiohttp.ClientSession,
+    rc_actor=False,
+) -> RolloutResult:
     messages = []
-    if cfg.actor.system_prompt is not None:
-        messages.append({"role": "system", "content": cfg.actor.system_prompt})
-    messages.append({"role": "user", "content": cfg.actor.task_template.format(task=problem["task"])})
+    actor_cfg = cfg.rc_actor if rc_actor else cfg.actor
+    if actor_cfg.system_prompt is not None:
+        messages.append({"role": "system", "content": actor_cfg.system_prompt})
+    messages.append({"role": "user", "content": actor_cfg.task_template.format(task=problem["task"])})
     prompt = Prompt(messages=messages)
     # logger.info(f"Reasoning prompt: {prompt}")
     time_start = time.time()
@@ -82,7 +93,7 @@ async def generate_math_rollout(
     )
     generation_final_answer = remove_reasoning(generation_raw, reasoning_delimiters=reasoning_delimiters)
     rewards = RewardTable(**dict(cfg.rewards))
-    discount_factor = cfg.actor.discount_factor
+    discount_factor = actor_cfg.discount_factor
 
     trace = make_training_text(llm, llm_call)
 
@@ -187,6 +198,8 @@ async def generate_math_rollout(
             no_answer=answer_status == "no_answer",
             penalty=overlong_penalty,
         )
+
+    logger.info(f"Rollout {problem.get('id')} Reward: {reward}")
 
     # ===========================================================
     # COMMON RETURN BLOCK
