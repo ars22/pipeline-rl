@@ -8,7 +8,7 @@ seed: 42
 
 finetune:
   seed: ${seed}
-  attempts: 8
+  attempts: 4
   train_batch_size: 16
   valid_batch_size: 16
   gradient_accumulation_passes: 16
@@ -28,8 +28,8 @@ eval_only: false # set to true to only evaluate the model with RC actor
 # RC Actor configuration
 rc_actor:
   log_each_n_secs: 0
-  llm_max_rollouts: 32
-  summarization_max_rollouts: 32
+  llm_max_rollouts: 1024
+  summarization_max_rollouts: 1024
   rollout_workers: 1
   discount_factor: 1
   problem_queue_size: 64
@@ -67,7 +67,7 @@ rc_actor:
 # Regular Actor configuration - now reads from RC actor stream
 actor:
   log_each_n_secs: 0
-  llm_max_rollouts: 32
+  llm_max_rollouts: 1024
   rollout_workers: 1
   discount_factor: 1
   problem_queue_size: 64
@@ -150,8 +150,8 @@ actor_vllm_config:
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 256
-    max-num-batched-tokens: 256000
+    max-num-seqs: 1024
+    max-num-batched-tokens: 50000
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
@@ -169,8 +169,8 @@ rc_actor_vllm_config:
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 256
-    max-num-batched-tokens: 256000
+    max-num-seqs: 1024
+    max-num-batched-tokens: 50000
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
@@ -188,8 +188,8 @@ summarization_vllm_config:
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 256
-    max-num-batched-tokens: 256000  
+    max-num-seqs: 1024
+    max-num-batched-tokens: 50000  
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
@@ -305,3 +305,7 @@ llm_grader:
       effort: medium
   reasoning_delimiters: ["</think>"]
   prompt_name: v1
+
+
+## Example command 
+# OPENAI_API_KEY="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" OPENAI_BASE_URL="https://mtllv6vkucczkopr.us-east-2.aws.endpoints.huggingface.cloud/v1/" python -m pipelinerl.launch --config-name=rc_base output_dir="tmp/results/rc_base_$(date +'%Y%m%d_%H%M%S')"
