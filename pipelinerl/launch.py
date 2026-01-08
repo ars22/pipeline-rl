@@ -120,6 +120,52 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
         )
 
 
+def run_summarization_llm(
+    cfg: DictConfig, summarization_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
+):
+    # Use summarization model path if specified, otherwise use main model
+    model_path = cfg.get("summarization_model_path", cfg.model_path) or cfg.model_path
+    
+    # Use summarization vllm config if specified, otherwise use main vllm config
+    vllm_cfg = cfg.get("summarization_vllm_config", None) or cfg.vllm_config
+    kwargs = vllm_cfg.vllm_kwargs.copy() if vllm_cfg.vllm_kwargs else {}
+    
+    log_dir = exp_dir / f"summarization_vllm_{summarization_llm_idx}"
+    os.makedirs(log_dir, exist_ok=True)
+
+    cmd = [
+        "python",
+        "-m",
+        "vllm.entrypoints.openai.api_server",
+        "--model",
+        str(model_path),
+        "--port",
+        str(8200 + local_idx),  # Use 8200+ for summarization LLMs
+        "--host",
+        "0.0.0.0",
+        "--seed",
+        str(cfg.seed + summarization_llm_idx + 1000),
+    ]
+
+    # Add vLLM kwargs as separate arguments
+    for k, v in kwargs.items():
+        cmd.append(f"--{k}")
+        if v not in [None, ""]:
+            cmd.append(str(v))
+
+    gpu_str = ",".join([str(gpu) for gpu in gpus])
+    logger.info(f"Running summarization LLM with command: {' '.join(cmd)} with gpus: {gpu_str}")
+    log_file_path = os.path.join(log_dir, "stdout.log")
+    err_file_path = os.path.join(log_dir, "stderr.log")
+    with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
+        yield _popen(
+            cmd,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            stdout=log_file,
+            stderr=err_file,
+        )
+
+
 def run_actor_llm(
     cfg: DictConfig, world_map: WorldMap, actor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
 ):
@@ -129,12 +175,15 @@ def run_actor_llm(
     else:
         actor_model_path = cfg.model_path
 
+    # Use actor_vllm_config if specified, otherwise use main vllm_config
+    vllm_cfg = cfg.get("actor_vllm_config", None) or cfg.vllm_config
+
     # TODO: add support for tensor and process parallelism
     log_dir = exp_dir / f"actor_vllm_{actor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
     entrypoint = (
         "pipelinerl.entrypoints.run_vllm1" 
-        if cfg.vllm_config.use_v1 else 
+        if vllm_cfg.use_v1 else 
         "pipelinerl.entrypoints.run_vllm0"
     )
     cmd = [
@@ -158,8 +207,8 @@ def run_actor_llm(
     ]
 
     # Add vLLM kwargs as separate arguments
-    if cfg.vllm_config.vllm_kwargs:
-        for k, v in cfg.vllm_config.vllm_kwargs.items():
+    if vllm_cfg.vllm_kwargs:
+        for k, v in vllm_cfg.vllm_kwargs.items():
             cmd.append(f"--{k}")
             if v not in [None, ""]:
                 cmd.append(str(v))
@@ -179,6 +228,97 @@ def run_actor_llm(
             stdout=log_file,
             stderr=err_file,
         )
+
+
+def run_rc_actor_llm(
+    cfg: DictConfig, world_map: WorldMap, rc_actor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
+):
+    finetune_model_path = exp_dir / "finetune" / "current"
+    if os.path.exists(finetune_model_path):
+        rc_actor_model_path = finetune_model_path
+    else:
+        rc_actor_model_path = cfg.model_path
+
+    log_dir = exp_dir / f"rc_actor_vllm_{rc_actor_llm_idx}"
+    os.makedirs(log_dir, exist_ok=True)
+    entrypoint = (
+        "pipelinerl.entrypoints.run_vllm1" 
+        if cfg.vllm_config.use_v1 else 
+        "pipelinerl.entrypoints.run_vllm0"
+    )
+    cmd = [
+        "python",
+        "-m",
+        entrypoint,
+        "--model",
+        str(rc_actor_model_path),
+        "--host",
+        "0.0.0.0",
+        "--port",
+        str(8000 + local_idx),  # Use 8000+ for RC actor LLMs
+        "--seed",
+        str(cfg.seed + rc_actor_llm_idx),
+        "--actor-llm-idx",
+        str(rc_actor_llm_idx),
+        "--weight-update-group-init-method",
+        f"tcp://{world_map.master_addr}:{cfg.world.actor_group_port}",
+        "--weight-update-group-world-size",
+        str(world_map.weight_update_group_size),
+    ]
+
+    # Add vLLM kwargs as separate arguments
+    if cfg.vllm_config.vllm_kwargs:
+        for k, v in cfg.vllm_config.vllm_kwargs.items():
+            cmd.append(f"--{k}")
+            if v not in [None, ""]:
+                cmd.append(str(v))
+
+    if cfg.debug.mode:
+        cmd.append("--disable-weight-updates")
+
+    gpu_str = ",".join([str(gpu) for gpu in gpus])
+    logger.info(f"Running rc_actor_llm with command: {' '.join(cmd)} on gpus: {gpu_str}")
+    save_command(log_dir, cmd)
+    log_file_path = os.path.join(log_dir, "stdout.log")
+    err_file_path = os.path.join(log_dir, "stderr.log")
+    with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
+        yield _popen(
+            cmd,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            stdout=log_file,
+            stderr=err_file,
+        )
+
+
+def run_rc_actor(world_map: WorldMap, rc_actor_idx: int, exp_dir: Path):
+    if rc_actor_idx != 0:
+        raise NotImplementedError("Can only do 1 rc_actor yet")
+    llm_urls = "+".join(world_map.get_rc_actor_urls())
+    summarization_llm_urls = world_map.get_summarization_urls()
+    
+    cmd = [
+        "python",
+        "-m",
+        "pipelinerl.entrypoints.run_rc_actor",
+        "--config-dir",
+        f"{exp_dir}/conf",
+        "--config-name",
+        "exp_config",
+        f"output_dir={exp_dir}",
+        f"hydra.run.dir={exp_dir}/rc_actor",
+        f"+me.llm_urls={llm_urls}",
+    ]
+    
+    # Add summarization LLM URLs if they exist
+    if summarization_llm_urls:
+        cmd.append(f"+me.summarization_llm_urls={'+'.join(summarization_llm_urls)}")
+    
+    logger.info(f"Running RC actor with command: {' '.join(cmd)}")
+    save_command(exp_dir / "rc_actor", cmd)
+    yield _popen(
+        cmd,
+        env=dict(os.environ),
+    )
 
 
 def run_actor(world_map: WorldMap, actor_idx: int, exp_dir: Path):
@@ -319,7 +459,7 @@ def run_finetune(cfg: DictConfig, world_map: WorldMap, gpus: list[int], exp_dir:
         # Current workaround: pass the essential information as follows:
         f"+me.weight_update_group_init_method=tcp://{world_map.master_addr}:{cfg.world.actor_group_port}",
         f"+me.weight_update_group_world_size={world_map.weight_update_group_size}",
-        f"+me.llm_urls={'+'.join(world_map.get_actor_urls())}",
+        f"+me.llm_urls={'+'.join(world_map.get_rc_actor_urls() + world_map.get_actor_urls())}",
     ]
     if cfg.debug.mode in ["finetune", "open_loop", "finetune+preprocessor"]:
         cmd.append("finetune.send_weight_updates=False")
@@ -470,7 +610,7 @@ def debug_link_streams(cfg: DictConfig, topics: list[str]):
 def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | None = None):
     exp_dir = Path(cfg.output_dir)
     processes = []
-    all_job_kinds = ["actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm", "finetune"]
+    all_job_kinds = ["rc_actor", "rc_actor_llm", "summarization_llm", "actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm", "finetune"]
     # for rank in range(world_map.world_size):
     logger.info(f"Jobs on rank {world_map.my_rank}: {world_map.get_jobs_on_rank(world_map.my_rank)}")
     if job_kind_filter is None:
@@ -480,7 +620,17 @@ def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | No
             raise ValueError(f"Unknown job kind {job.kind}")
         if job.kind not in job_kind_filter:
             continue
-        if job.kind == "actor":
+        if job.kind == "rc_actor":
+            processes.extend(run_rc_actor(world_map, job.replica_idx, exp_dir))
+        elif job.kind == "rc_actor_llm":
+            if cfg.debug.use_existing_llms:
+                continue
+            processes.extend(run_rc_actor_llm(cfg, world_map, job.replica_idx, job.local_idx, job.gpus, exp_dir))
+        elif job.kind == "summarization_llm":
+            if cfg.debug.use_existing_llms:
+                continue
+            processes.extend(run_summarization_llm(cfg, job.replica_idx, job.local_idx, job.gpus, exp_dir))
+        elif job.kind == "actor":
             processes.extend(run_actor(world_map, job.replica_idx, exp_dir))
         elif job.kind == "environment":
             processes.extend(run_environment(cfg, job))
@@ -698,7 +848,7 @@ def main(cfg: DictConfig):
     rank = int(os.environ.get("RANK", "0"))
 
     # Spin up LLM grader if specified
-    if cfg.llm_grader.name is not None:
+    if cfg.llm_grader.local:
         if rank == 0:
             start_llm_grader(
                 cfg.llm_grader.name,

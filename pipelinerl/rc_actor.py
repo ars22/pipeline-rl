@@ -194,6 +194,8 @@ class InferenceProblemState:
             sample.metadata["turn_number"] = self.reasoning_turn_number
             sample.metadata["problem_id"] = self.problem_id
             sample.metadata["sample_id"] = self.sample_id
+            sample.metadata["answer"] = self.answer
+            sample.metadata["dataset_name"] = self.dataset_name
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -228,6 +230,8 @@ class InferenceProblemState:
             sample.metadata["turn_number"] = self.summarization_turn_number
             sample.metadata["problem_id"] = self.problem_id
             sample.metadata["sample_id"] = self.sample_id
+            sample.metadata["answer"] = self.answer
+            sample.metadata["dataset_name"] = self.dataset_name
             sample.group_id = group_id
         
         # Increment overall cycle step

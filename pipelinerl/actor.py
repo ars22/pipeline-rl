@@ -45,6 +45,7 @@ from pipelinerl.streams import (
     StreamWriter,
     set_streams_backend,
     write_to_streams,
+    read_stream,
 )
 
 from .utils import (
@@ -433,6 +434,43 @@ def sequential_iter(problems: list):
         yield problem
 
 
+def stream_iter(stream_reader, num_samples_per_batch: int = 3, is_training: bool = True):
+    """
+    Read from RC actor stream and yield problems from reasoning turns.
+    
+    Args:
+        stream_reader: StreamReader instance to read from
+        num_samples_per_batch: Number of samples to randomly select from each batch
+        is_training: If True, sample randomly; if False, take all reasoning turns
+    """
+    for batch in stream_reader.read():
+        # batch is a list of dicts (training text dumps)
+        # Filter for reasoning turns only
+        reasoning_samples = [
+            sample for sample in batch 
+            if sample.get("metadata", {}).get("turn_type") == "reasoning"
+        ]
+        
+        if not reasoning_samples:
+            continue
+        
+        # Subsample if training
+        if is_training and len(reasoning_samples) > num_samples_per_batch:
+            reasoning_samples = random.sample(reasoning_samples, num_samples_per_batch)
+        
+        # Convert each sample to a problem dict that the actor can use
+        for sample in reasoning_samples:
+            # Extract the problem from the prompt_text or reconstruct it
+            # The training text should have prompt_text and output_text
+            problem = {
+                "task": sample.get("prompt_text", ""),
+                "answer": sample.get("metadata", {}).get("answer", ""),  
+                "dataset": sample.get("metadata", {}).get("dataset_name", "unknown"),
+                "id": sample.get("metadata", {}).get("problem_id", 0),
+            }
+            yield problem
+
+
 class ActorLoop:
     def __init__(
         self,
@@ -570,7 +608,13 @@ class ActorLoop:
 
 
 
-    def run(self, dataset: list[tuple[str, dict]]):
+    def run(self, dataset):
+        """
+        Run the actor loop.
+        
+        Args:
+            dataset: Either a list of problems or an iterator/generator yielding problems
+        """
         loop_start_time = time.time()
         self.init_stats()
 
@@ -578,18 +622,30 @@ class ActorLoop:
         published_samples = 0
         submitted_groups = 0
         finished_groups = 0
-        expected_rollouts = -1 if self.is_training else len(dataset)
-        if expected_rollouts > 0:
-            logger.info(f"Will stop after {expected_rollouts} rollouts")
-        trainer_version_to_publish = None
-
-        # If training, we expect to sample infinitely
-        # for train sample, sample random batches infinitely
-        # for test samples, loop through the dataset once
-        if self.is_training:
-            problem_iter = random_iter(dataset)
+        
+        # Check if dataset is an iterator/generator or a list
+        # Simple check: lists have __len__, generators/iterators don't
+        is_iterator = not isinstance(dataset, (list, tuple))
+        
+        if is_iterator:
+            # Dataset is already an iterator (e.g., from stream_iter)
+            expected_rollouts = -1  # Unknown length for iterators
+            problem_iter = dataset
+            logger.info("Using stream-based iterator for problems")
         else:
-            problem_iter = sequential_iter(dataset)
+            # Dataset is a list (traditional behavior)
+            expected_rollouts = -1 if self.is_training else len(dataset)
+            if expected_rollouts > 0:
+                logger.info(f"Will stop after {expected_rollouts} rollouts")
+            
+            # If training, we expect to sample infinitely
+            # for train sample, sample random batches infinitely
+            # for test samples, loop through the dataset once
+            if self.is_training:
+                problem_iter = random_iter(dataset)
+            else:
+                problem_iter = sequential_iter(dataset)
+        
         assert self.trainer_state.propagated_weight_version is not None
 
         last_trainer_version = self.trainer_state.propagated_weight_version
@@ -789,16 +845,34 @@ def run_actor_loop(cfg: DictConfig):
     data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor")
     test_data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor_test")
 
+    # Check if we should read from RC actor stream instead of dataset
+    use_rc_stream = cfg.actor.get("use_rc_stream", False)
+    
+    # Initialize dataset loader (needed for test dataset in both cases)
     dataset_loader = hydra.utils.get_method(cfg.dataset_loader)
-    # Get dataset loader parameters if they exist in config, otherwise use empty dict
     dataset_loader_params = cfg.get('dataset_loader_params', {})
-    # Use **dataset_loader_params to pass parameters only if they exist
-    train_dataset = dataset_loader(cfg.train_dataset_names, **dataset_loader_params)
+    
+    # Always load test dataset from files for consistent evaluation
     test_dataset = dataset_loader(cfg.test_dataset_names, **dataset_loader_params)
-    if cfg.train_subset:
-        train_dataset = train_dataset[cfg.train_subset.begin : cfg.train_subset.end]
-    logger.info(f"Loaded {len(train_dataset)} training problems")
     logger.info(f"Loaded {len(test_dataset)} test problems")
+    
+    if use_rc_stream:
+        # Read training data from RC actor stream
+        rc_stream_topic = cfg.actor.get("rc_stream_topic", "actor")
+        rc_train_stream = SingleStreamSpec(exp_path=exp_path, topic=rc_stream_topic)
+        
+        logger.info(f"Reading training data from RC actor stream: {rc_train_stream}")
+        
+        train_dataset = None
+        train_stream_reader = read_stream(rc_train_stream)
+    else:
+        # Original behavior: load training dataset from files
+        train_dataset = dataset_loader(cfg.train_dataset_names, **dataset_loader_params)
+        if cfg.train_subset:
+            train_dataset = train_dataset[cfg.train_subset.begin : cfg.train_subset.end]
+        logger.info(f"Loaded {len(train_dataset)} training problems")
+        
+        train_stream_reader = None
 
     finetune_model_path = exp_path / "finetune" / "current"
     if os.path.exists(finetune_model_path):
@@ -840,11 +914,26 @@ def run_actor_loop(cfg: DictConfig):
         trainer_state.start_listening()
         trainer_state.wait_for_model_version()
 
+    # Prepare dataset or stream reader for training
+    # Note: test_dataset is always loaded from files (above) for consistent evaluation
+    if use_rc_stream:
+        # Enter the stream readers context
+        train_stream_reader = train_stream_reader.__enter__()
+        
+        # Create stream-based training dataset
+        num_samples_per_batch = cfg.actor.get("rc_stream_samples_per_batch", 3)
+        train_dataset_final = stream_iter(train_stream_reader, num_samples_per_batch, is_training=True)
+        
+        logger.info(f"Reading {num_samples_per_batch} reasoning samples per batch from RC stream")
+    else:
+        train_dataset_final = train_dataset
+        train_stream_reader = None
+        
     train_loop = ActorLoop(
         data_stream=data_stream, cfg=cfg, trainer_state=trainer_state, stats_stream=stats_stream, llms=train_llms
     )
     train_loop_run = train_loop.run(
-        dataset=train_dataset,
+        dataset=train_dataset_final,
     )
     test_loop = ActorLoop(
         data_stream=test_data_stream,
