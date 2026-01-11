@@ -27,6 +27,7 @@ finetune:
   num_warmup_steps: 0
   rl:
     entropy_bonus: 0.0001
+    final_entropy_bonus: ${finetune.rl.entropy_bonus}
     overlong_filtering: false
   save_checkpoint_steps: 5
   push_to_hub: true
