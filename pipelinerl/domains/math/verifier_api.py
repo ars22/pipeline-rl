@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 from pathlib import Path
+from datetime import datetime
 
 import math_verify  # Ensure math_verify is installed
 
@@ -36,6 +37,12 @@ logging.basicConfig(
 
 
 logger = logging.getLogger(__name__)
+
+
+def _timestamp() -> str:
+    """Return a formatted timestamp like '2026-01-11 12:30:25,750'."""
+    now = datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M:%S,") + f"{now.microsecond // 1000:03d}"
 
 
 class TimeoutException(Exception):
@@ -507,7 +514,7 @@ async def verify_proof(
                     failure_causes=["no_score_tag"],
                     num_retries=num_retries,
                 )
-                print(f"[verify_proof] No <score> tag found (attempt {attempt}) — returning 0")
+                print(f"[verify_proof]: {_timestamp()} - No <score> tag found (attempt {attempt}) — returning 0")
                 return ProofVerificationResult(
                     score=0,
                     metrics=_merge_metrics(runtime_metrics, rollout_metrics),
@@ -519,7 +526,7 @@ async def verify_proof(
             attempt_failure_causes.append("rate_limit")
             if attempt < max_retries:
                 num_retries += 1
-            print(f"[verify_proof] Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
+            print(f"[verify_proof]: {_timestamp()} - Rate limit hit (attempt {attempt}/{max_retries}), sleeping {wait_time}s: {e}")
             await asyncio.sleep(wait_time)
 
         except (asyncio.TimeoutError, TimeoutException):
@@ -528,7 +535,7 @@ async def verify_proof(
             if attempt < max_retries:
                 num_retries += 1
             print(
-                f"[verify_proof] Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), "
+                f"[verify_proof]: {_timestamp()} - Timeout after {timeout_seconds}s (attempt {attempt}/{max_retries}), "
                 f"retrying in {wait_time}s..."
             )
             await asyncio.sleep(wait_time)
@@ -538,10 +545,10 @@ async def verify_proof(
             attempt_failure_causes.append("other")
             if attempt < max_retries:
                 num_retries += 1
-            print(f"[verify_proof] Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
+            print(f"[verify_proof]: {_timestamp()} - Error on attempt {attempt}/{max_retries}: {e}, retrying in {wait_time}s...")
             await asyncio.sleep(wait_time)
 
-    print(f"[verify_proof] All {max_retries} attempts failed — returning score=0")
+    print(f"[verify_proof]: {_timestamp()} - All {max_retries} attempts failed — returning score=0")
     rollout_metrics = _build_rollout_metrics(
         success=False,
         failure_causes=attempt_failure_causes,
