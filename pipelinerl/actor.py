@@ -387,7 +387,7 @@ async def schedule_rollouts(
             if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts:
                 # all llms are busy, wait for one to finish
                 logger.info(f"{scheduler_name}: All LLMs are busy, waiting for one to finish. Current active rollouts {active_rollouts}.")
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(2)
                 continue
             active_rollouts[next_llm] += 1
             started_rollouts += 1
@@ -809,6 +809,7 @@ class ActorLoop:
                         stats_writer=stats_writer,
                         loop_stats=loop_stats,
                     )
+                    trainer_version_to_publish = None
 
 
                 if finished_groups == expected_rollouts:
