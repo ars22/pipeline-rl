@@ -345,6 +345,7 @@ class WorldMap:
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_rc_actor_llm)]
                 local_idx = min(gpus)
                 llm_url = f"http://{self.address_map[node]}:{8000 + local_idx}"
+                logger.info(f"Placing RC actor LLM {rc_actor_llm_idx} on node {node} at port {8000 + local_idx} with URL {llm_url}")
                 self.add_job(
                     kind="rc_actor_llm",
                     replica_idx=rc_actor_llm_idx,
@@ -367,6 +368,7 @@ class WorldMap:
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_actor_llm)]
                 local_idx = min(gpus)
                 llm_url = f"http://{self.address_map[node]}:{8080 + local_idx}"
+                logger.info(f"Placing actor LLM {actor_llm_idx} on node {node} at port {8080 + local_idx} with URL {llm_url}")
                 self.add_job(
                     kind="actor_llm",
                     replica_idx=self.total_rc_actor_llms + actor_llm_idx,  # Offset by RC actor LLMs
@@ -388,6 +390,7 @@ class WorldMap:
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_summarization_llm)]
                 local_idx = min(gpus)
                 summ_url = f"http://{self.address_map[node]}:{8200 + local_idx}"
+                logger.info(f"Placing summarization LLM {summarization_llm_idx} on node {node} at port {8200 + local_idx} with URL {summ_url}")
                 self.add_job(
                     kind="summarization_llm",
                     replica_idx=summarization_llm_idx,
@@ -407,6 +410,7 @@ class WorldMap:
                 if node is None:
                     raise ValueError("Not enough gpus to place all preprocessor LLMs")
                 gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_preprocessor_llm)]
+                logger.info(f"Placing preprocessor LLM {preprocessor_llm_idx} on node {node} at port {8180 + local_idx} with URL {ref_url}")
                 local_idx = min(gpus)
                 ref_url = f"http://{self.address_map[node]}:{8180 + local_idx}"
                 self.add_job(

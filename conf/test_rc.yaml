@@ -25,6 +25,7 @@ output_dir: ./runs/test_rc
 vllm_config:
   use_v1: false
   vllm_kwargs:
+    enforce-eager: ""  # Disable CUDA graphs to avoid flash attention TMA issues
     dtype: bfloat16
     gpu-memory-utilization: 0.9
     num-scheduler-steps: 1

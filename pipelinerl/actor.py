@@ -280,6 +280,7 @@ async def schedule_rollouts(
                 # This is blocking call, but there's just one other thread reading from this queue.
                 random.shuffle(group_rollouts[group_id])
                 result_queue.put(group_rollouts[group_id])
+                logger.info(f"Put group {group_id} of size {len(group_rollouts[group_id])} into result queue")
                 del group_rollouts[group_id]
             finished_rollouts += 1
         except TRANSIENT_EXCEPTIONS as e:
@@ -329,10 +330,12 @@ async def schedule_rollouts(
                 retry_queue_size = retry_queue.qsize()
                 logger.info(
                     f"{scheduler_name}: "
-                    f"rollouts in progress: {sum(active_rollouts)}, "
+                    f"rollouts in progress: {sum(active_rollouts)}: {active_rollouts}, "
                     f"groups in progress: {len(group_rollouts)}, "
                     f"rollouts started so far: {started_rollouts}, "
                     f"rollouts finished so far: {finished_rollouts}, "
+                    f"problem queue size: {problem_queue.qsize()}, "
+                    f"result queue size: {result_queue.qsize()}, "
                     f"max group size in bytes: {result_queue.max_actual_entry_size()}, "
                     + (f"retry queue size: {retry_queue_size}" if retry_queue_size > 0 else "")
                 )
@@ -383,6 +386,7 @@ async def schedule_rollouts(
             next_llm = active_rollouts.index(min(active_rollouts))
             if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts:
                 # all llms are busy, wait for one to finish
+                logger.info(f"{scheduler_name}: All LLMs are busy, waiting for one to finish. Current active rollouts {active_rollouts}.")
                 await asyncio.sleep(0.01)
                 continue
             active_rollouts[next_llm] += 1
@@ -456,6 +460,7 @@ def stream_iter(stream_reader, num_samples_per_batch: int = 3, is_training: bool
         
         # Subsample if training
         if is_training and len(reasoning_samples) > num_samples_per_batch:
+            # Sample without replacement (random.sample already does this)
             reasoning_samples = random.sample(reasoning_samples, num_samples_per_batch)
         
         # Convert each sample to a problem dict that the actor can use
@@ -467,6 +472,7 @@ def stream_iter(stream_reader, num_samples_per_batch: int = 3, is_training: bool
                 "answer": sample.get("metadata", {}).get("answer", ""),  
                 "dataset": sample.get("metadata", {}).get("dataset_name", "unknown") + "_turn_" + str(sample.get("metadata", {}).get("turn_number", 0)),
                 "id": sample.get("metadata", {}).get("problem_id", 0),
+                "turn_number": sample.get("metadata", {}).get("turn_number", 0),
             }
             # Add schema if present (for LLM-based proof verification)
             if "schema" in sample.get("metadata", {}):
@@ -625,7 +631,6 @@ class ActorLoop:
         published_samples = 0
         submitted_groups = 0
         finished_groups = 0
-        trainer_version_to_publish = None
         
         # Check if dataset is an iterator/generator or a list
         # Simple check: lists have __len__, generators/iterators don't
@@ -653,6 +658,9 @@ class ActorLoop:
         assert self.trainer_state.propagated_weight_version is not None
 
         last_trainer_version = self.trainer_state.propagated_weight_version
+        trainer_version_to_publish = self.trainer_state.propagated_weight_version
+
+        logger.info(f"Trainer version to publish: {trainer_version_to_publish}, last trainer version: {last_trainer_version}")
         max_lag = self.cfg.finetune.max_lag if self.is_training else None
         if max_lag is not None:
             total_batch_size = self.cfg.finetune.train_batch_size * self.cfg.finetune.gradient_accumulation_passes
@@ -695,29 +703,39 @@ class ActorLoop:
                     # the weights have been updated, publish the stats of the previous trainer version
                     trainer_version_to_publish = last_trainer_version
                     last_trainer_version = self.trainer_state.propagated_weight_version
+                    logger.info(f"Weights updated to version {trainer_version_to_publish}, last trainer version: {last_trainer_version}")
 
-                # First, submit all problems you can until the problem queue is full
+                # First, try to read a result (do this FIRST to avoid blocking on problem submission)
+                result_consumed = False
+                try:
+                    # Directly get the result from the SharedMemoryQueue
+                    rollout_results = self.result_queue.get(block=False)
+                    result_consumed = True
+                    logger.info(f"Got rollout results of size {len(rollout_results)}. Finished groups: {finished_groups}")
+                except queue.Empty:
+                    rollout_results = None
+                
+                # Second, try to submit problems if queue not full
                 if not self.is_scheduling_paused:
                     while True:
                         blocked_by_lag = submitted_groups == can_submit_before_update and self.is_training
-                        if not blocked_by_lag and not self.problem_queue.full():
+                        if not blocked_by_lag and not result_consumed and not self.problem_queue.full():
                             try:
                                 try:
                                     problem = next(problem_iter)
                                     self.problem_queue.put(problem, block=False)
                                     submitted_groups += 1
+                                    logger.info(f"Submitted problem: {problem['id']} turn {problem['turn_number']} Submitted groups: {submitted_groups}")
+                                    break
                                 except queue.Full:            
                                     assert False, "Problem queue was not full just a moment ago, but now it is full"
                             except StopIteration:
                                 break
                         else:
                             break
-
-                # Second, try return a result
-                try:
-                    # Directly get the result from the SharedMemoryQueue
-                    rollout_results = self.result_queue.get(block=False)
-                except queue.Empty:
+                
+                # Third, process the result if we got one
+                if not result_consumed:
                     continue
 
                 if isinstance(rollout_results, Exception):
@@ -754,7 +772,8 @@ class ActorLoop:
                             entry_with_index = dict(entry)
                             entry_with_index["group_index"] = group_index_value
                             try: 
-                                _log_verifier_table_entry(entry_with_index)
+                                if self.cfg.wandb.log_verifier_table:
+                                    _log_verifier_table_entry(entry_with_index)
                             except Exception as e:
                                 logger.error(f"Failed to log verifier table entry to wandb: {e}")
 
@@ -763,6 +782,7 @@ class ActorLoop:
                 self.log_verifier_metrics_for_group(rollout_results)
 
                 finished_groups += 1
+                
                 time_to_publish_train_stats = (
                     self.is_training
                     and trainer_version_to_publish is not None
@@ -780,7 +800,6 @@ class ActorLoop:
                             "trainer_model_version": trainer_version_to_publish, 
                             "time_since_start": time.time() - loop_start_time,
                         }
-                        trainer_version_to_publish = None
                     else:
                         loop_stats = {
                             "trainer_model_version": last_trainer_version
@@ -900,18 +919,6 @@ def run_actor_loop(cfg: DictConfig):
         )
         for url in llm_urls
     ]
-    test_llms = [
-        TrainableLLM(
-            base_url=url,
-            model_name=str(actor_model_path),
-            tokenizer_name=str(actor_model_path),
-            parameters=cfg.test_llm.parameters,
-            use_cache=False,
-            collect_logprobs=True,
-            observe_llm_calls=False,
-        )
-        for url in llm_urls
-    ]
 
     wait_for_inference_servers(llm_urls)
     wait_for_environments(cfg)
@@ -943,51 +950,8 @@ def run_actor_loop(cfg: DictConfig):
     train_loop_run = train_loop.run(
         dataset=train_dataset_final,
     )
-    test_loop = ActorLoop(
-        data_stream=test_data_stream,
-        cfg=cfg,
-        trainer_state=trainer_state,
-        stats_stream=test_stats_stream,
-        llms=test_llms,
-        is_training=False,
-    )
-    test_loop_run = None
-
-    last_regular_eval = -1
-    current_eval = -1
+    
     while True:
         assert trainer_state.propagated_weight_version is not None
-
-        # 1. Start a new test loop if needed
-        next_regular_eval = (
-            trainer_state.propagated_weight_version
-            if last_regular_eval == -1
-            else last_regular_eval + cfg.eval_every_n_versions
-        )
-        if (
-            cfg.eval_every_n_versions
-            and not cfg.debug.mode
-            and trainer_state.propagated_weight_version >= next_regular_eval
-            and test_dataset
-            and test_loop_run is None
-        ):
-            logger.info("Create test loop")
-            test_loop_run = test_loop.run(
-                dataset=test_dataset,
-            )
-            train_loop.is_scheduling_paused = True
-            current_eval = next_regular_eval
-
-        # 2. If there is an active test loop, keep it running
-        if test_loop_run is not None:
-            try:
-                _ = next(test_loop_run)
-            except StopIteration:
-                # 2.1 If the test loop is finished, resume scheduling the training loop
-                test_loop_run = None
-                last_regular_eval = current_eval
-                train_loop.is_scheduling_paused = False
-                logger.info("Test loop finished")
-
-        # 3. Keep running the training loop
+        # keep running the training loop
         _ = next(train_loop_run)

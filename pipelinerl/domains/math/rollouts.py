@@ -199,8 +199,6 @@ async def generate_math_rollout(
             penalty=overlong_penalty,
         )
 
-    logger.info(f"Rollout {problem.get('id')} Reward: {reward}")
-
     # ===========================================================
     # COMMON RETURN BLOCK
     # ===========================================================

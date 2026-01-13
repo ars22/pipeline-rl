@@ -133,10 +133,17 @@ def run_summarization_llm(
     log_dir = exp_dir / f"summarization_vllm_{summarization_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
 
+    # Use custom entrypoint (run_vllm0/run_vllm1) to support newer models like Qwen3
+    # Same logic as actor servers, but without weight update parameters
+    entrypoint = (
+        "pipelinerl.entrypoints.run_vllm1" 
+        if vllm_cfg.use_v1 else 
+        "pipelinerl.entrypoints.run_vllm0"
+    )
     cmd = [
         "python",
         "-m",
-        "vllm.entrypoints.openai.api_server",
+        entrypoint,
         "--model",
         str(model_path),
         "--port",
@@ -145,6 +152,7 @@ def run_summarization_llm(
         "0.0.0.0",
         "--seed",
         str(cfg.seed + summarization_llm_idx + 1000),
+        "--disable-weight-updates",  # Summarization servers don't need weight updates
     ]
 
     # Add vLLM kwargs as separate arguments
@@ -155,6 +163,7 @@ def run_summarization_llm(
 
     gpu_str = ",".join([str(gpu) for gpu in gpus])
     logger.info(f"Running summarization LLM with command: {' '.join(cmd)} with gpus: {gpu_str}")
+    save_command(log_dir, cmd)
     log_file_path = os.path.join(log_dir, "stdout.log")
     err_file_path = os.path.join(log_dir, "stderr.log")
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
@@ -843,6 +852,20 @@ def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str =
     version_base="1.3.2",
 )
 def main(cfg: DictConfig):
+    # Resolve all interpolations in config (e.g., ${actor.problem_queue_size} // ${world.actor_fraction})
+    resolved_cfg = OmegaConf.to_container(cfg, resolve=True)
+    
+    # Log the resolved config with all computed values
+    logger.info("="*80)
+    logger.info("Configuration (with resolved values):")
+    logger.info("="*80)
+    # Print config line by line for better formatting in logs
+    config_yaml = OmegaConf.to_yaml(resolved_cfg)
+    for line in config_yaml.split('\n'):
+        if line.strip():  # Only print non-empty lines
+            logger.info(line)
+    logger.info("="*80)
+    
     validate_config(cfg)
 
     rank = int(os.environ.get("RANK", "0"))

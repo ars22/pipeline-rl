@@ -4,18 +4,22 @@ defaults:
   - rewards: pure_success
   - _self_
 
-seed: 42
+seed: 18
+
+# used to set problem queue size and llm max rollouts for RC actor and regular actor
+n_problems_per_batch: 64 
 
 finetune:
   seed: ${seed}
   attempts: 4
-  train_batch_size: 16
-  valid_batch_size: 16
   gradient_accumulation_passes: 16
-  seq_length: 36000
-  seq_parallel: 2
+  # [CHANGE THIS IF YOU CHANGE THE NUMBER OF PROBLEMS PER BATCH OR ATTEMPTS OR GAS]
+  train_batch_size: 16 # train_batch_size = attempts * n_problems_per_batch / gradient_accumulation_passes
+  valid_batch_size: 16 # same as train_batch_size
+  seq_length: 53000
+  seq_parallel: 4
   learning_rate: 1.0e-6
-  save_checkpoint_steps: 10
+  save_checkpoint_steps: 200
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
   hub_model_revision: v00.00
@@ -23,26 +27,46 @@ finetune:
     - "*.pt"
     - "*.pth"
 
+# evaluation settings
 eval_only: false # set to true to only evaluate the model with RC actor
+skip_first_eval: true
+eval_every_n_versions: 12800
+
+# world configuration
+world:
+  replicas: 1
+  
+  # GPU allocation fractions (must sum to <= 8 per node)
+  rc_actor_fraction: 3  # GPUs for RC actor LLMs
+  summarization_fraction: 1  # Set to >0 to use separate summarization LLMs
+  finetune_fraction: 8
+  actor_fraction: 20    # GPUs for regular actor LLMs
+  preprocessor_fraction: 0
+
+  env_replicas: 2
+
+  actor_group_port: 9000
+  environment_start_port: 7777
 
 # RC Actor configuration
 rc_actor:
   log_each_n_secs: 0
-  llm_max_rollouts: 1024
-  summarization_max_rollouts: 1024
+  problem_queue_size: 32
+  result_queue_size: ${rc_actor.problem_queue_size} 
+  # [CHANGE THIS IF YOU CHANGE RC ACTOR FRACTION OR N_PROBLEMS_PER_BATCH]
+  llm_max_rollouts: 20  # n_problems_per_batch / world.rc_actor_fraction 
+  # [CHANGE THIS IF YOU CHANGE SUMMARIZATION FRACTION OR N_PROBLEMS_PER_BATCH]
+  summarization_max_rollouts: 60 # llm_max_rollouts * world.rc_actor_fraction / world.summarization_fraction 
   rollout_workers: 1
   discount_factor: 1
-  problem_queue_size: 64
-  result_queue_size: 64
   throughput_window_size: 50
-  shared_memory_entry_size: 10000000
+  shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   # Retry settings for transient HTTP errors (connection resets, etc.)
   max_retries: 3
   retry_base_delay: 1.0
   
   # RC-specific configuration
   num_reasoning_steps: 2  # Number of reasoning/summarization cycles
-  num_samples_per_problem: 1  # Number of samples per problem (for training use 1)
   attempts: 1  # Number of attempts per problem (for training use 1)
 
   # Solution and summarization rollout policies
@@ -66,22 +90,24 @@ rc_actor:
 
 # Regular Actor configuration - now reads from RC actor stream
 actor:
-  log_each_n_secs: 0
-  llm_max_rollouts: 1024
-  rollout_workers: 1
-  discount_factor: 1
-  problem_queue_size: 64
-  result_queue_size: 64
-  throughput_window_size: 50
-  shared_memory_entry_size: 10000000
-  # Retry settings for transient HTTP errors (connection resets, etc.)
-  max_retries: 3
-  retry_base_delay: 1.0
-  
   # Enable reading from RC actor stream
   use_rc_stream: true
   rc_stream_topic: "rc_actor"  # Topic name where RC actor writes
   rc_stream_samples_per_batch: 2  # Number of reasoning samples to subsample per batch
+  
+  log_each_n_secs: 0
+  # [CHANGE THIS IF YOU CHANGE THE NUMBER OF REASONING STEPS OR N_PROBLEMS_PER_BATCH]
+  problem_queue_size: ${n_problems_per_batch} # n_problems_per_batch
+  result_queue_size: 128  # Increased to prevent blocking when groups complete
+  # [CHANGE THIS IF YOU CHANGE ACTOR FRACTION OR N_PROBLEMS_PER_BATCH OR ATTEMPTS]
+  llm_max_rollouts: 24 # <= problem_queue_size * attempts / world.actor_fraction 
+  rollout_workers: 1
+  discount_factor: 1
+  throughput_window_size: 50
+  shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
+  # Retry settings for transient HTTP errors (connection resets, etc.)
+  max_retries: 3
+  retry_base_delay: 1.0
   
   # Regular rollout policy (used for K attempts per RC state)
   rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
@@ -95,7 +121,7 @@ actor:
 preprocess:
   input: actor  # Preprocessor reads from regular actor as before
   output: training_data
-  n_workers: 8
+  n_workers: 16
   chunk_n_groups: 2
   # queue for loaded raw groups
   raw_queue_size: 8
@@ -108,27 +134,29 @@ preprocess:
   # ring buffer to replace old samples with new ones when training is slow
   ring_buffer_size: 128
   # "virtual" sample queue per lead trainer
-  max_ready_samples_per_lead: 64
+  max_ready_samples_per_lead: 256
   pop_old_data: ${..pop_old_data} 
-  shared_memory_entry_size: 100000000
+  shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   log_every_n_samples: 128
 
 # LLM parameters for RC actor (solution generation)
 llm:
   parameters:
-    max_tokens: 32768 
-    temperature: 0.6 
+    max_tokens: 49152 
+    temperature: 0.8 
 
 # LLM parameters for regular actor (sampling K attempts)
 actor_llm:
   parameters:
-    max_tokens: 32768
-    temperature: 0.6
+    max_tokens: 49152
+    temperature: 0.8
     
 test_llm:
   parameters: 
-    max_tokens: 32768
-    temperature: 0.6 
+    max_tokens: 49152
+    temperature: 0.8
+    top_p: 0.95
+    top_k: 20
 
 
 
@@ -141,25 +169,6 @@ summarization_llm:
     top_p: 0.8
     top_k: 20
 
-# vLLM configuration for generation/actor LLMs
-actor_vllm_config:
-  use_v1: false
-  vllm_kwargs:
-    dtype: bfloat16
-    gpu-memory-utilization: 0.9
-    num-scheduler-steps: 1
-    disable-log-requests: ""
-    disable-frontend-multiprocessing: ""
-    max-num-seqs: 1024
-    max-num-batched-tokens: 50000
-    no-enable-prefix-caching: ""
-    enable-chunked-prefill: ""
-    return-tokens-as-token-ids: ""
-    generation-config: vllm
-    tensor-parallel-size: 1
-    max-model-len: 131072  # Set explicit context limit (128K tokens)
-
-
 # vLLM configuration for RC actor LLMs
 rc_actor_vllm_config:
   use_v1: false
@@ -169,57 +178,56 @@ rc_actor_vllm_config:
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 1024
-    max-num-batched-tokens: 50000
+    max-num-seqs: ${rc_actor.llm_max_rollouts}
+    max-num-batched-tokens: 16384
+    max-model-len: ${finetune.seq_length}
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
     generation-config: vllm
     tensor-parallel-size: 1
-    max-model-len: 131072  # Set explicit context limit (128K tokens)
 
 # vLLM configuration for summarization LLMs 
 summarization_vllm_config:
   use_v1: false
   vllm_kwargs:
-    enforce-eager: ""  # for summarization LLMs, to avoid TMA issues when trying to set aside GPU memory for CUDA optimizations.
     dtype: bfloat16
     gpu-memory-utilization: 0.9
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
-    max-num-seqs: 1024
-    max-num-batched-tokens: 50000  
+    max-num-seqs: ${rc_actor.summarization_max_rollouts}
+    max-num-batched-tokens: 16384
+    max-model-len: ${finetune.seq_length}
     no-enable-prefix-caching: ""
     enable-chunked-prefill: ""
     return-tokens-as-token-ids: ""
     generation-config: vllm
     tensor-parallel-size: 1
-    max-model-len: 131072  # Set explicit context limit (128K tokens)
 
-# vLLM config for summarization LLMs (optional)
-# If not set, uses the same config as RC actor LLMs
-# summarization_vllm_config: null
 
-world:
-  replicas: 1
-  
-  # GPU allocation fractions (must sum to <= 8 per node)
-  rc_actor_fraction: 1  # GPUs for RC actor LLMs
-  actor_fraction: 2      # GPUs for regular actor LLMs
-  summarization_fraction: 1  # Set to >0 to use separate summarization LLMs
-  preprocessor_fraction: 0
-  finetune_fraction: 4
+# vLLM configuration for generation/actor LLMs
+actor_vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 16384
+    max-model-len: ${finetune.seq_length}
+    no-enable-prefix-caching: ""
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    generation-config: vllm
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
 
-  env_replicas: 2
-
-  actor_group_port: 9000
-  environment_start_port: 7777
-
+    
 # this will be autocreated based on the config
 jobs: []
-
-eval_every_n_versions: 12800
 
 # Main model path for RC actor and regular actor
 model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof 
@@ -286,6 +294,8 @@ wandb:
   wandb_dir: null
   # Comma-separated list of keywords to tag the run.
   tags: []
+  # Whether to log the verifier table to W&B, setting it to false to prevent wandb local directory growth
+  log_verifier_table: false
 
 environment:
   _target_: pipelinerl.domains.math.MathProofEnvironment
@@ -298,6 +308,14 @@ environment:
 llm_grader:
   local: false
   name: openai/gpt-oss-20b # gpt-oss-20b-reh # or gpt-oss-120b-twj if running via inference endpoints
+  vllm_kwargs:
+    num_nodes: 1
+    data-parallel-size: 8
+    tensor-parallel-size: 1
+    max-num-batched-tokens: 24576
+    max-num-seqs: 64
+    max-model-len: 98304
+    gpu-memory-utilization: 0.9
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 81920
@@ -307,5 +325,6 @@ llm_grader:
   prompt_name: v1
 
 
-## Example command 
-# OPENAI_API_KEY="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" OPENAI_BASE_URL="https://mtllv6vkucczkopr.us-east-2.aws.endpoints.huggingface.cloud/v1/" python -m pipelinerl.launch --config-name=rc_base output_dir="tmp/results/rc_base_$(date +'%Y%m%d_%H%M%S')"
+
+## Example command to run this config with gpt-oss-20b grader hosted on Hugging Face
+# OPENAI_API_KEY=<your_api_key> OPENAI_BASE_URL="https://mtllv6vkucczkopr.us-east-2.aws.endpoints.huggingface.cloud/v1/" python -m pipelinerl.launch --config-name=rc_base output_dir="/tmp/results/rc_base_$(date +'%Y%m%d_%H%M%S')"

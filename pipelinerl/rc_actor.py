@@ -59,6 +59,8 @@ from .utils import (
     wait_for_inference_servers,
 )
 
+from pipelinerl.rollouts import TrainingText
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,7 +88,7 @@ def _log_verifier_table_entry(entry: dict[str, str | int]):
         entry.get("output_text", ""),
         entry.get("score", 0),
     )
-    wandb.log({"tables/verifier": table})
+    wandb.log({"tables/rc_actor/verifier": table})
 
 
 def _aggregate_group_verifier_metrics(rollout_results: list[list[RolloutResult]]) -> dict[str, float | int]:
@@ -124,10 +126,14 @@ def _aggregate_group_verifier_metrics(rollout_results: list[list[RolloutResult]]
     return aggregated
 
 
-def _log_group_verifier_metrics(metrics: dict[str, float | int]):
+def _log_group_verifier_metrics(metrics: dict[str, float | int], stats_writer: StreamWriter):
     if not metrics or getattr(wandb, "run", None) is None:
         return
-    wandb.log(dict(metrics))
+    new_metrics = {}
+    for k, v in metrics.items():
+        new_metrics[f"rc_actor/{k}"] = v
+    wandb.log(new_metrics)
+    stats_writer.write(new_metrics)
 
 
 
@@ -361,6 +367,14 @@ class InferenceProblemState:
             reasoning_turn={self.reasoning_turn_number}, summarization_turn={self.summarization_turn_number}, cycle_step={self.overall_cycle_step})"
 
 
+def generate_dummy_training_text_from_prompt_and_old_training_text(prompt: str, old_training_text: TrainingText) -> TrainingText:
+    new_training_text = copy.deepcopy(old_training_text)
+    new_training_text.fixed_prompt_text = prompt
+    new_training_text.text = prompt + new_training_text.output_text
+    new_training_text.metadata["turn_number"] += 1
+    new_training_text.metadata["cycle_step"] += 2
+    return new_training_text
+
 class SlidingWindowData(BaseModel):
     prompt_tokens_window: list[list[int]] = Field(
         default_factory=list,
@@ -575,7 +589,18 @@ async def schedule_rollouts(
                         # Store both rollout results
                         all_rollout_results.append(solution_rollout_result)
                         all_rollout_results.append(summarization_rollout_result)
-                        
+
+                        if len(all_rollout_results) == 2 * cfg.rc_actor.num_reasoning_steps:
+                            # completed all reasoning and summarization turns
+                            # now add a dummy rollout result for the last turn
+                            # this is to ensure that the state at the end of the last turn is also considered 
+                            # for sampling rollouts in the next stage by the actor.
+                            last_but_one_reasoning_rollout_result = all_rollout_results[-2]
+                            final_dummy_rollout_result = copy.deepcopy(last_but_one_reasoning_rollout_result)
+                            final_dummy_rollout_result.training_texts[0] = generate_dummy_training_text_from_prompt_and_old_training_text(
+                                problem_state.get_filled_reasoning_prompt(), last_but_one_reasoning_rollout_result.training_texts[0])
+                            all_rollout_results.append(final_dummy_rollout_result)
+
                         finished_solution_rollouts[llm_index] += 1
                         finished_summarization_rollouts[summarization_llm_index] += 1
                         break
@@ -728,7 +753,7 @@ async def schedule_rollouts(
             next_summarization_llm = active_summarization_rollouts.index(min(active_summarization_rollouts))
             if active_rollouts[next_llm] == cfg.rc_actor.llm_max_rollouts or active_summarization_rollouts[next_summarization_llm] == cfg.rc_actor.summarization_max_rollouts:
                 # all llms are busy, wait for one to finish
-                logger.info(f"{scheduler_name}: All LLMs are busy, waiting for one to finish. Current active rollouts {active_rollouts}. Current active summarization rollouts {active_summarization_rollouts}.")
+                # logger.info(f"{scheduler_name}: All LLMs are busy, waiting for one to finish. Current active rollouts {active_rollouts}. Current active summarization rollouts {active_summarization_rollouts}.")
                 await asyncio.sleep(1.0)
                 continue
             active_rollouts[next_llm] += 1
@@ -826,8 +851,7 @@ class RCActorLoop:
         
         # Online rollout configuration
         self.num_reasoning_steps = cfg.rc_actor.get("num_reasoning_steps", 3)
-        self.num_samples_per_problem = cfg.rc_actor.get("num_samples_per_problem", 1)
-
+        
         # Determine the number of processes to use
         num_processes = min(self.cfg.rc_actor.rollout_workers, len(self.llms))
         attempts = 1 if self.is_training else cfg.rc_actor.attempts # for online RC, always use 1 attempt
@@ -945,7 +969,8 @@ class RCActorLoop:
             aggregated["verifier/group_size_eff"] = aggregated["verifier/group_size"] * success_frac
         self.verifier_metrics_step += 1
         aggregated["verifier/group_index"] = self.verifier_metrics_step
-        _log_group_verifier_metrics(aggregated)
+        with write_to_streams(self.stats_stream, "a") as stats_writer:
+            _log_group_verifier_metrics(aggregated, stats_writer)
         return
 
 
@@ -1174,7 +1199,8 @@ class RCActorLoop:
                             entry_with_index = dict(entry)
                             entry_with_index["group_index"] = group_index_value
                             try: 
-                                _log_verifier_table_entry(entry_with_index)
+                                if cfg.wandb.log_verifier_table:
+                                    _log_verifier_table_entry(entry_with_index)
                             except Exception as e:
                                 logger.error(f"Failed to log verifier table entry to wandb: {e}")
 
@@ -1247,12 +1273,13 @@ class RCActorLoop:
         for k, v in self.sliding_stats.items():
             stats[k] = sum(v) / len(v) if v else 0
         if self.cfg.wandb.use_wandb:
-            wandb.log({f"actor/{k}": v for k, v in stats.items()})
+            wandb.log({f"rc_actor/{k}": v for k, v in stats.items()})
         stats_writer.write(stats)
         self.init_stats()  # Reset stats for the next iteration
 
 
 def run_actor_loop(cfg: DictConfig):
+
 
     set_streams_backend(**cfg.streams)
 
@@ -1260,10 +1287,10 @@ def run_actor_loop(cfg: DictConfig):
     random.seed(cfg.seed)
 
     exp_path = Path(cfg.output_dir)
-    setup_logging(exp_path / "actor", "actor")
+    setup_logging(exp_path / "rc_actor", "rc_actor")
     logger.info(f"Current dir: {os.getcwd()}, experiment root dir: {cfg.output_dir}")
     if cfg.wandb.use_wandb:
-        run = init_wandb(cfg, exp_path / "actor", flatten_dict_config(cfg))  # type: ignore
+        run = init_wandb(cfg, exp_path / "rc_actor", flatten_dict_config(cfg))  # type: ignore
         if run is None:
             raise ValueError("Failed to initialize wandb run")
         wandb.define_metric("verifier/*", step_metric="verifier/group_index")
@@ -1277,8 +1304,8 @@ def run_actor_loop(cfg: DictConfig):
     else:
         logger.info("Using the same LLMs for summarization as for solution generation")
 
-    stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats")
-    test_stats_stream = SingleStreamSpec(exp_path=exp_path, topic="stats_test")
+    stats_stream = SingleStreamSpec(exp_path=exp_path, topic="rc_stats")
+    test_stats_stream = SingleStreamSpec(exp_path=exp_path, topic="rc_stats_test")
     data_stream = SingleStreamSpec(exp_path=exp_path, topic="rc_actor")
     test_data_stream = SingleStreamSpec(exp_path=exp_path, topic="rc_actor_test")
 
@@ -1493,6 +1520,8 @@ def run_actor_loop(cfg: DictConfig):
 
         last_regular_eval = -1
         current_eval = -1
+        skip_first_eval = cfg.get('skip_first_eval', False)
+        logger.info(f"Skip first eval: {skip_first_eval}")
         while True:
             assert trainer_state.propagated_weight_version is not None
             # 1. Start a new test loop if needed
@@ -1509,6 +1538,12 @@ def run_actor_loop(cfg: DictConfig):
                 and test_loop_run is None
             ):
                 logger.info("Create test loop")
+                if skip_first_eval:
+                    logger.info("Skipping first eval")
+                    skip_first_eval = False
+                    current_eval = next_regular_eval
+                    last_regular_eval = current_eval
+                    continue
                 test_loop_run = test_loop.run(
                     dataset=test_dataset,   
                     cfg=cfg,

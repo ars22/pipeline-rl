@@ -283,8 +283,6 @@ def load_datasets(
             dataset = load_dataset(*load_args, split=split, trust_remote_code=trust_remote_code)
             if hub_id in ["hf-imo-colab/olympiads-proof-schema", "hf-imo-colab/olympiads-proof-schema-benchmark"]:
                 samples = [s for s in process_proof_problem(dataset, hub_id.split("/")[-1]) if s is not None]
-                if hub_id == "hf-imo-colab/olympiads-proof-schema-benchmark":
-                    samples = samples[:1]
             else:
                 samples = [dict(row) for row in dataset]
             for sample in samples:
