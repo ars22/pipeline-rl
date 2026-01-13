@@ -68,7 +68,7 @@ llm_grader:
     temperature: 1.0
     max_output_tokens: 81920
     reasoning:
-      effort: high
+      effort: medium
   reasoning_delimiters: ["</think>"]
   prompt_name: v1
   wandb_table:
