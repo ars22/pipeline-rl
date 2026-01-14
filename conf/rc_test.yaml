@@ -18,7 +18,7 @@ summarization_model_path: Qwen/Qwen3-4B-Instruct-2507
 seed: 42
 
 # Output directory for test runs
-output_dir: ./runs/rc_test
+output_dir: /tmp/results/rc_test
 
 # vLLM configuration for RC actor LLMs
 rc_actor_vllm_config:
@@ -160,7 +160,7 @@ llm_grader:
     temperature: 1.0
     max_output_tokens: 81920
     reasoning:
-      effort: medium
+      effort: high
   reasoning_delimiters: ["</think>"]
   prompt_name: v1
 
