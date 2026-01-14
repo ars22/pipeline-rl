@@ -2,10 +2,15 @@
 Test RC Actor - Standalone test for online reasoning/summarization rollouts
 
 This script:
-1. Loads configuration from a Hydra config file (default: conf/base.yaml)
+1. Loads configuration from a Hydra config file (default: conf/test_rc.yaml)
 2. Starts vLLM inference servers using the same logic as launch.py
 3. Runs RC actor with online rollouts
 4. Shows you where to find the output stream
+
+Usage:
+    python -m pipelinerl.test_rc_actor
+    # or with a different config:
+    python -m pipelinerl.test_rc_actor --config-name=your_config
 """
 import logging
 import os
@@ -81,8 +86,10 @@ def start_actor_llm(
     ]
 
     # Add vLLM kwargs as separate arguments
-    if hasattr(cfg, 'vllm_config') and cfg.vllm_config.vllm_kwargs:
-        for k, v in cfg.vllm_config.vllm_kwargs.items():
+    # Use rc_actor_vllm_config if available, otherwise fall back to vllm_config
+    vllm_config = cfg.get('rc_actor_vllm_config') if cfg.get('rc_actor_vllm_config') else cfg.get('vllm_config')
+    if vllm_config and hasattr(vllm_config, 'vllm_kwargs') and vllm_config.vllm_kwargs:
+        for k, v in vllm_config.vllm_kwargs.items():
             cmd.append(f"--{k}")
             if v not in [None, ""]:
                 cmd.append(str(v))
@@ -386,7 +393,7 @@ def prepare_config_for_test(cfg: DictConfig, output_dir: Path, num_llms: int, gp
     return cfg
 
 
-@hydra.main(config_path="../conf", config_name="base", version_base="1.3.2")
+@hydra.main(config_path="../conf", config_name="test_rc", version_base="1.3.2")
 def main(cfg: DictConfig):
     """Main test function"""
     
@@ -394,7 +401,12 @@ def main(cfg: DictConfig):
     import torch
     
     # Get vLLM parallelism config
-    llm_kwargs = cfg.vllm_config.vllm_kwargs
+    # Use rc_actor_vllm_config if available, otherwise fall back to vllm_config
+    vllm_config = cfg.get('rc_actor_vllm_config') if cfg.get('rc_actor_vllm_config') else cfg.get('vllm_config')
+    if not vllm_config:
+        raise ValueError("No vLLM config found! Expected 'rc_actor_vllm_config' or 'vllm_config' in config")
+    
+    llm_kwargs = vllm_config.vllm_kwargs
     tp = llm_kwargs.get("tensor-parallel-size", 1)
     pp = llm_kwargs.get("pipeline-parallel-size", 1)
     gpus_per_llm = tp * pp
