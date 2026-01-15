@@ -93,6 +93,8 @@ environment:
   sampling_kwargs: ${llm_grader.sampling_kwargs}
   prompt_name: ${llm_grader.prompt_name}
 dataset_loader: pipelinerl.domains.math.load_datasets
+dataset_loader_params:
+  seed: 42
 train_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema-cleaned-v2
     config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
