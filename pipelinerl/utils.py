@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 import traceback
-from typing import Dict, Mapping, List, Any, Union
+from typing import Dict, Mapping, List, Any, Union, Tuple
 import numpy as np
 from omegaconf import DictConfig
 import psutil
@@ -25,6 +25,23 @@ from wandb.sdk import wandb_run
 
 logger = logging.getLogger(__name__)
 _REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
+
+
+def resolve_model_reference(model_cfg: Any) -> Tuple[str | None, str | None]:
+    """Resolve model config into a hub model id/path and optional revision."""
+    if model_cfg is None:
+        return None, None
+    if isinstance(model_cfg, Path):
+        return str(model_cfg), None
+    if isinstance(model_cfg, str):
+        return model_cfg, None
+    if isinstance(model_cfg, DictConfig) or isinstance(model_cfg, dict):
+        hub_model_id = model_cfg.get("hub_model_id")
+        hub_model_version = model_cfg.get("hub_model_version")
+        if not hub_model_version:
+            hub_model_version = None
+        return hub_model_id, hub_model_version
+    return str(model_cfg), None
 
 
 def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:

@@ -100,7 +100,9 @@ jobs: []
 eval_every_n_versions: 12800
 
 # changed
-model_path: Qwen/Qwen3-4B-Instruct-2507 
+model_path:
+  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
+  hub_model_version: null
 # Qwen/Qwen2.5-7B
 
 # Separate model for summarization (optional)

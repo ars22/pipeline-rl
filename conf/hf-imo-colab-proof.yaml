@@ -29,4 +29,6 @@ train_dataset_names:
 test_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
     split: IMO2025
-model_path: Qwen/Qwen3-4B-Instruct-2507
+model_path:
+  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
+  hub_model_version: null

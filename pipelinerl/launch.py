@@ -17,7 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import SingleStreamSpec, connect_to_redis, read_stream, set_streams_backend, write_to_streams
-from pipelinerl.utils import terminate_with_children
+from pipelinerl.utils import resolve_model_reference, terminate_with_children
 from pipelinerl.world import Job, WorldMap
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,8 @@ def validate_config(cfg: DictConfig):
     
     # Check for vision language model constraints
     if cfg.finetune.model_class == "vision2seq-language-modeling":
-        if "Qwen2.5-VL" not in cfg.model_path:
+        model_id, _ = resolve_model_reference(cfg.model_path)
+        if not model_id or "Qwen2.5-VL" not in model_id:
             raise ValueError("Only Qwen2.5-VL models are supported for vision language modeling")
         if cfg.finetune.seq_packing:
             raise ValueError("Vision language models cannot use sequence packing (seq_packing must be false)")
@@ -87,12 +88,15 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
     log_dir = exp_dir / f"ref_vllm_{preprocessor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
 
+    model_id, model_revision = resolve_model_reference(cfg.model_path)
+    if model_id is None:
+        raise ValueError("model_path must define hub_model_id or a valid path")
     cmd = [
         "python",
         "-m",
         "vllm.entrypoints.openai.api_server",
         "--model",
-        str(cfg.model_path),
+        str(model_id),
         "--port",
         str(8180 + local_idx),
         "--host",
@@ -100,6 +104,8 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
         "--seed",
         str(cfg.seed + preprocessor_llm_idx),
     ]
+    if model_revision:
+        cmd.extend(["--revision", str(model_revision)])
 
     # Add vLLM kwargs as separate arguments
     for k, v in kwargs.items():
@@ -124,7 +130,14 @@ def run_summarization_llm(
     cfg: DictConfig, summarization_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
 ):
     # Use summarization model path if specified, otherwise use main model
-    model_path = cfg.get("summarization_model_path", cfg.model_path) or cfg.model_path
+    if cfg.get("summarization_model_path") is not None:
+        model_id, model_revision = resolve_model_reference(cfg.summarization_model_path)
+        if model_id is None:
+            raise ValueError("summarization_model_path must define hub_model_id or a valid path")
+    else:
+        model_id, model_revision = resolve_model_reference(cfg.model_path)
+        if model_id is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
     
     # Use summarization vllm config if specified, otherwise use main vllm config
     vllm_cfg = cfg.get("summarization_vllm_config", None) or cfg.summarization_vllm_config
@@ -145,7 +158,7 @@ def run_summarization_llm(
         "-m",
         entrypoint,
         "--model",
-        str(model_path),
+        str(model_id),
         "--port",
         str(8200 + local_idx),  # Use 8200+ for summarization LLMs
         "--host",
@@ -154,6 +167,8 @@ def run_summarization_llm(
         str(cfg.seed + summarization_llm_idx + 1000),
         "--disable-weight-updates",  # Summarization servers don't need weight updates
     ]
+    if model_revision:
+        cmd.extend(["--revision", str(model_revision)])
 
     # Add vLLM kwargs as separate arguments
     for k, v in kwargs.items():
@@ -181,8 +196,11 @@ def run_actor_llm(
     finetune_model_path = exp_dir / "finetune" / "current"
     if os.path.exists(finetune_model_path):
         actor_model_path = finetune_model_path
+        actor_model_revision = None
     else:
-        actor_model_path = cfg.model_path
+        actor_model_path, actor_model_revision = resolve_model_reference(cfg.model_path)
+        if actor_model_path is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
 
     # Use actor_vllm_config if specified, otherwise use main vllm_config
     vllm_cfg = cfg.get("actor_vllm_config", None) or cfg.actor_vllm_config
@@ -214,6 +232,8 @@ def run_actor_llm(
         "--weight-update-group-world-size",
         str(world_map.weight_update_group_size),
     ]
+    if actor_model_revision:
+        cmd.extend(["--revision", str(actor_model_revision)])
 
     # Add vLLM kwargs as separate arguments
     if vllm_cfg.vllm_kwargs:
@@ -245,8 +265,11 @@ def run_rc_actor_llm(
     finetune_model_path = exp_dir / "finetune" / "current"
     if os.path.exists(finetune_model_path):
         rc_actor_model_path = finetune_model_path
+        rc_actor_model_revision = None
     else:
-        rc_actor_model_path = cfg.model_path
+        rc_actor_model_path, rc_actor_model_revision = resolve_model_reference(cfg.model_path)
+        if rc_actor_model_path is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
 
     log_dir = exp_dir / f"rc_actor_vllm_{rc_actor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
@@ -274,6 +297,8 @@ def run_rc_actor_llm(
         "--weight-update-group-world-size",
         str(world_map.weight_update_group_size),
     ]
+    if rc_actor_model_revision:
+        cmd.extend(["--revision", str(rc_actor_model_revision)])
 
     # Add vLLM kwargs as separate arguments
     if cfg.rc_actor_vllm_config.vllm_kwargs:
@@ -871,7 +896,9 @@ def main(cfg: DictConfig):
     rank = int(os.environ.get("RANK", "0"))
 
     # Spin up LLM grader if specified
-    if cfg.llm_grader.local:
+    if "local" in cfg.llm_grader and not cfg.llm_grader.local:
+        logger.info(f"LLM grader is not local, skipping launch")
+    else:
         if rank == 0:
             start_llm_grader(
                 cfg.llm_grader.name,

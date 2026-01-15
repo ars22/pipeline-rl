@@ -230,11 +230,15 @@ actor_vllm_config:
 jobs: []
 
 # Main model path for RC actor and regular actor
-model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof 
+model_path:
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
+  hub_model_version: null
 
 # Separate model for summarization (optional)
 # If not set or null, uses the same model as RC actor
-summarization_model_path: Qwen/Qwen3-4B-Instruct-2507 
+summarization_model_path:
+  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
+  hub_model_version: null
 
 # will use default based on the chosen backend
 accelerate_config: null

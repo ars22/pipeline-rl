@@ -2,7 +2,7 @@ data: null
 # Model class. Must be one of the following: causal-language-modeling, seq2seq-language-modeling, vision2seq-language-modeling
 model_class: causal-language-modeling
 # Model name or path of model to be trained.
-config_name: ${..model_path}
+config_name: ${..model_path.hub_model_id}
 # Optimizer type, supported: adamw_torch, adafactor, cpuadam, lion
 optim: adamw_torch
 # use half precision training, full bf16 without mixed precision copies at all

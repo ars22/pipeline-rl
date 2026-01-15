@@ -109,7 +109,7 @@ async def generate_math_rollout(
         schema_text = parse_schema(problem["schema"])
         # logger.info(f"Making verifier API call with schema: {schema_text[:100]}")
         verification = await verify_proof(
-            problem=problem["task"],
+            problem=problem["original_problem"] if "original_problem" in problem else problem["task"],
             ref_solution=problem["answer"],
             schema=schema_text,
             generation=generation_final_answer,

@@ -65,7 +65,11 @@ def start_actor_llm(
     if os.path.exists(finetune_model_path):
         actor_model_path = finetune_model_path
     else:
-        actor_model_path = cfg.model_path
+        from pipelinerl.utils import resolve_model_reference
+
+        actor_model_path, _ = resolve_model_reference(cfg.model_path)
+        if actor_model_path is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
 
     log_dir = exp_dir / f"actor_vllm_{actor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
@@ -122,14 +126,20 @@ def start_summarization_llm(
     """Start a summarization LLM server (same logic as actor LLM but with different model/config)"""
     
     # Use summarization model if configured, otherwise use actor model
-    if cfg.get('summarization_model_path'):
-        summarization_model_path = cfg.summarization_model_path
+    if cfg.get('summarization_model_path') is not None:
+        from pipelinerl.utils import resolve_model_reference
+
+        summarization_model_path, _ = resolve_model_reference(cfg.summarization_model_path)
+        if summarization_model_path is None:
+            raise ValueError("summarization_model_path must define hub_model_id or a valid path")
     else:
         finetune_model_path = exp_dir / "finetune" / "current"
         if os.path.exists(finetune_model_path):
             summarization_model_path = finetune_model_path
         else:
-            summarization_model_path = cfg.model_path
+            summarization_model_path, _ = resolve_model_reference(cfg.model_path)
+            if summarization_model_path is None:
+                raise ValueError("model_path must define hub_model_id or a valid path")
 
     log_dir = exp_dir / f"summarization_vllm_{summarization_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
@@ -456,7 +466,7 @@ def main(cfg: DictConfig):
     logger.info(f"Number of LLM servers: {num_llms}")
     logger.info(f"Number of summarization LLM servers: {num_summarization_llms}")
     logger.info(f"Number of environment servers: {num_envs}")
-    logger.info(f"Number of reasoning steps: {cfg.actor.num_reasoning_steps}")
+    logger.info(f"Number of reasoning steps: {cfg.rc_actor.num_reasoning_steps}")
     logger.info(f"Actor GPU allocation: {gpu_ids}")
     if num_summarization_llms > 0:
         logger.info(f"Summarization GPU allocation: {summarization_gpu_ids}")

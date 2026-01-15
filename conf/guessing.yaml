@@ -21,4 +21,6 @@ world:
     actor_fraction: 2
     finetune_fraction: 6
 eval_every_n_versions: 20000
-model_path: Qwen/Qwen2.5-7B-Instruct
+model_path:
+  hub_model_id: Qwen/Qwen2.5-7B-Instruct
+  hub_model_version: null

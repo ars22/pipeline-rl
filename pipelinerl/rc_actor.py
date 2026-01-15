@@ -537,6 +537,7 @@ async def schedule_rollouts(
                             "dataset": problem_state.dataset_name,
                             "id": problem_state.problem_id,
                             "schema": problem_state.schema,
+                            "original_problem": problem_state.problem_text,
                         }
                         # logger.info(f"Reasoning problem: {reasoning_problem}")
                         
@@ -565,6 +566,7 @@ async def schedule_rollouts(
                             "answer": problem_state.answer,
                             "dataset": problem_state.dataset_name,
                             "id": problem_state.problem_id,
+                            "original_problem": problem_state.problem_text,
                         }
                         # logger.info(f"Summarization problem: {summarization_problem}")
                         
@@ -984,6 +986,7 @@ class RCActorLoop:
 
         snapshot = {
             "problem_text": existing_state.problem_text,
+            "original_problem": existing_state.problem_text,
             "problem_id": existing_state.problem_id,
             "sample_id": 0,
             "starting_step": existing_state.starting_step,
@@ -1320,28 +1323,48 @@ def run_actor_loop(cfg: DictConfig):
     logger.info(f"Loaded {len(train_dataset)} training problems")
     logger.info(f"Loaded {len(test_dataset)} test problems")
 
+    from pipelinerl.utils import resolve_model_reference
+
     finetune_model_path = exp_path / "finetune" / "current"
     if os.path.exists(finetune_model_path):
         actor_model_path = finetune_model_path
+        actor_model_revision = None
     else:
-        actor_model_path = cfg.model_path
+        actor_model_path, actor_model_revision = resolve_model_reference(cfg.model_path)
+        if actor_model_path is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
     
     # Determine summarization model path
-    if cfg.get('summarization_model_path'):
-        summarization_model_path = cfg.summarization_model_path
+    if cfg.get('summarization_model_path') is not None:
+        summarization_model_path, summarization_model_revision = resolve_model_reference(
+            cfg.summarization_model_path
+        )
+        if summarization_model_path is None:
+            raise ValueError("summarization_model_path must define hub_model_id or a valid path")
         logger.info(f"Using separate summarization model: {summarization_model_path}")
     else:
         summarization_model_path = actor_model_path
+        summarization_model_revision = actor_model_revision
         logger.info("Using the same model for summarization as for solution generation")
     
     # Load tokenizer for chat template support
     from transformers import AutoTokenizer
-    actor_tokenizer_path = cfg.get('tokenizer_path', actor_model_path)
+    actor_tokenizer_path = cfg.get('tokenizer_path') or actor_model_path
+    actor_tokenizer_revision = (
+        actor_model_revision if cfg.get('tokenizer_path') is None else None
+    )
     logger.info(f"Loading actor tokenizer from: {actor_tokenizer_path}")
-    actor_tokenizer = AutoTokenizer.from_pretrained(actor_tokenizer_path)
-    summarization_tokenizer_path = cfg.get('summarization_tokenizer_path', summarization_model_path)
+    actor_tokenizer = AutoTokenizer.from_pretrained(
+        actor_tokenizer_path, revision=actor_tokenizer_revision
+    )
+    summarization_tokenizer_path = cfg.get('summarization_tokenizer_path') or summarization_model_path
+    summarization_tokenizer_revision = (
+        summarization_model_revision if cfg.get('summarization_tokenizer_path') is None else None
+    )
     logger.info(f"Loading summarization tokenizer from: {summarization_tokenizer_path}")
-    summarization_tokenizer = AutoTokenizer.from_pretrained(summarization_tokenizer_path)
+    summarization_tokenizer = AutoTokenizer.from_pretrained(
+        summarization_tokenizer_path, revision=summarization_tokenizer_revision
+    )
     
     # Get LLM parameters for summarization
     if cfg.get('summarization_llm') and cfg.summarization_llm.get('parameters'):

@@ -5,7 +5,9 @@ defaults:
     - base
     - _self_
 
-model_path: Qwen/Qwen3-4B-Thinking-2507
+model_path:
+  hub_model_id: Qwen/Qwen3-4B-Thinking-2507
+  hub_model_version: null
 # Eval every 25 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
 eval_every_n_versions: 12800
 

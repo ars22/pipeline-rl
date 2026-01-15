@@ -8,11 +8,15 @@ defaults:
   - _self_
 
 
-model_path: ars22/rc_qwen3_4b_thinking_2507_proof-20260112-064952 
+model_path:
+  hub_model_id: ars22/rc_qwen3_4b_thinking_2507_proof-20260112-064952
+  hub_model_version: null
 
 # Optional: Use a different (smaller/faster) model for summarization
 # Uncomment to enable separate summarization model
-summarization_model_path: Qwen/Qwen3-4B-Instruct-2507
+summarization_model_path:
+  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
+  hub_model_version: null
 
 # Random seed
 seed: 42
@@ -66,12 +70,12 @@ test_world:
   actor_group_port: 9000
 
 # RC Actor configuration
-actor:
+rc_actor:
   # Number of reasoning/summarization cycles per problem
   num_reasoning_steps: 8
   
   # Rollout policies
-  solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout_rc
   summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_summarization_rollout
   system_prompt: null
   

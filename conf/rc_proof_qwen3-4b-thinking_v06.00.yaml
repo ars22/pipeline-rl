@@ -4,31 +4,48 @@ defaults:
   - rewards: pure_success
   - _self_
 
-seed: 18
+seed: 42
+
+# Main model path for RC actor and regular actor
+model_path:
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
+  hub_model_version: v05.01-step-000100
+
+# Separate model for summarization (optional)
+# If not set or null, uses the same model as RC actor
+summarization_model_path:
+  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
+  hub_model_version: null
 
 # used to set problem queue size and llm max rollouts for RC actor and regular actor
 n_problems_per_batch: 64 
 
 finetune:
   seed: ${seed}
-  attempts: 8
+  attempts: 16
   gradient_accumulation_passes: 32
-  train_batch_size: 16 # train_batch_size = attempts * n_problems_per_batch / gradient_accumulation_passes
-  valid_batch_size: 16 # same as train_batch_size
+  train_batch_size: 32 # train_batch_size = attempts * n_problems_per_batch / gradient_accumulation_passes
+  valid_batch_size: 32 # same as train_batch_size
+  lr_scheduler_type: constant_with_warmup
+  num_warmup_steps: 0
+  rl:
+    entropy_bonus: 0.0001
+    final_entropy_bonus: ${finetune.rl.entropy_bonus}
+    overlong_filtering: false
   seq_length: 53000
-  seq_parallel: 4
+  seq_parallel: 2
   learning_rate: 1.0e-6
-  save_checkpoint_steps: 10
+  save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: v00.00
+  hub_model_revision: v06.00
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
 
 # evaluation settings
 eval_only: false # set to true to only evaluate the model with RC actor
-skip_first_eval: true
+skip_first_eval: false
 eval_every_n_versions: 12800
 
 # world configuration for a 4 node (32 H100 GPU) setup
@@ -37,8 +54,8 @@ world:
   # GPU allocation fractions (must sum to <= 8 per node)
   rc_actor_fraction: 3  # GPUs for RC actor LLMs
   summarization_fraction: 1  # Set to >0 to use separate summarization LLMs
-  finetune_fraction: 8
-  actor_fraction: 20    # GPUs for regular actor LLMs
+  finetune_fraction: 32
+  actor_fraction: 36    # GPUs for regular actor LLMs
   preprocessor_fraction: 0
 
   env_replicas: 2
@@ -58,11 +75,11 @@ rc_actor:
   throughput_window_size: 50
   shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   # Retry settings for transient HTTP errors (connection resets, etc.)
-  max_retries: 3
+  max_retries: 10
   retry_base_delay: 1.0
   
   # RC-specific configuration
-  num_reasoning_steps: 2  # Number of reasoning/summarization cycles
+  num_reasoning_steps: 3  # Number of reasoning/summarization cycles
   attempts: 1  # Number of attempts per problem (for training use 1)
 
   # Solution and summarization rollout policies
@@ -89,7 +106,7 @@ actor:
   # Enable reading from RC actor stream
   use_rc_stream: true
   rc_stream_topic: "rc_actor"  # Topic name where RC actor writes
-  rc_stream_samples_per_batch: 2  # Number of reasoning samples to subsample per batch
+  rc_stream_samples_per_batch: 2  # Number of reasoning samples to subsample per problem (out of num_reasoning_steps + 1 states)
   
   log_each_n_secs: 0
   problem_queue_size: ${n_problems_per_batch} 
@@ -100,7 +117,7 @@ actor:
   throughput_window_size: 50
   shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   # Retry settings for transient HTTP errors (connection resets, etc.)
-  max_retries: 3
+  max_retries: 10
   retry_base_delay: 1.0
   
   # Regular rollout policy (used for K attempts per RC state)
@@ -138,12 +155,22 @@ llm:
   parameters:
     max_tokens: 49152 
     temperature: 0.8 
+  reasoning_delimiters: ["</think>"]
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 32
+    log_every_n_groups: 32
 
 # LLM parameters for regular actor (sampling K attempts)
 actor_llm:
   parameters:
     max_tokens: 49152
     temperature: 0.8
+  reasoning_delimiters: ["</think>"]
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 32
+    log_every_n_groups: 32
     
 test_llm:
   parameters: 
@@ -222,16 +249,7 @@ actor_vllm_config:
 # this will be autocreated based on the config
 jobs: []
 
-# Main model path for RC actor and regular actor
-model_path:
-  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_version: null
 
-# Separate model for summarization (optional)
-# If not set or null, uses the same model as RC actor
-summarization_model_path:
-  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
-  hub_model_version: null
 
 # will use default based on the chosen backend
 accelerate_config: null
@@ -253,11 +271,16 @@ train_subset: null
 # Dataset configuration
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema
+  - hub_id: hf-imo-colab/olympiads-proof-schema-cleaned-v2
+    config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
     split: train
 test_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
     split: IMO2025
+  - hub_id: hf-imo-colab/olympiads-proof-schema-cleaned-v2
+    config: qwen3-4b-thinking_reward@128-lt-0.7_std-lt-0.08
+    split: train
+
 
 debug:
   mode: ""
@@ -266,7 +289,7 @@ debug:
   use_existing_llms: false
 
 me:
-  # Which job is this one? This will be autopopulated
+  # This will be autopopulated
   job_idx: null
 
 hydra:
@@ -301,8 +324,8 @@ environment:
   prompt_name: ${llm_grader.prompt_name}
   
 llm_grader:
-  local: false
-  name: openai/gpt-oss-20b 
+  local: true # set to false to run via inference endpoints
+  name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   vllm_kwargs:
     num_nodes: 1
     data-parallel-size: 8
@@ -318,3 +341,7 @@ llm_grader:
       effort: medium
   reasoning_delimiters: ["</think>"]
   prompt_name: v1
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 32
+    log_every_n_groups: 32

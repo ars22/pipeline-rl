@@ -474,9 +474,11 @@ def stream_iter(stream_reader, num_samples_per_batch: int = 3, is_training: bool
                 "id": sample.get("metadata", {}).get("problem_id", 0),
                 "turn_number": sample.get("metadata", {}).get("turn_number", 0),
             }
-            # Add schema if present (for LLM-based proof verification)
+            # Add schema and original problem if present (for LLM-based proof verification)
             if "schema" in sample.get("metadata", {}):
                 problem["schema"] = sample["metadata"]["schema"]
+            if "original_problem" in sample.get("metadata", {}):
+                problem["original_problem"] = sample["metadata"]["original_problem"]
             yield problem
 
 
@@ -906,7 +908,11 @@ def run_actor_loop(cfg: DictConfig):
     if os.path.exists(finetune_model_path):
         actor_model_path = finetune_model_path
     else:
-        actor_model_path = cfg.model_path
+        from pipelinerl.utils import resolve_model_reference
+
+        actor_model_path, _ = resolve_model_reference(cfg.model_path)
+        if actor_model_path is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
     
     train_llms = [
         TrainableLLM(
