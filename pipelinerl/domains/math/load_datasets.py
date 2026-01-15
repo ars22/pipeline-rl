@@ -255,7 +255,7 @@ def load_datasets(
             if config is not None:
                 load_args += (config,)
             dataset = load_dataset(*load_args, split=split, trust_remote_code=trust_remote_code)
-            if hub_id in ["hf-imo-colab/olympiads-proof-schema", "hf-imo-colab/olympiads-proof-schema-benchmark", "hf-imo-colab/olympiads-proof-schema-cleaned", "hf-imo-colab/olympiads-proof-schema-cleaned-v2"]:
+            if hub_id in ["hf-imo-colab/olympiads-proof-schema", "hf-imo-colab/olympiads-proof-schema-benchmark", "hf-imo-colab/olympiads-proof-schema-cleaned", "hf-imo-colab/olympiads-proof-schema-cleaned-v2", "hf-imo-colab/aops_cleaned_v2"]:
                 samples = [s for s in process_proof_problem(dataset, hub_id.split("/")[-1]) if s is not None]
             else:
                 samples = [dict(row) for row in dataset]
@@ -544,6 +544,11 @@ def load_datasets(
 
     if len(datasets) == 0:
         raise ValueError("No datasets loaded")
+
+    # Shuffle the combined datasets
+    if seed is not None:
+        random.seed(seed)
+    random.shuffle(datasets)
 
     return datasets
 
