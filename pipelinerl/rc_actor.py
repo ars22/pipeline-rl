@@ -253,6 +253,7 @@ class InferenceProblemState:
             sample.metadata["answer"] = self.answer
             sample.metadata["dataset_name"] = self.dataset_name
             sample.metadata["schema"] = self.schema
+            sample.metadata["original_problem"] = f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -290,6 +291,7 @@ class InferenceProblemState:
             sample.metadata["answer"] = self.answer
             sample.metadata["dataset_name"] = self.dataset_name
             sample.metadata["schema"] = self.schema
+            sample.metadata["original_problem"] = f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
             sample.group_id = group_id
         
         # Increment overall cycle step
