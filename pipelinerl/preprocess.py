@@ -357,7 +357,7 @@ def run_preprocessing_loop(
     else:
         wandb_run = None
 
-    tokenizer = load_tokenizer(cfg.finetune.config_name)
+    tokenizer = load_tokenizer(cfg.finetune.config_name, revision=getattr(cfg.finetune, "model_revision", None))
     
     llm_urls = str(cfg.me.llm_urls).split("+") if cfg.me.llm_urls else []
     if llm_urls:
@@ -668,4 +668,3 @@ def run_preprocessing_loop(
                     if worker.is_alive():
                         worker.terminate()
                         worker.join(timeout=1.0)
-

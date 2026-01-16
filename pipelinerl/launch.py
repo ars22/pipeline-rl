@@ -107,6 +107,10 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
     if model_revision:
         cmd.extend(["--revision", str(model_revision)])
 
+    model_revision = getattr(cfg, "model_revision", None)
+    if model_revision and not Path(str(cfg.model_path)).exists():
+        cmd.extend(["--revision", str(model_revision)])
+
     # Add vLLM kwargs as separate arguments
     for k, v in kwargs.items():
         cmd.append(f"--{k}")
@@ -234,6 +238,10 @@ def run_actor_llm(
     ]
     if actor_model_revision:
         cmd.extend(["--revision", str(actor_model_revision)])
+
+    model_revision = getattr(cfg, "model_revision", None)
+    if model_revision and not Path(str(actor_model_path)).exists():
+        cmd.extend(["--revision", str(model_revision)])
 
     # Add vLLM kwargs as separate arguments
     if vllm_cfg.vllm_kwargs:

@@ -63,7 +63,10 @@ timestamp=$(date +'%Y%m%d-%H%M%S'); sbatch --job-name=prl-qwen3-4b-instruct-8k -
 For developing, use the demo pipeline for faster iterations:
 
 ```sh
-timestamp=$(date +'%Y%m%d-%H%M%S'); python -m pipelinerl.launch --config-name=proof_demo output_dir="tmp/results/proof_demo-${timestamp}" 
+# 4B instruct model
+timestamp=$(date +'%Y%m%d-%H%M%S'); python -m pipelinerl.launch --config-name=proof_demo-instruct output_dir="tmp/results/proof_demo-instruct-${timestamp}" 
+# 4B thinking model
+timestamp=$(date +'%Y%m%d-%H%M%S'); python -m pipelinerl.launch --config-name=proof_demo-thinking output_dir="tmp/results/proof_demo-thinking-${timestamp}"
 ```
 
 This pipeline depends on an external LLM grader for proof verification. You can either run the grader locally on the Hugging Face cluster or by calling a deployed inference endpoint. The choice is determined by the `llm_grader.name` field in the config:
@@ -192,6 +195,8 @@ python -m pipelinerl.launch --config-name hf_demo output_dir=tmp/results/hf_demo
 ```
 
 The `dataset` field tags the data source, `task` contains the prompt handed to the actor, and `answer` is the gold solution (Math tasks should already wrap the final value in `\\boxed{}`).
+
+Alternatively, add the dataset repo ID to an existing mapping in [pipelinerl/domains/math/load_datasets.py](pipelinerl/domains/math/load_datasets.py).
 
 # Pipeline RL: fast LLM agent training
 

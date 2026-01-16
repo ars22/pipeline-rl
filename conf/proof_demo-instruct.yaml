@@ -1,0 +1,111 @@
+# -----------------
+# Config for 1 node
+# -----------------
+defaults:
+    - base
+    - _self_
+
+model_path:
+  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
+  hub_model_version: null
+# Uncomment to skip test set rollouts
+eval_every_n_versions: 0
+
+finetune:
+  attempts: 4
+  train_batch_size: 1
+  valid_batch_size: 1
+  gradient_accumulation_passes: 4
+  seq_length: 10240
+  seq_parallel: 1
+  save_checkpoint_steps: 50
+  push_to_hub: true
+  hub_model_id: hf-imo-colab/Qwen3-4B-Instruct-2507-Proof-Demo
+  hub_model_revision: v00.00
+  hub_ignore_patterns:
+    - "*.pt"
+    - "*.pth"
+
+llm:
+  parameters:
+    max_tokens: 8192
+    temperature: 0.8
+  reasoning_delimiters: null
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 16
+    log_every_n_groups: 4
+# Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
+test_llm:
+  parameters: 
+    max_tokens: 8192
+    temperature: 0.8
+    top_p: 0.8
+    top_k: 20
+
+llm_grader:
+  name: openai/gpt-oss-20b # or gpt-oss-20b-reh if running via inference endpoints
+  vllm_kwargs:
+    num_nodes: 1
+    data-parallel-size: 8
+    tensor-parallel-size: 1
+    max-num-batched-tokens: 8192
+    max-num-seqs: 16
+    max-model-len: 32768
+    gpu-memory-utilization: 0.85
+  sampling_kwargs:
+    temperature: 1.0
+    max_output_tokens: 32768
+    reasoning:
+      effort: medium
+  prompt_name: v1
+  reasoning_delimiters: ${llm.reasoning_delimiters}
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 16
+    log_every_n_groups: 4
+
+actor:
+  system_prompt: null
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
+  task_template: |-
+    Generate a rigorous proof to the following question:
+
+    {task}
+environment:
+  _target_: pipelinerl.domains.math.MathProofEnvironment
+  model_name: ${llm_grader.name}
+  sampling_kwargs: ${llm_grader.sampling_kwargs}
+  prompt_name: ${llm_grader.prompt_name}
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - hub_id: hf-imo-colab/olympiads-proof-schema
+    split: train
+test_dataset_names:
+  - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
+    split: IMO2025
+
+vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 1024
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+world:
+  replicas: 1
+  actor_fraction: 4
+  preprocessor_fraction: 0
+  finetune_fraction: 4
+  env_replicas: 1
+  actor_group_port: 9000
+  environment_start_port: 7777

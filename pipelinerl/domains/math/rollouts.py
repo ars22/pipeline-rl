@@ -21,18 +21,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def remove_reasoning(completion: str, reasoning_delimiters: list[str] = None) -> str:
-    if reasoning_delimiters is not None:
+    # Treat empty lists like None (no delimiter-based stripping).
+    if not reasoning_delimiters:
+        return completion
+    else:
         # Split final answer from reasoning content
-        is_reasoning_complete = False
         for delim in reasoning_delimiters:
             if delim in completion:
                 completion = completion.split(delim)[-1]
-                is_reasoning_complete = True
                 return completion.strip()
-        if not is_reasoning_complete:
-            return ""
-    else:
-        return completion
+        return ""
     
 
 class Metrics(BaseMetrics):
@@ -106,6 +104,12 @@ async def generate_math_rollout(
     verifier_metrics: dict[str, float | int] = {}
     verifier_table_entry: dict[str, str | int] | None = None
     if "schema" in problem:
+        llm_grader_cfg = cfg.get("llm_grader", None)
+        wandb_table_cfg = llm_grader_cfg.get("wandb_table", None) if llm_grader_cfg is not None else None
+        wandb_table_enabled = True
+        if wandb_table_cfg is not None:
+            wandb_table_enabled = bool(wandb_table_cfg.get("enabled", True))
+
         schema_text = parse_schema(problem["schema"])
         # logger.info(f"Making verifier API call with schema: {schema_text[:100]}")
         verification = await verify_proof(
@@ -117,6 +121,7 @@ async def generate_math_rollout(
             model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
             sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
             log_wandb_metrics=cfg.wandb.use_wandb,
+            collect_table_entry=bool(cfg.wandb.use_wandb and wandb_table_enabled),
         )
         score = verification.score
         verifier_metrics = verification.metrics

@@ -1,61 +1,72 @@
-# -----------------
-# Config for 1 node
-# -----------------
+# ---------------------
+# Config for:
+#   generation: 5 nodes
+#   grader: 1 node
+#   finetuning: 2 nodes
+# ---------------------
 defaults:
     - base
     - _self_
 
-model_path:
-  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
-  hub_model_version: null
-# Uncomment to skip test set rollouts
-eval_every_n_versions: 0
+model_path: Qwen/Qwen3-4B-Thinking-2507
+# Eval every 25 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
+eval_every_n_versions: 12800
+
+preprocess:
+  shared_memory_entry_size: 2000000000
 
 finetune:
-  attempts: 4
-  train_batch_size: 1
-  valid_batch_size: 1
-  gradient_accumulation_passes: 4
-  seq_length: 10240
-  seq_parallel: 1
-  save_checkpoint_steps: 50
+  attempts: 16
+  train_batch_size: 32
+  valid_batch_size: 32
+  gradient_accumulation_passes: 16
+  seq_length: 49920
+  seq_parallel: 2
+  learning_rate: 5.0e-6
+  save_checkpoint_steps: 5
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Instruct-2507-Proof-Demo
-  hub_model_revision: v00.00
+  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
+  hub_model_revision: v01.02
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
 
 llm:
   parameters:
-    max_tokens: 8192
+    max_tokens: 49152 
     temperature: 0.8
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 8192
-    temperature: 0.8
-    top_p: 0.8
+    max_tokens: 49152
+    temperature: 0.8 
+    top_p: 0.95
     top_k: 20
 
 llm_grader:
-  name: openai/gpt-oss-20b # or gpt-oss-20b-reh if running via inference endpoints
+  name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   vllm_kwargs:
     num_nodes: 1
     data-parallel-size: 8
     tensor-parallel-size: 1
-    max-num-batched-tokens: 8192
-    max-num-seqs: 16
-    max-model-len: 32768
-    gpu-memory-utilization: 0.85
+    max-num-batched-tokens: 24576
+    max-num-seqs: 64
+    max-model-len: 98304
+    gpu-memory-utilization: 0.9
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 32768
+    max_output_tokens: 81920
     reasoning:
       effort: medium
+  reasoning_delimiters: ["</think>"]
   prompt_name: v0
+  wandb_table:
+    enabled: false
 
 actor:
+  llm_max_rollouts: 20 # Larger values exhaust the KV cache and lead to preemptions
+  max_retries: 10
+  shared_memory_entry_size: 2000000000 # Allow up to 2GB per rollout
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
@@ -67,7 +78,8 @@ environment:
   prompt_name: ${llm_grader.prompt_name}
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema
+  - hub_id: hf-imo-colab/olympiads-proof-schema-cleaned
+    config: qwen3-4b-thinking_gpt-oss-20b_reward@4_min-0_max-1
     split: train
 test_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
@@ -82,8 +94,8 @@ vllm_config:
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
-    max-num-batched-tokens: 1024
-    enable-chunked-prefill: ""
+    max-num-batched-tokens: 16384
+    max-model-len: ${finetune.seq_length}
     return-tokens-as-token-ids: ""
     tensor-parallel-size: 1
     pipeline-parallel-size: 1
@@ -91,9 +103,9 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 4
+  actor_fraction: 40
   preprocessor_fraction: 0
-  finetune_fraction: 4
+  finetune_fraction: 16
   env_replicas: 1
   actor_group_port: 9000
   environment_start_port: 7777

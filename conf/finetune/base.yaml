@@ -2,7 +2,9 @@ data: null
 # Model class. Must be one of the following: causal-language-modeling, seq2seq-language-modeling, vision2seq-language-modeling
 model_class: causal-language-modeling
 # Model name or path of model to be trained.
-config_name: ${..model_path.hub_model_id}
+config_name: ${..model_path}
+# Optional Hugging Face Hub revision (branch / tag / commit).
+model_revision: ${..model_revision}
 # Optimizer type, supported: adamw_torch, adafactor, cpuadam, lion
 optim: adamw_torch
 # use half precision training, full bf16 without mixed precision copies at all
@@ -113,19 +115,3 @@ rl:
   temperature: ${...llm.parameters.temperature}
   aggregate_loss: sum
   overlong_filtering: false
-
-llm_grader:
-  name: null
-  vllm_kwargs:
-    num_nodes: 1
-    tensor-parallel-size: 1
-    data-parallel-size: 1
-    max-num-batched-tokens: 8192
-    max-num-seqs: 16
-    max-model-len: 32768
-    gpu-memory-utilization: 0.85
-  sampling_kwargs:
-    temperature: 1.0
-    max_output_tokens: 4096
-  reasoning_delimiters: []
-  prompt_name: v0
