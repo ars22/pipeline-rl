@@ -17,7 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import SingleStreamSpec, connect_to_redis, read_stream, set_streams_backend, write_to_streams
-from pipelinerl.utils import resolve_model_reference, terminate_with_children
+from pipelinerl.utils import terminate_with_children
 from pipelinerl.world import Job, WorldMap
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ def validate_config(cfg: DictConfig):
     
     # Check for vision language model constraints
     if cfg.finetune.model_class == "vision2seq-language-modeling":
-        model_id, _ = resolve_model_reference(cfg.model_path)
+        model_id = cfg.model_path
         if not model_id or "Qwen2.5-VL" not in model_id:
             raise ValueError("Only Qwen2.5-VL models are supported for vision language modeling")
         if cfg.finetune.seq_packing:
@@ -92,9 +92,10 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
     log_dir = exp_dir / f"ref_vllm_{preprocessor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
 
-    model_id, model_revision = resolve_model_reference(cfg.model_path)
+    model_id = cfg.model_path
+    model_revision = cfg.get("model_revision")
     if model_id is None:
-        raise ValueError("model_path must define hub_model_id or a valid path")
+        raise ValueError("model_path must be defined")
     cmd = [
         "python",
         "-m",
@@ -139,13 +140,15 @@ def run_summarization_llm(
 ):
     # Use summarization model path if specified, otherwise use main model
     if cfg.get("summarization_model_path") is not None:
-        model_id, model_revision = resolve_model_reference(cfg.summarization_model_path)
+        model_id = cfg.summarization_model_path
+        model_revision = cfg.get("summarization_model_revision")
         if model_id is None:
-            raise ValueError("summarization_model_path must define hub_model_id or a valid path")
+            raise ValueError("summarization_model_path must be defined")
     else:
-        model_id, model_revision = resolve_model_reference(cfg.model_path)
+        model_id = cfg.model_path
+        model_revision = cfg.get("model_revision")
         if model_id is None:
-            raise ValueError("model_path must define hub_model_id or a valid path")
+            raise ValueError("model_path must be defined")
     
     # Use summarization vllm config if specified, otherwise use main vllm config
     vllm_cfg = cfg.get("summarization_vllm_config")
@@ -208,9 +211,10 @@ def run_actor_llm(
         actor_model_path = finetune_model_path
         actor_model_revision = None
     else:
-        actor_model_path, actor_model_revision = resolve_model_reference(cfg.model_path)
+        actor_model_path = cfg.model_path
+        actor_model_revision = cfg.get("model_revision")
         if actor_model_path is None:
-            raise ValueError("model_path must define hub_model_id or a valid path")
+            raise ValueError("model_path must be defined")
 
     # Use actor_vllm_config if specified, otherwise use main vllm_config
     vllm_cfg = cfg.get("actor_vllm_config")
@@ -283,9 +287,10 @@ def run_rc_actor_llm(
         rc_actor_model_path = finetune_model_path
         rc_actor_model_revision = None
     else:
-        rc_actor_model_path, rc_actor_model_revision = resolve_model_reference(cfg.model_path)
+        rc_actor_model_path = cfg.model_path
+        rc_actor_model_revision = cfg.get("model_revision")
         if rc_actor_model_path is None:
-            raise ValueError("model_path must define hub_model_id or a valid path")
+            raise ValueError("model_path must be defined")
 
     log_dir = exp_dir / f"rc_actor_vllm_{rc_actor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)

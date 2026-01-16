@@ -1390,24 +1390,22 @@ def run_actor_loop(cfg: DictConfig):
     logger.info(f"Loaded {len(train_dataset)} training problems")
     logger.info(f"Loaded {len(test_dataset)} test problems")
 
-    from pipelinerl.utils import resolve_model_reference
-
     finetune_model_path = exp_path / "finetune" / "current"
     if os.path.exists(finetune_model_path):
         actor_model_path = finetune_model_path
         actor_model_revision = None
     else:
-        actor_model_path, actor_model_revision = resolve_model_reference(cfg.model_path)
+        actor_model_path = cfg.model_path
+        actor_model_revision = cfg.get("model_revision")
         if actor_model_path is None:
-            raise ValueError("model_path must define hub_model_id or a valid path")
-    
+            raise ValueError("model_path must be defined")
+
     # Determine summarization model path
     if cfg.get('summarization_model_path') is not None:
-        summarization_model_path, summarization_model_revision = resolve_model_reference(
-            cfg.summarization_model_path
-        )
+        summarization_model_path = cfg.summarization_model_path
+        summarization_model_revision = cfg.get("summarization_model_revision")
         if summarization_model_path is None:
-            raise ValueError("summarization_model_path must define hub_model_id or a valid path")
+            raise ValueError("summarization_model_path must be defined")
         logger.info(f"Using separate summarization model: {summarization_model_path}")
     else:
         summarization_model_path = actor_model_path

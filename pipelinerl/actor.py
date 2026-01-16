@@ -1154,11 +1154,9 @@ def run_actor_loop(cfg: DictConfig):
     if os.path.exists(finetune_model_path):
         actor_model_path = finetune_model_path
     else:
-        from pipelinerl.utils import resolve_model_reference
-
-        actor_model_path, _ = resolve_model_reference(cfg.model_path)
+        actor_model_path = cfg.model_path
         if actor_model_path is None:
-            raise ValueError("model_path must define hub_model_id or a valid path")
+            raise ValueError("model_path must be defined")
     
     train_llms = [
         TrainableLLM(

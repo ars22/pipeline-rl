@@ -65,11 +65,9 @@ def start_actor_llm(
     if os.path.exists(finetune_model_path):
         actor_model_path = finetune_model_path
     else:
-        from pipelinerl.utils import resolve_model_reference
-
-        actor_model_path, _ = resolve_model_reference(cfg.model_path)
+        actor_model_path = cfg.model_path
         if actor_model_path is None:
-            raise ValueError("model_path must define hub_model_id or a valid path")
+            raise ValueError("model_path must be defined")
 
     log_dir = exp_dir / f"actor_vllm_{actor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
@@ -127,19 +125,17 @@ def start_summarization_llm(
     
     # Use summarization model if configured, otherwise use actor model
     if cfg.get('summarization_model_path') is not None:
-        from pipelinerl.utils import resolve_model_reference
-
-        summarization_model_path, _ = resolve_model_reference(cfg.summarization_model_path)
+        summarization_model_path = cfg.summarization_model_path
         if summarization_model_path is None:
-            raise ValueError("summarization_model_path must define hub_model_id or a valid path")
+            raise ValueError("summarization_model_path must be defined")
     else:
         finetune_model_path = exp_dir / "finetune" / "current"
         if os.path.exists(finetune_model_path):
             summarization_model_path = finetune_model_path
         else:
-            summarization_model_path, _ = resolve_model_reference(cfg.model_path)
+            summarization_model_path = cfg.model_path
             if summarization_model_path is None:
-                raise ValueError("model_path must define hub_model_id or a valid path")
+                raise ValueError("model_path must be defined")
 
     log_dir = exp_dir / f"summarization_vllm_{summarization_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
