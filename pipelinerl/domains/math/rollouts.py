@@ -111,7 +111,11 @@ async def generate_math_rollout(
             wandb_table_enabled = bool(wandb_table_cfg.get("enabled", True))
 
         schema_text = parse_schema(problem["schema"])
-        # logger.info(f"Making verifier API call with schema: {schema_text[:100]}")
+        
+        # make sure original_problem is present when using RC stream, since generation prompt is not the same as the original problem but
+        # we need to use the original problem for verification
+        if cfg.actor.get("use_rc_stream", False):
+            assert "original_problem" in problem, "original_problem must be present when using RC stream"
         verification = await verify_proof(
             problem=problem["original_problem"] if "original_problem" in problem else problem["task"],
             ref_solution=problem["answer"],
