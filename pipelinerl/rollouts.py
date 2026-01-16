@@ -32,6 +32,7 @@ class TrainingText(BaseModel):
     """
 
     text: str
+    output_text: str
     n_predicted: int
     reward: float = 0.0
     logprobs: List[float] = Field(default_factory=list)
@@ -44,11 +45,13 @@ class TrainingText(BaseModel):
     output_tokens: int = Field(default=0)
     visual_features: Optional[Dict[str, np.ndarray]] = None  # For vision language models
     metadata: dict = Field(default_factory=dict)
-
+    fixed_prompt_text: str = Field(default="")
     model_config = {"arbitrary_types_allowed": True}
 
     @property
     def prompt_text(self) -> str:
+        if self.fixed_prompt_text != "":
+            return self.fixed_prompt_text
         return self.text[: -self.n_predicted]
 
     @property

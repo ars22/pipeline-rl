@@ -2,7 +2,9 @@ defaults:
     - base
     - _self_
 
-model_path: Qwen/Qwen3-30B-A3B-Thinking-2507
+model_path:
+  hub_model_id: Qwen/Qwen3-30B-A3B-Thinking-2507
+  hub_model_version: null
 # For debugging to skip test set rollouts
 # eval_every_n_versions: 0
 

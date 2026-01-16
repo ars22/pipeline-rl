@@ -191,6 +191,7 @@ async def verify_answer_rpc(
         "strict": strict,
         "max_prediction_length": max_prediction_length,
     }
+    # logger.info(f"Verifying answer with request: prediction: {prediction[:100]}, gold: {gold[:100]}, strict: {strict}, max_prediction_length: {max_prediction_length}")
     async with session.post(
         f"http://{host}:{port}/verify_answer",
         json=json,

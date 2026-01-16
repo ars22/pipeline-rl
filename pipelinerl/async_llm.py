@@ -48,6 +48,16 @@ async def llm_async_generate(
     llm: TrainableLLM, prompt: Prompt, session: aiohttp.ClientSession
 ) -> LLMCall:
     llm.load_tokenizer()
+    
+    # Client-side validation: estimate prompt tokens to prevent CUDA crashes
+    estimated_prompt_tokens = sum(len(msg.get("content", "")) // 3 for msg in prompt.messages)
+    max_allowed = 100000  # Conservative limit well below 131K
+    if estimated_prompt_tokens > max_allowed:
+        error_msg = (f"Prompt too large: estimated {estimated_prompt_tokens} tokens "
+                    f"(max {max_allowed}). This would crash vLLM.")
+        logger.error(f"[PROMPT TOO LARGE] {error_msg}")
+        raise ValueError(error_msg)
+    
     headers = {"Content-Type": "application/json"}
     if llm.api_token:
         headers |= {"Authorization": f"Bearer {llm.api_token}"}
@@ -83,6 +93,7 @@ async def llm_async_generate(
         content = data["choices"][0]["message"]["content"]
         if not content:
             logger.warning(f"Empty completion {data}")
+
 
         parsed_logprobs = []
         if llm.collect_logprobs:
@@ -197,21 +208,29 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     if tokenizer.bos_token and text.startswith(tokenizer.bos_token):
         text = text[len(tokenizer.bos_token) :]
 
-    if not llm_call.logprobs:
+    if llm.collect_logprobs and not llm_call.logprobs:
         raise ValueError("Logprobs are required to make training data for RL")
 
     # We add the exact token ids and logprobs to "training_text" to ensure inference/training consistency
-    labels = [lp.token_id for lp in llm_call.logprobs]
-    input_ids = prompt_token_ids + labels
-    # Apply masking to input tokens that aren't generated
-    labels = [MASKED_TOKEN_ID] * len(prompt_token_ids) + labels
-    logprobs = [lp.logprob for lp in llm_call.logprobs]
+    if llm_call.logprobs:
+        labels = [lp.token_id for lp in llm_call.logprobs]
+        input_ids = prompt_token_ids + labels
+        # Apply masking to input tokens that aren't generated
+        labels = [MASKED_TOKEN_ID] * len(prompt_token_ids) + labels
+        logprobs = [lp.logprob for lp in llm_call.logprobs]
+    else:
+        # No logprobs available (eval mode) - use empty lists
+        labels = []
+        input_ids = prompt_token_ids
+        logprobs = []
+    
     finished = llm_call.output.content.endswith(tokenizer.eos_token)
     prompt_tokens = llm_call.prompt_length_tokens
     output_tokens = llm_call.output_length_tokens
 
     return TrainingText(
         text=text,
+        output_text=output_text,
         n_predicted=len(output_text),
         input_ids=input_ids,
         labels=labels,

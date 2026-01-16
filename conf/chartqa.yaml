@@ -43,7 +43,9 @@ test_dataset_names:
   - chartqa_test
 
 # Use vision-language model for multimodal support
-model_path: Qwen/Qwen2.5-VL-3B-Instruct
+model_path:
+  hub_model_id: Qwen/Qwen2.5-VL-3B-Instruct
+  hub_model_version: null
 
 # Override vLLM config for multimodal support
 vllm_config:

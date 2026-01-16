@@ -13,6 +13,13 @@ from tapeagents.llms.trainable import TrainableLLM
 from pipelinerl.async_llm import llm_async_generate, make_training_text
 from .verifier_api import verify_answer_rpc, verify_proof, parse_schema
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 def remove_reasoning(completion: str, reasoning_delimiters: list[str] = None) -> str:
     # Treat empty lists like None (no delimiter-based stripping).
     if not reasoning_delimiters:
@@ -48,18 +55,29 @@ def length_penalty(max_length: int, sequence_length: int, buffer_tokens: int) ->
         return ((max_length - buffer_tokens) - sequence_length) / buffer_tokens
     return 0.
 
-async def generate_math_rollout(
+async def generate_math_rollout_rc(
     cfg: DictConfig,
     llm: TrainableLLM,
     problem: dict,
     session: aiohttp.ClientSession,
 ) -> RolloutResult:
-    messages = []
-    if cfg.actor.system_prompt:
-        messages.append({"role": "system", "content": cfg.actor.system_prompt})
-    messages.append({"role": "user", "content": cfg.actor.task_template.format(task=problem["task"])})
-    prompt = Prompt(messages=messages)
+    return await generate_math_rollout(cfg, llm, problem, session, rc_actor=True)
 
+
+async def generate_math_rollout(
+    cfg: DictConfig,
+    llm: TrainableLLM,
+    problem: dict,
+    session: aiohttp.ClientSession,
+    rc_actor=False,
+) -> RolloutResult:
+    messages = []
+    actor_cfg = cfg.rc_actor if rc_actor else cfg.actor
+    if actor_cfg.system_prompt is not None:
+        messages.append({"role": "system", "content": actor_cfg.system_prompt})
+    messages.append({"role": "user", "content": actor_cfg.task_template.format(task=problem["task"])})
+    prompt = Prompt(messages=messages)
+    # logger.info(f"Reasoning prompt: {prompt}")
     time_start = time.time()
     llm_call = await llm_async_generate(llm, prompt, session)
     latency = time.time() - time_start
@@ -73,9 +91,12 @@ async def generate_math_rollout(
     )
     generation_final_answer = remove_reasoning(generation_raw, reasoning_delimiters=reasoning_delimiters)
     rewards = RewardTable(**dict(cfg.rewards))
-    discount_factor = cfg.actor.discount_factor
+    discount_factor = actor_cfg.discount_factor
 
     trace = make_training_text(llm, llm_call)
+
+    # logger.info(f"Generated training text. Now verifying with verifier API.")
+    # logger.info(f"Verifying generated reasoning: {generation_final_answer[:100]}")
 
     # ===========================================================
     # PROOF-BASED SCORING BRANCH
@@ -90,8 +111,9 @@ async def generate_math_rollout(
             wandb_table_enabled = bool(wandb_table_cfg.get("enabled", True))
 
         schema_text = parse_schema(problem["schema"])
+        # logger.info(f"Making verifier API call with schema: {schema_text[:100]}")
         verification = await verify_proof(
-            problem=problem["task"],
+            problem=problem["original_problem"] if "original_problem" in problem else problem["task"],
             ref_solution=problem["answer"],
             schema=schema_text,
             generation=generation_final_answer,
@@ -192,4 +214,48 @@ async def generate_math_rollout(
         dataset_name=problem.get("dataset"),
         verifier_metrics=verifier_metrics,
         verifier_table_entry=verifier_table_entry,
+    )
+
+
+async def generate_summarization_rollout(
+    cfg: DictConfig,
+    llm: TrainableLLM,
+    problem: dict,
+    session: aiohttp.ClientSession,
+) -> RolloutResult:
+    """
+    Simplified rollout for summarization tasks.
+    No system prompt, no scoring - just generates text with reward=0.
+    """
+    # Create prompt without system message
+    messages = [{"role": "user", "content": problem.get("task", "")}]
+    prompt = Prompt(messages=messages)
+
+    time_start = time.time()
+    llm_call = await llm_async_generate(llm, prompt, session)
+    latency = time.time() - time_start
+
+    assert llm_call.output.content is not None
+    
+    # Create training trace with zero reward
+    trace = make_training_text(llm, llm_call)
+    trace.reward = 0.0
+
+    # Simple metrics - no scoring
+    metrics = Metrics(
+        reward=0.0,
+        success=True,  # Always "successful" since we're not verifying
+        no_error=True,
+        no_answer=False,
+        penalty=0.0,
+    )
+
+   
+    return RolloutResult(
+        training_texts=[trace],
+        metrics=metrics,
+        latency=latency,
+        dataset_name=problem.get("dataset"),
+        verifier_metrics={},
+        verifier_table_entry=None,
     )

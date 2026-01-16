@@ -2,7 +2,9 @@ defaults:
 - base
 - override rewards: pure_success
 - _self_
-model_path: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+model_path:
+  hub_model_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+  hub_model_version: null
 world:
   actor_fraction: 4
   preprocessor_fraction: 1

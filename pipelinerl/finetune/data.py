@@ -1,4 +1,5 @@
 from functools import partial
+import json
 from typing import Any, Callable, Iterable, Sequence
 
 import datasets
@@ -33,7 +34,11 @@ def save_samples(training_samples: list[TrainingText], jsonl_filename: str):
     assert jsonl_filename.endswith(".jsonl"), f"Filename {jsonl_filename} must end with .jsonl"
     with open(jsonl_filename, "w") as f:
         for sample in training_samples:
-            f.write(sample.model_dump_json() + "\n")
+            dump = sample.model_dump()
+            # Explicitly include properties that aren't automatically dumped
+            dump['prompt_text'] = sample.prompt_text
+            dump['output_text'] = sample.output_text
+            f.write(json.dumps(dump) + "\n")
 
 
 def load_samples(file: str) -> list[TrainingText]:
@@ -307,7 +312,14 @@ def create_dataloader(
     stop = False
     for part in data_parts:
         if isinstance(part, TrainingText):
-            dataset_part = Dataset.from_list([s.model_dump() for s in data_parts])
+            # Explicitly include properties in the dump
+            dumps_with_props = []
+            for s in data_parts:
+                dump = s.model_dump()
+                dump['prompt_text'] = s.prompt_text
+                dump['output_text'] = s.output_text
+                dumps_with_props.append(dump)
+            dataset_part = Dataset.from_list(dumps_with_props)
             weights.append(1.0)
             stop = True
         else:

@@ -1,0 +1,170 @@
+# Test configuration for RC Actor
+# Minimal config for testing online reasoning/summarization rollouts
+# Usage: python test_rc_actor.py --config-name rc_test
+
+# Inherit from base
+defaults:
+  - base
+  - _self_
+
+
+model_path:
+  hub_model_id: ars22/rc_qwen3_4b_thinking_2507_proof-20260112-064952
+  hub_model_version: null
+
+# Optional: Use a different (smaller/faster) model for summarization
+# Uncomment to enable separate summarization model
+summarization_model_path:
+  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
+  hub_model_version: null
+
+# Random seed
+seed: 42
+
+# Output directory for test runs
+output_dir: /tmp/results/rc_test
+
+# vLLM configuration for RC actor LLMs
+rc_actor_vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: 20
+    max-num-batched-tokens: 16384
+    max-model-len: 53000
+    no-enable-prefix-caching: ""
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    generation-config: vllm
+    tensor-parallel-size: 1
+
+# vLLM configuration for summarization LLMs 
+summarization_vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: 20
+    max-num-batched-tokens: 16384
+    max-model-len: 53000
+    no-enable-prefix-caching: ""
+    enable-chunked-prefill: ""
+    return-tokens-as-token-ids: ""
+    generation-config: vllm
+    tensor-parallel-size: 1
+
+# Test world configuration (simplified version of world config)
+# Controls GPU allocation for different LLM types
+test_world:
+  actor_fraction: 7  # Number of LLMs for actor/generation LLMs
+  summarization_fraction: 1  # Number of LLMs for summarization LLMs (0 = use same LLMs as actor)
+  env_replicas: 2
+  environment_start_port: 7777
+  actor_group_port: 9000
+
+# RC Actor configuration
+rc_actor:
+  # Number of reasoning/summarization cycles per problem
+  num_reasoning_steps: 8
+  
+  # Rollout policies
+  solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout_rc
+  summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_summarization_rollout
+  system_prompt: null
+  
+  # Prompt template files (loaded from files)
+  reasoning_prompt_file: prompts/rc_reasoning_prompt.txt
+  summarization_prompt_file: prompts/rc_summarization_prompt.txt
+  
+  # Task template for formatting the problem
+  task_template: |-
+    {task}
+  
+  # Rollout configuration
+  rollout_workers: 1
+  problem_queue_size: 128
+  result_queue_size: 128
+  shared_memory_entry_size: 15728640  # 15MB
+  throughput_window_size: 10
+  
+  # Retry configuration
+  max_retries: 3
+  retry_base_delay: 1.0
+
+
+llm:
+  parameters:
+    temperature: 0.6  
+    max_tokens: 32768 # 32768  
+    top_p: 0.95
+
+# LLM generation parameters for summarization 
+summarization_llm:
+  parameters:
+    temperature: 0.7  
+    max_tokens: 2048  
+    top_p: 0.95
+
+test_llm:
+  parameters:
+    temperature: 0.6
+    max_tokens: 32768 
+    top_p: 0.95
+
+# Streams backend
+streams:
+  backend: files
+
+# Disable WandB for testing
+wandb:
+  use_wandb: false
+
+# Training attempts (for online RC, we use 1 for training and higher values for evaluation)
+attempts: 4
+
+# Disable eval during test
+eval_every_n_versions: 0
+
+# Eval only mode
+eval_only: true
+
+# Debug mode
+debug:
+  mode: true
+
+# Finetune config (minimal for state management)
+finetune:
+  max_lag: null
+
+
+# Dataset configuration - using POPE hard dataset
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - imo_proof_bench
+test_dataset_names:
+  - imo_proof_bench
+
+
+environment:
+  _target_: pipelinerl.domains.math.MathProofEnvironment
+  model_name: ${llm_grader.name}
+  sampling_kwargs: ${llm_grader.sampling_kwargs}
+  prompt_name: ${llm_grader.prompt_name}
+
+llm_grader:
+  name: openai/gpt-oss-20b 
+  sampling_kwargs:
+    temperature: 1.0
+    max_output_tokens: 81920
+    reasoning:
+      effort: high
+  reasoning_delimiters: ["</think>"]
+  prompt_name: v1
+

@@ -29,6 +29,16 @@ def process_proof_problem(dataset, dataset_name):
             "schema": row["schema_0"],        # marking scheme
         }
 
+
+def process_proofbench_problem(dataset, dataset_name):
+    for row in dataset:
+        yield {
+            "dataset": dataset_name,
+            "task": row["Problem"],           # problem statement
+            "answer": row["Solution"],        # reference solution
+            "schema": row["Grading guidelines"],        # marking scheme
+        }
+
 def process_eurus(dataset):
     for item in dataset:
         if item["ability"] != "math":
@@ -121,23 +131,27 @@ def process_open_reasoner(dataset, dataset_name):
         yield {"dataset": dataset_name, "task": task, "answer": answer}
 
 def process_pope_local(dataset, dataset_name):
-    for _, item in dataset.iterrows():
-        task = item['prompt'][0]['content']
-        answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
-        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer}
-
-def process_pope(dataset, dataset_name):
+    index = 0
     for item in dataset:
         task = item['prompt'][0]['content']
         answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
-        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer}
+        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer, "id": index}
+        index += 1
+
+def process_pope(dataset, dataset_name):
+    for index, item in dataset.iterrows():
+        task = item['prompt'][0]['content']
+        answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
+        yield {"dataset": dataset_name + f"_{item['data_source'].replace('-', '_')}", "task": task, "answer": answer, "id": index}
 
 
 def process_pope_mix(dataset, dataset_name):
+    index = 0
     for item in dataset:
         task = item['prompt'][0]['content']
         answer = "\\boxed{" + item['reward_model']['ground_truth'] + "}"
-        yield {"dataset": dataset_name + f"_{item['level'].replace('-', '_')}", "task": task, "answer": answer}
+        yield {"dataset": dataset_name + f"_{item['level'].replace('-', '_')}", "task": task, "answer": answer, "id": index}
+        index += 1
 
 
 def process_gpqa(dataset, dataset_name):
@@ -225,6 +239,18 @@ def add_ids(dataset: list[dict]):
     return dataset
 
 
+def process_answer_bench(dataset, dataset_name):
+    index = 0
+    for item in dataset:
+        yield {
+            "dataset": dataset_name,
+            "task": item["Problem"],
+            "answer": item["Short Answer"],
+            "id": index
+        }
+        index += 1
+
+
 def load_datasets(
     dataset_names: List[str | Dict[str, Any]] | Dict[str, Any] | str | None, seed: int | None = None
 ) -> List[Tuple[str, Dict]]:
@@ -293,6 +319,18 @@ def load_datasets(
         dataset = load_dataset("hendrycks/competition_math", split="train", trust_remote_code=True)
         samples = [s for s in process_math(dataset, "math_train") if s is not None]
         logger.info(f"Loading math train dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "imo_proof_bench" in dataset_names:
+        dataset = load_dataset("Hwilner/imo-proofbench", split="train", trust_remote_code=True)
+        samples = [s for s in process_proofbench_problem(dataset, "imo_proof_bench") if s is not None]
+        logger.info(f"Loading imo proof bench dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "imo_answer_bench" in dataset_names:
+        dataset = load_dataset("Hwilner/imo-answerbench", split="train", trust_remote_code=True)
+        samples = [s for s in process_answer_bench(dataset, "answer_bench") if s is not None]
+        logger.info(f"Loading answer bench dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "math_simplerl_train" in dataset_names:

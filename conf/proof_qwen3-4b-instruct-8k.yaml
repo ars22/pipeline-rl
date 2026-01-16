@@ -5,7 +5,9 @@ defaults:
     - base
     - _self_
 
-model_path: Qwen/Qwen3-4B-Instruct-2507
+model_path:
+  hub_model_id: Qwen/Qwen3-4B-Instruct-2507
+  hub_model_version: null
 # Uncomment to skip test set rollouts
 # eval_every_n_versions: 0
 

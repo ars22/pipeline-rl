@@ -45,6 +45,7 @@ from pipelinerl.streams import (
     StreamWriter,
     set_streams_backend,
     write_to_streams,
+    read_stream,
 )
 
 from .utils import (
@@ -389,6 +390,7 @@ async def schedule_rollouts(
                 # This is blocking call, but there's just one other thread reading from this queue.
                 random.shuffle(group_rollouts[group_id])
                 result_queue.put(group_rollouts[group_id])
+                logger.info(f"Put group {group_id} of size {len(group_rollouts[group_id])} into result queue")
                 del group_rollouts[group_id]
             finished_rollouts += 1
         except TRANSIENT_EXCEPTIONS as e:
@@ -438,10 +440,12 @@ async def schedule_rollouts(
                 retry_queue_size = retry_queue.qsize()
                 logger.info(
                     f"{scheduler_name}: "
-                    f"rollouts in progress: {sum(active_rollouts)}, "
+                    f"rollouts in progress: {sum(active_rollouts)}: {active_rollouts}, "
                     f"groups in progress: {len(group_rollouts)}, "
                     f"rollouts started so far: {started_rollouts}, "
                     f"rollouts finished so far: {finished_rollouts}, "
+                    f"problem queue size: {problem_queue.qsize()}, "
+                    f"result queue size: {result_queue.qsize()}, "
                     f"max group size in bytes: {result_queue.max_actual_entry_size()}, "
                     + (f"retry queue size: {retry_queue_size}" if retry_queue_size > 0 else "")
                 )
@@ -492,7 +496,8 @@ async def schedule_rollouts(
             next_llm = active_rollouts.index(min(active_rollouts))
             if active_rollouts[next_llm] == cfg.actor.llm_max_rollouts:
                 # all llms are busy, wait for one to finish
-                await asyncio.sleep(0.01)
+                logger.info(f"{scheduler_name}: All LLMs are busy, waiting for one to finish. Current active rollouts {active_rollouts}.")
+                await asyncio.sleep(2)
                 continue
             active_rollouts[next_llm] += 1
             started_rollouts += 1
@@ -541,6 +546,50 @@ def random_iter(problems: list):
 def sequential_iter(problems: list):
     for problem in problems:
         yield problem
+
+
+def stream_iter(stream_reader, num_samples_per_batch: int = 3, is_training: bool = True):
+    """
+    Read from RC actor stream and yield problems from reasoning turns.
+    
+    Args:
+        stream_reader: StreamReader instance to read from
+        num_samples_per_batch: Number of samples to randomly select from each batch
+        is_training: If True, sample randomly; if False, take all reasoning turns
+    """
+    for batch in stream_reader.read():
+        # batch is a list of dicts (training text dumps)
+        # Filter for reasoning turns only
+        reasoning_samples = [
+            sample for sample in batch 
+            if sample.get("metadata", {}).get("turn_type") == "reasoning"
+        ]
+        
+        if not reasoning_samples:
+            continue
+        
+        # Subsample if training
+        if is_training and len(reasoning_samples) > num_samples_per_batch:
+            # Sample without replacement (random.sample already does this)
+            reasoning_samples = random.sample(reasoning_samples, num_samples_per_batch)
+        
+        # Convert each sample to a problem dict that the actor can use
+        for sample in reasoning_samples:
+            # Extract the problem from the prompt_text or reconstruct it
+            # The training text should have prompt_text and output_text
+            problem = {
+                "task": sample.get("prompt_text", ""),
+                "answer": sample.get("metadata", {}).get("answer", ""),  
+                "dataset": sample.get("metadata", {}).get("dataset_name", "unknown") + "_turn_" + str(sample.get("metadata", {}).get("turn_number", 0)),
+                "id": sample.get("metadata", {}).get("problem_id", 0),
+                "turn_number": sample.get("metadata", {}).get("turn_number", 0),
+            }
+            # Add schema and original problem if present (for LLM-based proof verification)
+            if "schema" in sample.get("metadata", {}):
+                problem["schema"] = sample["metadata"]["schema"]
+            if "original_problem" in sample.get("metadata", {}):
+                problem["original_problem"] = sample["metadata"]["original_problem"]
+            yield problem
 
 
 class ActorLoop:
@@ -757,7 +806,13 @@ class ActorLoop:
 
 
 
-    def run(self, dataset: list[tuple[str, dict]]):
+    def run(self, dataset):
+        """
+        Run the actor loop.
+        
+        Args:
+            dataset: Either a list of problems or an iterator/generator yielding problems
+        """
         loop_start_time = time.time()
         self.init_stats()
 
@@ -765,21 +820,36 @@ class ActorLoop:
         published_samples = 0
         submitted_groups = 0
         finished_groups = 0
-        expected_rollouts = -1 if self.is_training else len(dataset)
-        if expected_rollouts > 0:
-            logger.info(f"Will stop after {expected_rollouts} rollouts")
-        trainer_version_to_publish = None
-
-        # If training, we expect to sample infinitely
-        # for train sample, sample random batches infinitely
-        # for test samples, loop through the dataset once
-        if self.is_training:
-            problem_iter = random_iter(dataset)
+        
+        # Check if dataset is an iterator/generator or a list
+        # Simple check: lists have __len__, generators/iterators don't
+        is_iterator = not isinstance(dataset, (list, tuple))
+        
+        if is_iterator:
+            # Dataset is already an iterator (e.g., from stream_iter)
+            expected_rollouts = -1  # Unknown length for iterators
+            problem_iter = dataset
+            logger.info("Using stream-based iterator for problems")
         else:
-            problem_iter = sequential_iter(dataset)
+            # Dataset is a list (traditional behavior)
+            expected_rollouts = -1 if self.is_training else len(dataset)
+            if expected_rollouts > 0:
+                logger.info(f"Will stop after {expected_rollouts} rollouts")
+            
+            # If training, we expect to sample infinitely
+            # for train sample, sample random batches infinitely
+            # for test samples, loop through the dataset once
+            if self.is_training:
+                problem_iter = random_iter(dataset)
+            else:
+                problem_iter = sequential_iter(dataset)
+        
         assert self.trainer_state.propagated_weight_version is not None
 
         last_trainer_version = self.trainer_state.propagated_weight_version
+        trainer_version_to_publish = self.trainer_state.propagated_weight_version
+
+        logger.info(f"Trainer version to publish: {trainer_version_to_publish}, last trainer version: {last_trainer_version}")
         max_lag = self.cfg.finetune.max_lag if self.is_training else None
         if max_lag is not None:
             total_batch_size = self.cfg.finetune.train_batch_size * self.cfg.finetune.gradient_accumulation_passes
@@ -822,29 +892,39 @@ class ActorLoop:
                     # the weights have been updated, publish the stats of the previous trainer version
                     trainer_version_to_publish = last_trainer_version
                     last_trainer_version = self.trainer_state.propagated_weight_version
+                    logger.info(f"Weights updated to version {trainer_version_to_publish}, last trainer version: {last_trainer_version}")
 
-                # First, submit all problems you can until the problem queue is full
+                # First, try to read a result (do this FIRST to avoid blocking on problem submission)
+                result_consumed = False
+                try:
+                    # Directly get the result from the SharedMemoryQueue
+                    rollout_results = self.result_queue.get(block=False)
+                    result_consumed = True
+                    logger.info(f"Got rollout results of size {len(rollout_results)}. Finished groups: {finished_groups}")
+                except queue.Empty:
+                    rollout_results = None
+                
+                # Second, try to submit problems if queue not full
                 if not self.is_scheduling_paused:
                     while True:
                         blocked_by_lag = submitted_groups == can_submit_before_update and self.is_training
-                        if not blocked_by_lag and not self.problem_queue.full():
+                        if not blocked_by_lag and not result_consumed and not self.problem_queue.full():
                             try:
                                 try:
                                     problem = next(problem_iter)
                                     self.problem_queue.put(problem, block=False)
                                     submitted_groups += 1
+                                    logger.info(f"Submitted problem: {problem['id']} turn {problem['turn_number'] if 'turn_number' in problem else '0'} Submitted groups: {submitted_groups}")
+                                    break
                                 except queue.Full:            
                                     assert False, "Problem queue was not full just a moment ago, but now it is full"
                             except StopIteration:
                                 break
                         else:
                             break
-
-                # Second, try return a result
-                try:
-                    # Directly get the result from the SharedMemoryQueue
-                    rollout_results = self.result_queue.get(block=False)
-                except queue.Empty:
+                
+                # Third, process the result if we got one
+                if not result_consumed:
                     continue
 
                 if isinstance(rollout_results, Exception):
@@ -860,7 +940,11 @@ class ActorLoop:
                 all_text_dumps = []
                 for r in rollout_results:
                     for text in r.training_texts:
-                        all_text_dumps.append(text.model_dump())
+                        dump = text.model_dump()
+                        # Explicitly include properties that aren't automatically dumped
+                        dump['prompt_text'] = text.prompt_text
+                        dump['output_text'] = text.output_text
+                        all_text_dumps.append(dump)
                 data_stream_writer.write(all_text_dumps)
                 in_progress = submitted_groups - finished_groups
                 logger.info(
@@ -946,6 +1030,7 @@ class ActorLoop:
                 self.log_verifier_metrics_for_group(rollout_results)
 
                 finished_groups += 1
+                
                 time_to_publish_train_stats = (
                     self.is_training
                     and trainer_version_to_publish is not None
@@ -963,7 +1048,6 @@ class ActorLoop:
                             "trainer_model_version": trainer_version_to_publish, 
                             "time_since_start": time.time() - loop_start_time,
                         }
-                        trainer_version_to_publish = None
                     else:
                         loop_stats = {
                             "trainer_model_version": last_trainer_version
@@ -973,6 +1057,7 @@ class ActorLoop:
                         stats_writer=stats_writer,
                         loop_stats=loop_stats,
                     )
+                    trainer_version_to_publish = None
 
 
                 if finished_groups == expected_rollouts:
@@ -1036,22 +1121,44 @@ def run_actor_loop(cfg: DictConfig):
     data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor")
     test_data_stream = SingleStreamSpec(exp_path=exp_path, topic="actor_test")
 
+    # Check if we should read from RC actor stream instead of dataset
+    use_rc_stream = cfg.actor.get("use_rc_stream", False)
+    
+    # Initialize dataset loader (needed for test dataset in both cases)
     dataset_loader = hydra.utils.get_method(cfg.dataset_loader)
-    # Get dataset loader parameters if they exist in config, otherwise use empty dict
     dataset_loader_params = cfg.get('dataset_loader_params', {})
-    # Use **dataset_loader_params to pass parameters only if they exist
-    train_dataset = dataset_loader(cfg.train_dataset_names, **dataset_loader_params)
+    
+    # Always load test dataset from files for consistent evaluation
     test_dataset = dataset_loader(cfg.test_dataset_names, **dataset_loader_params)
-    if cfg.train_subset:
-        train_dataset = train_dataset[cfg.train_subset.begin : cfg.train_subset.end]
-    logger.info(f"Loaded {len(train_dataset)} training problems")
     logger.info(f"Loaded {len(test_dataset)} test problems")
+    
+    if use_rc_stream:
+        # Read training data from RC actor stream
+        rc_stream_topic = cfg.actor.get("rc_stream_topic", "actor")
+        rc_train_stream = SingleStreamSpec(exp_path=exp_path, topic=rc_stream_topic)
+        
+        logger.info(f"Reading training data from RC actor stream: {rc_train_stream}")
+        
+        train_dataset = None
+        train_stream_reader = read_stream(rc_train_stream)
+    else:
+        # Original behavior: load training dataset from files
+        train_dataset = dataset_loader(cfg.train_dataset_names, **dataset_loader_params)
+        if cfg.train_subset:
+            train_dataset = train_dataset[cfg.train_subset.begin : cfg.train_subset.end]
+        logger.info(f"Loaded {len(train_dataset)} training problems")
+        
+        train_stream_reader = None
 
     finetune_model_path = exp_path / "finetune" / "current"
     if os.path.exists(finetune_model_path):
         actor_model_path = finetune_model_path
     else:
-        actor_model_path = cfg.model_path
+        from pipelinerl.utils import resolve_model_reference
+
+        actor_model_path, _ = resolve_model_reference(cfg.model_path)
+        if actor_model_path is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
     
     train_llms = [
         TrainableLLM(
@@ -1059,18 +1166,6 @@ def run_actor_loop(cfg: DictConfig):
             model_name=str(actor_model_path),
             tokenizer_name=str(actor_model_path),
             parameters=cfg.llm.parameters,
-            use_cache=False,
-            collect_logprobs=True,
-            observe_llm_calls=False,
-        )
-        for url in llm_urls
-    ]
-    test_llms = [
-        TrainableLLM(
-            base_url=url,
-            model_name=str(actor_model_path),
-            tokenizer_name=str(actor_model_path),
-            parameters=cfg.test_llm.parameters,
             use_cache=False,
             collect_logprobs=True,
             observe_llm_calls=False,
@@ -1087,57 +1182,29 @@ def run_actor_loop(cfg: DictConfig):
         trainer_state.start_listening()
         trainer_state.wait_for_model_version()
 
+    # Prepare dataset or stream reader for training
+    # Note: test_dataset is always loaded from files (above) for consistent evaluation
+    if use_rc_stream:
+        # Enter the stream readers context
+        train_stream_reader = train_stream_reader.__enter__()
+        
+        # Create stream-based training dataset
+        num_samples_per_batch = cfg.actor.get("rc_stream_samples_per_batch", 3)
+        train_dataset_final = stream_iter(train_stream_reader, num_samples_per_batch, is_training=True)
+        
+        logger.info(f"Reading {num_samples_per_batch} reasoning samples per batch from RC stream")
+    else:
+        train_dataset_final = train_dataset
+        train_stream_reader = None
+        
     train_loop = ActorLoop(
         data_stream=data_stream, cfg=cfg, trainer_state=trainer_state, stats_stream=stats_stream, llms=train_llms
     )
     train_loop_run = train_loop.run(
-        dataset=train_dataset,
+        dataset=train_dataset_final,
     )
-    test_loop = ActorLoop(
-        data_stream=test_data_stream,
-        cfg=cfg,
-        trainer_state=trainer_state,
-        stats_stream=test_stats_stream,
-        llms=test_llms,
-        is_training=False,
-    )
-    test_loop_run = None
-
-    last_regular_eval = -1
-    current_eval = -1
+    
     while True:
         assert trainer_state.propagated_weight_version is not None
-
-        # 1. Start a new test loop if needed
-        next_regular_eval = (
-            trainer_state.propagated_weight_version
-            if last_regular_eval == -1
-            else last_regular_eval + cfg.eval_every_n_versions
-        )
-        if (
-            cfg.eval_every_n_versions
-            and not cfg.debug.mode
-            and trainer_state.propagated_weight_version >= next_regular_eval
-            and test_dataset
-            and test_loop_run is None
-        ):
-            logger.info("Create test loop")
-            test_loop_run = test_loop.run(
-                dataset=test_dataset,
-            )
-            train_loop.is_scheduling_paused = True
-            current_eval = next_regular_eval
-
-        # 2. If there is an active test loop, keep it running
-        if test_loop_run is not None:
-            try:
-                _ = next(test_loop_run)
-            except StopIteration:
-                # 2.1 If the test loop is finished, resume scheduling the training loop
-                test_loop_run = None
-                last_regular_eval = current_eval
-                train_loop.is_scheduling_paused = False
-                logger.info("Test loop finished")
-
-        # 3. Keep running the training loop
+        # keep running the training loop
         _ = next(train_loop_run)

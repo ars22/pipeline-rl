@@ -41,7 +41,9 @@ train_dataset_names:
 test_dataset_names:
   - hub_id: hf-imo-colab/aime_2025
     split: train
-model_path: Qwen/Qwen2.5-0.5B-Instruct
+model_path:
+  hub_model_id: Qwen/Qwen2.5-0.5B-Instruct
+  hub_model_version: null
 
 vllm_config:
   use_v1: false

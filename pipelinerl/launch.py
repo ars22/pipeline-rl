@@ -17,7 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import SingleStreamSpec, connect_to_redis, read_stream, set_streams_backend, write_to_streams
-from pipelinerl.utils import terminate_with_children
+from pipelinerl.utils import resolve_model_reference, terminate_with_children
 from pipelinerl.world import Job, WorldMap
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,8 @@ def validate_config(cfg: DictConfig):
     
     # Check for vision language model constraints
     if cfg.finetune.model_class == "vision2seq-language-modeling":
-        if "Qwen2.5-VL" not in cfg.model_path:
+        model_id, _ = resolve_model_reference(cfg.model_path)
+        if not model_id or "Qwen2.5-VL" not in model_id:
             raise ValueError("Only Qwen2.5-VL models are supported for vision language modeling")
         if cfg.finetune.seq_packing:
             raise ValueError("Vision language models cannot use sequence packing (seq_packing must be false)")
@@ -80,19 +81,26 @@ def validate_config(cfg: DictConfig):
 
 
 def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path):
-    kwargs = cfg.vllm_config.vllm_kwargs
+    # Use actor_vllm_config if available, else fall back to vllm_config
+    actor_vllm_cfg = cfg.get("actor_vllm_config")
+    if actor_vllm_cfg is None:
+        actor_vllm_cfg = cfg.vllm_config
+    kwargs = actor_vllm_cfg.vllm_kwargs
     if kwargs["num-scheduler-steps"] > 1:
         kwargs["num-scheduler-steps"] = 1
         logger.warning("Set num-scheduler-steps to 1 for reference vLLM")
     log_dir = exp_dir / f"ref_vllm_{preprocessor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
 
+    model_id, model_revision = resolve_model_reference(cfg.model_path)
+    if model_id is None:
+        raise ValueError("model_path must define hub_model_id or a valid path")
     cmd = [
         "python",
         "-m",
         "vllm.entrypoints.openai.api_server",
         "--model",
-        str(cfg.model_path),
+        str(model_id),
         "--port",
         str(8180 + local_idx),
         "--host",
@@ -100,6 +108,8 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
         "--seed",
         str(cfg.seed + preprocessor_llm_idx),
     ]
+    if model_revision:
+        cmd.extend(["--revision", str(model_revision)])
 
     model_revision = getattr(cfg, "model_revision", None)
     if model_revision and not Path(str(cfg.model_path)).exists():
@@ -124,21 +134,95 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
         )
 
 
+def run_summarization_llm(
+    cfg: DictConfig, summarization_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
+):
+    # Use summarization model path if specified, otherwise use main model
+    if cfg.get("summarization_model_path") is not None:
+        model_id, model_revision = resolve_model_reference(cfg.summarization_model_path)
+        if model_id is None:
+            raise ValueError("summarization_model_path must define hub_model_id or a valid path")
+    else:
+        model_id, model_revision = resolve_model_reference(cfg.model_path)
+        if model_id is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
+    
+    # Use summarization vllm config if specified, otherwise use main vllm config
+    vllm_cfg = cfg.get("summarization_vllm_config")
+    if vllm_cfg is None:
+        vllm_cfg = cfg.vllm_config
+    kwargs = vllm_cfg.vllm_kwargs.copy() if vllm_cfg.vllm_kwargs else {}
+    
+    log_dir = exp_dir / f"summarization_vllm_{summarization_llm_idx}"
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Use custom entrypoint (run_vllm0/run_vllm1) to support newer models like Qwen3
+    # Same logic as actor servers, but without weight update parameters
+    entrypoint = (
+        "pipelinerl.entrypoints.run_vllm1" 
+        if vllm_cfg.use_v1 else 
+        "pipelinerl.entrypoints.run_vllm0"
+    )
+    cmd = [
+        "python",
+        "-m",
+        entrypoint,
+        "--model",
+        str(model_id),
+        "--port",
+        str(8200 + local_idx),  # Use 8200+ for summarization LLMs
+        "--host",
+        "0.0.0.0",
+        "--seed",
+        str(cfg.seed + summarization_llm_idx + 1000),
+        "--disable-weight-updates",  # Summarization servers don't need weight updates
+    ]
+    if model_revision:
+        cmd.extend(["--revision", str(model_revision)])
+
+    # Add vLLM kwargs as separate arguments
+    for k, v in kwargs.items():
+        cmd.append(f"--{k}")
+        if v not in [None, ""]:
+            cmd.append(str(v))
+
+    gpu_str = ",".join([str(gpu) for gpu in gpus])
+    logger.info(f"Running summarization LLM with command: {' '.join(cmd)} with gpus: {gpu_str}")
+    save_command(log_dir, cmd)
+    log_file_path = os.path.join(log_dir, "stdout.log")
+    err_file_path = os.path.join(log_dir, "stderr.log")
+    with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
+        yield _popen(
+            cmd,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            stdout=log_file,
+            stderr=err_file,
+        )
+
+
 def run_actor_llm(
     cfg: DictConfig, world_map: WorldMap, actor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
 ):
     finetune_model_path = exp_dir / "finetune" / "current"
     if os.path.exists(finetune_model_path):
         actor_model_path = finetune_model_path
+        actor_model_revision = None
     else:
-        actor_model_path = cfg.model_path
+        actor_model_path, actor_model_revision = resolve_model_reference(cfg.model_path)
+        if actor_model_path is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
+
+    # Use actor_vllm_config if specified, otherwise use main vllm_config
+    vllm_cfg = cfg.get("actor_vllm_config")
+    if vllm_cfg is None:
+        vllm_cfg = cfg.vllm_config
 
     # TODO: add support for tensor and process parallelism
     log_dir = exp_dir / f"actor_vllm_{actor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
     entrypoint = (
         "pipelinerl.entrypoints.run_vllm1" 
-        if cfg.vllm_config.use_v1 else 
+        if vllm_cfg.use_v1 else 
         "pipelinerl.entrypoints.run_vllm0"
     )
     cmd = [
@@ -160,14 +244,16 @@ def run_actor_llm(
         "--weight-update-group-world-size",
         str(world_map.weight_update_group_size),
     ]
+    if actor_model_revision:
+        cmd.extend(["--revision", str(actor_model_revision)])
 
     model_revision = getattr(cfg, "model_revision", None)
     if model_revision and not Path(str(actor_model_path)).exists():
         cmd.extend(["--revision", str(model_revision)])
 
     # Add vLLM kwargs as separate arguments
-    if cfg.vllm_config.vllm_kwargs:
-        for k, v in cfg.vllm_config.vllm_kwargs.items():
+    if vllm_cfg.vllm_kwargs:
+        for k, v in vllm_cfg.vllm_kwargs.items():
             cmd.append(f"--{k}")
             if v not in [None, ""]:
                 cmd.append(str(v))
@@ -187,6 +273,108 @@ def run_actor_llm(
             stdout=log_file,
             stderr=err_file,
         )
+
+
+def run_rc_actor_llm(
+    cfg: DictConfig, world_map: WorldMap, rc_actor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
+):
+    finetune_model_path = exp_dir / "finetune" / "current"
+    if os.path.exists(finetune_model_path):
+        rc_actor_model_path = finetune_model_path
+        rc_actor_model_revision = None
+    else:
+        rc_actor_model_path, rc_actor_model_revision = resolve_model_reference(cfg.model_path)
+        if rc_actor_model_path is None:
+            raise ValueError("model_path must define hub_model_id or a valid path")
+
+    log_dir = exp_dir / f"rc_actor_vllm_{rc_actor_llm_idx}"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Use rc_actor_vllm_config if available, else fall back to vllm_config
+    rc_actor_vllm_cfg = cfg.get("rc_actor_vllm_config")
+    if rc_actor_vllm_cfg is None:
+        rc_actor_vllm_cfg = cfg.vllm_config
+    
+    entrypoint = (
+        "pipelinerl.entrypoints.run_vllm1" 
+        if rc_actor_vllm_cfg.use_v1 else 
+        "pipelinerl.entrypoints.run_vllm0"
+    )
+    cmd = [
+        "python",
+        "-m",
+        entrypoint,
+        "--model",
+        str(rc_actor_model_path),
+        "--host",
+        "0.0.0.0",
+        "--port",
+        str(8000 + local_idx),  # Use 8000+ for RC actor LLMs
+        "--seed",
+        str(cfg.seed + rc_actor_llm_idx),
+        "--actor-llm-idx",
+        str(rc_actor_llm_idx),
+        "--weight-update-group-init-method",
+        f"tcp://{world_map.master_addr}:{cfg.world.actor_group_port}",
+        "--weight-update-group-world-size",
+        str(world_map.weight_update_group_size),
+    ]
+    if rc_actor_model_revision:
+        cmd.extend(["--revision", str(rc_actor_model_revision)])
+
+    # Add vLLM kwargs as separate arguments
+    if rc_actor_vllm_cfg.vllm_kwargs:
+        for k, v in rc_actor_vllm_cfg.vllm_kwargs.items():
+            cmd.append(f"--{k}")
+            if v not in [None, ""]:
+                cmd.append(str(v))
+
+    if cfg.debug.mode:
+        cmd.append("--disable-weight-updates")
+
+    gpu_str = ",".join([str(gpu) for gpu in gpus])
+    logger.info(f"Running rc_actor_llm with command: {' '.join(cmd)} on gpus: {gpu_str}")
+    save_command(log_dir, cmd)
+    log_file_path = os.path.join(log_dir, "stdout.log")
+    err_file_path = os.path.join(log_dir, "stderr.log")
+    with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
+        yield _popen(
+            cmd,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            stdout=log_file,
+            stderr=err_file,
+        )
+
+
+def run_rc_actor(world_map: WorldMap, rc_actor_idx: int, exp_dir: Path):
+    if rc_actor_idx != 0:
+        raise NotImplementedError("Can only do 1 rc_actor yet")
+    llm_urls = "+".join(world_map.get_rc_actor_urls())
+    summarization_llm_urls = world_map.get_summarization_urls()
+    
+    cmd = [
+        "python",
+        "-m",
+        "pipelinerl.entrypoints.run_rc_actor",
+        "--config-dir",
+        f"{exp_dir}/conf",
+        "--config-name",
+        "exp_config",
+        f"output_dir={exp_dir}",
+        f"hydra.run.dir={exp_dir}/rc_actor",
+        f"+me.llm_urls={llm_urls}",
+    ]
+    
+    # Add summarization LLM URLs if they exist
+    if summarization_llm_urls:
+        cmd.append(f"+me.summarization_llm_urls={'+'.join(summarization_llm_urls)}")
+    
+    logger.info(f"Running RC actor with command: {' '.join(cmd)}")
+    save_command(exp_dir / "rc_actor", cmd)
+    yield _popen(
+        cmd,
+        env=dict(os.environ),
+    )
 
 
 def run_actor(world_map: WorldMap, actor_idx: int, exp_dir: Path):
@@ -327,7 +515,7 @@ def run_finetune(cfg: DictConfig, world_map: WorldMap, gpus: list[int], exp_dir:
         # Current workaround: pass the essential information as follows:
         f"+me.weight_update_group_init_method=tcp://{world_map.master_addr}:{cfg.world.actor_group_port}",
         f"+me.weight_update_group_world_size={world_map.weight_update_group_size}",
-        f"+me.llm_urls={'+'.join(world_map.get_actor_urls())}",
+        f"+me.llm_urls={'+'.join(world_map.get_rc_actor_urls() + world_map.get_actor_urls())}",
     ]
     if cfg.debug.mode in ["finetune", "open_loop", "finetune+preprocessor"]:
         cmd.append("finetune.send_weight_updates=False")
@@ -478,7 +666,7 @@ def debug_link_streams(cfg: DictConfig, topics: list[str]):
 def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | None = None):
     exp_dir = Path(cfg.output_dir)
     processes = []
-    all_job_kinds = ["actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm", "finetune"]
+    all_job_kinds = ["rc_actor", "rc_actor_llm", "summarization_llm", "actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm", "finetune"]
     # for rank in range(world_map.world_size):
     logger.info(f"Jobs on rank {world_map.my_rank}: {world_map.get_jobs_on_rank(world_map.my_rank)}")
     if job_kind_filter is None:
@@ -488,7 +676,17 @@ def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | No
             raise ValueError(f"Unknown job kind {job.kind}")
         if job.kind not in job_kind_filter:
             continue
-        if job.kind == "actor":
+        if job.kind == "rc_actor":
+            processes.extend(run_rc_actor(world_map, job.replica_idx, exp_dir))
+        elif job.kind == "rc_actor_llm":
+            if cfg.debug.use_existing_llms:
+                continue
+            processes.extend(run_rc_actor_llm(cfg, world_map, job.replica_idx, job.local_idx, job.gpus, exp_dir))
+        elif job.kind == "summarization_llm":
+            if cfg.debug.use_existing_llms:
+                continue
+            processes.extend(run_summarization_llm(cfg, job.replica_idx, job.local_idx, job.gpus, exp_dir))
+        elif job.kind == "actor":
             processes.extend(run_actor(world_map, job.replica_idx, exp_dir))
         elif job.kind == "environment":
             processes.extend(run_environment(cfg, job))
@@ -701,12 +899,28 @@ def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str =
     version_base="1.3.2",
 )
 def main(cfg: DictConfig):
+    # Resolve all interpolations in config (e.g., ${actor.problem_queue_size} // ${world.actor_fraction})
+    resolved_cfg = OmegaConf.to_container(cfg, resolve=True)
+    
+    # Log the resolved config with all computed values
+    logger.info("="*80)
+    logger.info("Configuration (with resolved values):")
+    logger.info("="*80)
+    # Print config line by line for better formatting in logs
+    config_yaml = OmegaConf.to_yaml(resolved_cfg)
+    for line in config_yaml.split('\n'):
+        if line.strip():  # Only print non-empty lines
+            logger.info(line)
+    logger.info("="*80)
+    
     validate_config(cfg)
 
     rank = int(os.environ.get("RANK", "0"))
 
     # Spin up LLM grader if specified
-    if cfg.llm_grader.name is not None:
+    if "local" in cfg.llm_grader and not cfg.llm_grader.local:
+        logger.info(f"LLM grader is not local, skipping launch")
+    else:
         if rank == 0:
             start_llm_grader(
                 cfg.llm_grader.name,

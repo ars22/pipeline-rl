@@ -11,7 +11,9 @@ world:
 save_tapes: False
 
 output_dir: results/miniwob_debug/${now:%Y-%m-%d}/${now:%H-%M-%S}
-model_path: meta-llama/Llama-3.1-8B-Instruct
+model_path:
+  hub_model_id: meta-llama/Llama-3.1-8B-Instruct
+  hub_model_version: null
 
 finetune:
   save_checkpoint_steps: 10
