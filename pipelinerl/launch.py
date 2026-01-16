@@ -81,7 +81,11 @@ def validate_config(cfg: DictConfig):
 
 
 def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path):
-    kwargs = cfg.actor_vllm_config.vllm_kwargs
+    # Use actor_vllm_config if available, else fall back to vllm_config
+    actor_vllm_cfg = cfg.get("actor_vllm_config")
+    if actor_vllm_cfg is None:
+        actor_vllm_cfg = cfg.vllm_config
+    kwargs = actor_vllm_cfg.vllm_kwargs
     if kwargs["num-scheduler-steps"] > 1:
         kwargs["num-scheduler-steps"] = 1
         logger.warning("Set num-scheduler-steps to 1 for reference vLLM")
@@ -144,7 +148,9 @@ def run_summarization_llm(
             raise ValueError("model_path must define hub_model_id or a valid path")
     
     # Use summarization vllm config if specified, otherwise use main vllm config
-    vllm_cfg = cfg.get("summarization_vllm_config", None) or cfg.summarization_vllm_config
+    vllm_cfg = cfg.get("summarization_vllm_config")
+    if vllm_cfg is None:
+        vllm_cfg = cfg.vllm_config
     kwargs = vllm_cfg.vllm_kwargs.copy() if vllm_cfg.vllm_kwargs else {}
     
     log_dir = exp_dir / f"summarization_vllm_{summarization_llm_idx}"
@@ -207,7 +213,9 @@ def run_actor_llm(
             raise ValueError("model_path must define hub_model_id or a valid path")
 
     # Use actor_vllm_config if specified, otherwise use main vllm_config
-    vllm_cfg = cfg.get("actor_vllm_config", None) or cfg.actor_vllm_config
+    vllm_cfg = cfg.get("actor_vllm_config")
+    if vllm_cfg is None:
+        vllm_cfg = cfg.vllm_config
 
     # TODO: add support for tensor and process parallelism
     log_dir = exp_dir / f"actor_vllm_{actor_llm_idx}"
@@ -281,9 +289,15 @@ def run_rc_actor_llm(
 
     log_dir = exp_dir / f"rc_actor_vllm_{rc_actor_llm_idx}"
     os.makedirs(log_dir, exist_ok=True)
+    
+    # Use rc_actor_vllm_config if available, else fall back to vllm_config
+    rc_actor_vllm_cfg = cfg.get("rc_actor_vllm_config")
+    if rc_actor_vllm_cfg is None:
+        rc_actor_vllm_cfg = cfg.vllm_config
+    
     entrypoint = (
         "pipelinerl.entrypoints.run_vllm1" 
-        if cfg.rc_actor_vllm_config.use_v1 else 
+        if rc_actor_vllm_cfg.use_v1 else 
         "pipelinerl.entrypoints.run_vllm0"
     )
     cmd = [
@@ -309,8 +323,8 @@ def run_rc_actor_llm(
         cmd.extend(["--revision", str(rc_actor_model_revision)])
 
     # Add vLLM kwargs as separate arguments
-    if cfg.rc_actor_vllm_config.vllm_kwargs:
-        for k, v in cfg.rc_actor_vllm_config.vllm_kwargs.items():
+    if rc_actor_vllm_cfg.vllm_kwargs:
+        for k, v in rc_actor_vllm_cfg.vllm_kwargs.items():
             cmd.append(f"--{k}")
             if v not in [None, ""]:
                 cmd.append(str(v))

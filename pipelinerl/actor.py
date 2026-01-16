@@ -914,7 +914,7 @@ class ActorLoop:
                                     problem = next(problem_iter)
                                     self.problem_queue.put(problem, block=False)
                                     submitted_groups += 1
-                                    logger.info(f"Submitted problem: {problem['id']} turn {problem['turn_number']} Submitted groups: {submitted_groups}")
+                                    logger.info(f"Submitted problem: {problem['id']} turn {problem['turn_number'] if 'turn_number' in problem else '0'} Submitted groups: {submitted_groups}")
                                     break
                                 except queue.Full:            
                                     assert False, "Problem queue was not full just a moment ago, but now it is full"

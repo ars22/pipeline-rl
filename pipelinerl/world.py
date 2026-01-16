@@ -87,20 +87,23 @@ class WorldMap:
         self._log_info(f"--- INITIALIZE WORLD MAP (this is rank {self.my_rank}) ---")
 
         # Calculate GPUs per LLM for each type based on TP/PP settings
-        # RC Actor LLMs (use vllm_config)
-        rc_actor_llm_kwargs = self.cfg.rc_actor_vllm_config.vllm_kwargs
+        # RC Actor LLMs (use rc_actor_vllm_config if available, else vllm_config)
+        rc_actor_vllm_cfg = self.cfg.get("rc_actor_vllm_config")
+        if rc_actor_vllm_cfg is None:
+            rc_actor_vllm_cfg = self.cfg.vllm_config
+        rc_actor_llm_kwargs = rc_actor_vllm_cfg.vllm_kwargs
         rc_actor_tp = rc_actor_llm_kwargs.get("tensor-parallel-size", 1)
         rc_actor_pp = rc_actor_llm_kwargs.get("pipeline-parallel-size", 1)
         self.gpus_per_rc_actor_llm = rc_actor_tp * rc_actor_pp
         
         # Regular Actor LLMs (use actor_vllm_config if available, else vllm_config)
-        actor_llm_kwargs = self.cfg.get("actor_vllm_config", self.cfg.actor_vllm_config).vllm_kwargs
+        actor_llm_kwargs = self.cfg.get("actor_vllm_config", self.cfg.vllm_config).vllm_kwargs
         actor_tp = actor_llm_kwargs.get("tensor-parallel-size", 1)
         actor_pp = actor_llm_kwargs.get("pipeline-parallel-size", 1)
         self.gpus_per_actor_llm = actor_tp * actor_pp
         
         # Summarization LLMs (use summarization_vllm_config if available, else vllm_config)
-        summ_llm_kwargs = self.cfg.get("summarization_vllm_config", self.cfg.summarization_vllm_config).vllm_kwargs
+        summ_llm_kwargs = self.cfg.get("summarization_vllm_config", self.cfg.vllm_config).vllm_kwargs
         summ_tp = summ_llm_kwargs.get("tensor-parallel-size", 1)
         summ_pp = summ_llm_kwargs.get("pipeline-parallel-size", 1)
         self.gpus_per_summarization_llm = summ_tp * summ_pp
