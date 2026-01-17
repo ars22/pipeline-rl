@@ -343,14 +343,35 @@ def get_actor_urls(num_llms: int, gpus_per_llm: int = 1) -> list[str]:
     return urls
 
 
-def prepare_config_for_test(cfg: DictConfig, output_dir: Path, num_llms: int, gpus_per_llm: int = 1, num_summarization_llms: int = 0, summarization_gpus_per_llm: int = 1, num_envs: int = 1, env_start_port: int = 9000):
+def prepare_config_for_test(cfg: DictConfig, output_dir: Path, num_llms: int, gpus_per_llm: int = 1, num_summarization_llms: int = 0, summarization_gpus_per_llm: int = 1, num_envs: int = 1, env_start_port: int = 9000, nodelist: list[str] = None, world_size: int = 1):
     """Prepare config for testing. Mainly for setting the llm_urls and job info. Rest everything is set in the config file."""
     
     # Set output directory
     cfg.output_dir = str(output_dir)
     
-    # Create LLM URLs (same pattern as launch.py: line 187, 198)
-    llm_urls = "+".join(get_actor_urls(num_llms, gpus_per_llm))
+    if nodelist is None:
+        nodelist = ["localhost"]
+    
+    # Create LLM URLs across all nodes (same pattern as launch.py: line 187, 198)
+    llm_urls = []
+    llms_per_node = num_llms // world_size
+    llms_remainder = num_llms % world_size
+    
+    global_llm_idx = 0
+    for node_rank in range(world_size):
+        hostname = nodelist[node_rank]
+        # Calculate how many LLMs this node has
+        if node_rank < llms_remainder:
+            node_num_llms = llms_per_node + 1
+        else:
+            node_num_llms = llms_per_node
+        
+        # Generate URLs for LLMs on this node
+        for local_llm_idx in range(node_num_llms):
+            local_gpu_idx = local_llm_idx * gpus_per_llm
+            port = 8080 + local_gpu_idx
+            llm_urls.append(f"http://{hostname}:{port}")
+            global_llm_idx += 1
     
     # Use OmegaConf to properly set llm_urls (disable struct mode temporarily)
     if not OmegaConf.select(cfg, 'me'):
@@ -358,16 +379,37 @@ def prepare_config_for_test(cfg: DictConfig, output_dir: Path, num_llms: int, gp
     
     # Temporarily disable struct mode to add llm_urls
     OmegaConf.set_struct(cfg.me, False)
-    cfg.me.llm_urls = llm_urls
+    cfg.me.llm_urls = "+".join(llm_urls)
     
     # Create separate summarization LLM URLs if configured
     if num_summarization_llms > 0:
-        # Summarization LLMs start at a different base port (e.g., 8280)
         summarization_urls = []
-        base_gpu_offset = num_llms * gpus_per_llm  # Start after actor GPUs
-        for i in range(num_summarization_llms):
-            local_idx = base_gpu_offset + (i * summarization_gpus_per_llm)
-            summarization_urls.append(f"http://localhost:{8280 + i}")
+        summarization_llms_per_node = num_summarization_llms // world_size
+        summarization_llms_remainder = num_summarization_llms % world_size
+        
+        global_summ_idx = 0
+        for node_rank in range(world_size):
+            hostname = nodelist[node_rank]
+            # Calculate how many summarization LLMs this node has
+            if node_rank < summarization_llms_remainder:
+                node_num_summ_llms = summarization_llms_per_node + 1
+            else:
+                node_num_summ_llms = summarization_llms_per_node
+            
+            # Calculate base GPU offset on this node (after actor LLMs)
+            if node_rank < llms_remainder:
+                node_num_actor_llms = llms_per_node + 1
+            else:
+                node_num_actor_llms = llms_per_node
+            base_gpu_offset = node_num_actor_llms * gpus_per_llm
+            
+            # Generate URLs for summarization LLMs on this node
+            for local_summ_idx in range(node_num_summ_llms):
+                local_gpu_idx = base_gpu_offset + (local_summ_idx * summarization_gpus_per_llm)
+                port = 8280 + global_summ_idx
+                summarization_urls.append(f"http://{hostname}:{port}")
+                global_summ_idx += 1
+        
         cfg.me.summarization_llm_urls = "+".join(summarization_urls)
     
     OmegaConf.set_struct(cfg.me, True)
@@ -406,6 +448,31 @@ def main(cfg: DictConfig):
     # Calculate number of LLMs and GPU allocation from config (similar to WorldMap)
     import torch
     
+    # Multi-node setup: read from environment variables (like WorldMap)
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    my_rank = int(os.environ.get("RANK", 0))
+    
+    # Get node addresses
+    address_map = {}
+    nodelist = []
+    if world_size > 1:
+        all_addr = os.environ.get("ALL_ADDR", "")
+        if not all_addr:
+            raise ValueError("ALL_ADDR environment variable must be set when WORLD_SIZE > 1")
+        nodelist = [x.strip() for x in all_addr.strip().split(",")]
+        if len(nodelist) != world_size:
+            raise ValueError(f"ALL_ADDR length {len(nodelist)} does not match WORLD_SIZE {world_size}")
+        master_addr = nodelist[0]
+        for rank in range(world_size):
+            address_map[rank] = nodelist[rank]
+    else:
+        master_addr = "localhost"
+        address_map[0] = "localhost"
+        nodelist = ["localhost"]
+    
+    logger.info(f"Multi-node setup: world_size={world_size}, my_rank={my_rank}, master_addr={master_addr}")
+    logger.info(f"Node list: {nodelist}")
+    
     # Get vLLM parallelism config
     # Use rc_actor_vllm_config if available, otherwise fall back to vllm_config
     vllm_config = cfg.get('rc_actor_vllm_config') if cfg.get('rc_actor_vllm_config') else cfg.get('vllm_config')
@@ -417,9 +484,33 @@ def main(cfg: DictConfig):
     pp = llm_kwargs.get("pipeline-parallel-size", 1)
     gpus_per_llm = tp * pp
     
-    # For testing, we use actor fraction from config
-    num_llms = cfg.get('test_world', {}).get('actor_fraction', 1)
-    num_summarization_llms = cfg.get('test_world', {}).get('summarization_fraction', 0)
+    # For testing, we use world config from test_world
+    test_world = cfg.get('test_world', {})
+    
+    # Calculate total GPUs and distribution
+    node_size = 8 if world_size > 1 else torch.cuda.device_count()
+    total_gpus = world_size * node_size
+    
+    # Get GPU fractions from config
+    rc_actor_fraction = test_world.get('rc_actor_fraction', 0)
+    actor_fraction = test_world.get('actor_fraction', 0)
+    summarization_fraction = test_world.get('summarization_fraction', 0)
+    
+    # Calculate GPU allocations
+    fraction_sum = rc_actor_fraction + actor_fraction + summarization_fraction
+    if fraction_sum == 0:
+        # Backward compatibility: if using old config format
+        num_llms = test_world.get('actor_fraction', 1)
+        num_summarization_llms = test_world.get('summarization_fraction', 0)
+    else:
+        # New config format: calculate based on fractions
+        rc_actor_gpus = int(total_gpus * rc_actor_fraction / fraction_sum) if rc_actor_fraction else 0
+        actor_gpus = int(total_gpus * actor_fraction / fraction_sum) if actor_fraction else 0
+        summarization_gpus = int(total_gpus * summarization_fraction / fraction_sum) if summarization_fraction else 0
+        
+        # Calculate number of LLMs
+        num_llms = rc_actor_gpus // gpus_per_llm if rc_actor_gpus > 0 else (actor_gpus // gpus_per_llm if actor_gpus > 0 else 1)
+        num_summarization_llms = summarization_gpus // gpus_per_llm if summarization_gpus > 0 else 0
     
     # Get summarization vLLM config (if different from actor)
     if cfg.get('summarization_vllm_config') and cfg.summarization_vllm_config.get('vllm_kwargs'):
@@ -430,48 +521,88 @@ def main(cfg: DictConfig):
     else:
         summarization_gpus_per_llm = gpus_per_llm
     
-    # Allocate GPUs: each LLM gets gpus_per_llm consecutive GPUs
+    # Distribute LLMs across nodes
+    llms_per_node = num_llms // world_size
+    llms_remainder = num_llms % world_size
+    summarization_llms_per_node = num_summarization_llms // world_size
+    summarization_llms_remainder = num_summarization_llms % world_size
+    
+    # Calculate which LLMs this node should run
+    # First node gets extra LLMs if there's a remainder
+    if my_rank < llms_remainder:
+        my_num_llms = llms_per_node + 1
+        my_llm_start_idx = my_rank * (llms_per_node + 1)
+    else:
+        my_num_llms = llms_per_node
+        my_llm_start_idx = llms_remainder * (llms_per_node + 1) + (my_rank - llms_remainder) * llms_per_node
+    
+    if my_rank < summarization_llms_remainder:
+        my_num_summarization_llms = summarization_llms_per_node + 1
+        my_summarization_llm_start_idx = my_rank * (summarization_llms_per_node + 1)
+    else:
+        my_num_summarization_llms = summarization_llms_per_node
+        my_summarization_llm_start_idx = summarization_llms_remainder * (summarization_llms_per_node + 1) + (my_rank - summarization_llms_remainder) * summarization_llms_per_node
+    
+    # Allocate GPUs on this node: each LLM gets gpus_per_llm consecutive GPUs
     gpu_ids = []
-    for llm_idx in range(num_llms):
-        llm_gpus = list(range(llm_idx * gpus_per_llm, (llm_idx + 1) * gpus_per_llm))
+    for local_llm_idx in range(my_num_llms):
+        llm_gpus = list(range(local_llm_idx * gpus_per_llm, (local_llm_idx + 1) * gpus_per_llm))
         gpu_ids.extend(llm_gpus)
     
-    # Allocate GPUs for summarization LLMs (after actor LLMs)
+    # Allocate GPUs for summarization LLMs on this node (after actor LLMs)
     summarization_gpu_ids = []
-    if num_summarization_llms > 0:
-        base_gpu_offset = num_llms * gpus_per_llm
-        for llm_idx in range(num_summarization_llms):
-            llm_gpus = list(range(base_gpu_offset + llm_idx * summarization_gpus_per_llm, 
-                                base_gpu_offset + (llm_idx + 1) * summarization_gpus_per_llm))
+    if my_num_summarization_llms > 0:
+        base_gpu_offset = my_num_llms * gpus_per_llm
+        for local_llm_idx in range(my_num_summarization_llms):
+            llm_gpus = list(range(base_gpu_offset + local_llm_idx * summarization_gpus_per_llm, 
+                                base_gpu_offset + (local_llm_idx + 1) * summarization_gpus_per_llm))
             summarization_gpu_ids.extend(llm_gpus)
     
-    # Create output directory
-    output_dir = Path(cfg.output_dir + "_" + str(int(time.time())))
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Create output directory (only rank 0 creates it initially)
+    if my_rank == 0:
+        output_dir = Path(cfg.output_dir + "_" + str(int(time.time())))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # Share output_dir with other ranks via a file
+        with open("/tmp/test_rc_actor_output_dir.txt", "w") as f:
+            f.write(str(output_dir))
+    else:
+        # Wait for rank 0 to create and share the directory
+        import time as time_module
+        for _ in range(30):  # Wait up to 30 seconds
+            if os.path.exists("/tmp/test_rc_actor_output_dir.txt"):
+                with open("/tmp/test_rc_actor_output_dir.txt", "r") as f:
+                    output_dir = Path(f.read().strip())
+                break
+            time_module.sleep(1)
+        else:
+            raise RuntimeError("Timeout waiting for output directory from rank 0")
     
     # Environment configuration
-    num_envs = cfg.test_world.env_replicas
-    env_start_port = cfg.test_world.environment_start_port
-    actor_group_port = cfg.test_world.actor_group_port
+    num_envs = test_world.get('env_replicas', 2)
+    env_start_port = test_world.get('environment_start_port', 7777)
+    actor_group_port = test_world.get('actor_group_port', 9000)
     
     logger.info("=" * 80)
-    logger.info("RC Actor Test Configuration")
+    logger.info(f"RC Actor Test Configuration (Rank {my_rank}/{world_size})")
     logger.info("=" * 80)
     logger.info(f"Model: {cfg.model_path}")
     logger.info(f"GPUs per LLM: {gpus_per_llm}")
-    logger.info(f"Number of LLM servers: {num_llms}")
-    logger.info(f"Number of summarization LLM servers: {num_summarization_llms}")
+    logger.info(f"Total LLM servers (all nodes): {num_llms}")
+    logger.info(f"Total summarization LLM servers (all nodes): {num_summarization_llms}")
+    logger.info(f"LLM servers on this node: {my_num_llms}")
+    logger.info(f"Summarization LLM servers on this node: {my_num_summarization_llms}")
+    logger.info(f"LLM index range on this node: {my_llm_start_idx} to {my_llm_start_idx + my_num_llms - 1}")
     logger.info(f"Number of environment servers: {num_envs}")
     logger.info(f"Number of reasoning steps: {cfg.rc_actor.num_reasoning_steps}")
-    logger.info(f"Actor GPU allocation: {gpu_ids}")
-    if num_summarization_llms > 0:
-        logger.info(f"Summarization GPU allocation: {summarization_gpu_ids}")
+    logger.info(f"Actor GPU allocation (this node): {gpu_ids}")
+    if my_num_summarization_llms > 0:
+        logger.info(f"Summarization GPU allocation (this node): {summarization_gpu_ids}")
         logger.info(f"Summarization model: {cfg.get('summarization_model_path', cfg.model_path)}")
     logger.info(f"Output directory: {output_dir}")
     logger.info("=" * 80)
     
     # Prepare config (includes job information)
-    cfg = prepare_config_for_test(cfg, output_dir, num_llms, gpus_per_llm, num_summarization_llms, summarization_gpus_per_llm, num_envs, env_start_port)
+    cfg = prepare_config_for_test(cfg, output_dir, num_llms, gpus_per_llm, num_summarization_llms, summarization_gpus_per_llm, num_envs, env_start_port, nodelist, world_size)
     
     # Save config (environments need to read this)
     config_dir = output_dir / "conf"
@@ -487,48 +618,55 @@ def main(cfg: DictConfig):
     env_ports = []
     
     try:
-        # Step 1: Start environment servers
+        # Step 1: Start environment servers (only on rank 0)
+        if my_rank == 0:
+            logger.info("=" * 80)
+            logger.info("Step 1: Starting environment servers")
+            logger.info("=" * 80)
+            
+            for env_idx in range(num_envs):
+                port = env_start_port + env_idx
+                env_ports.append(port)
+                # job_idx for environments (they come first in the jobs list)
+                job_idx = env_idx
+                logger.info(f"Starting environment {env_idx} on port {port}")
+                process = start_environment(cfg, env_idx, port, output_dir, job_idx)
+                processes.append(process)
+            
+            # Wait for environment servers to be ready
+            logger.info("\nWaiting for environment servers to be ready...")
+            all_env_ready = True
+            for port in env_ports:
+                if not wait_for_environment(port, timeout=60):
+                    all_env_ready = False
+                    logger.error(f"Environment server on port {port} failed to start!")
+            
+            if not all_env_ready:
+                logger.error("Not all environment servers started successfully!")
+                return 1
+            
+            logger.info("✅ All environment servers are ready!")
+        else:
+            logger.info("=" * 80)
+            logger.info(f"Step 1: Skipping environment servers (only run on rank 0)")
+            logger.info("=" * 80)
+        
+        # Step 2: Start vLLM servers (only for this node)
         logger.info("=" * 80)
-        logger.info("Step 1: Starting environment servers")
+        logger.info(f"Step 2: Starting vLLM servers on node {my_rank}")
         logger.info("=" * 80)
         
-        for env_idx in range(num_envs):
-            port = env_start_port + env_idx
-            env_ports.append(port)
-            # job_idx for environments (they come first in the jobs list)
-            job_idx = env_idx
-            logger.info(f"Starting environment {env_idx} on port {port}")
-            process = start_environment(cfg, env_idx, port, output_dir, job_idx)
-            processes.append(process)
-        
-        # Wait for environment servers to be ready
-        logger.info("\nWaiting for environment servers to be ready...")
-        all_env_ready = True
-        for port in env_ports:
-            if not wait_for_environment(port, timeout=60):
-                all_env_ready = False
-                logger.error(f"Environment server on port {port} failed to start!")
-        
-        if not all_env_ready:
-            logger.error("Not all environment servers started successfully!")
-            return 1
-        
-        logger.info("✅ All environment servers are ready!")
-        
-        # Step 2: Start vLLM servers
-        logger.info("=" * 80)
-        logger.info("Step 2: Starting vLLM servers")
-        logger.info("=" * 80)
-        
-        for i in range(num_llms):
-            # Allocate GPUs for this LLM (gpus_per_llm consecutive GPUs)
-            llm_gpus = list(range(i * gpus_per_llm, (i + 1) * gpus_per_llm))
+        for local_llm_idx in range(my_num_llms):
+            # Global LLM index across all nodes
+            global_llm_idx = my_llm_start_idx + local_llm_idx
+            # Allocate GPUs for this LLM (gpus_per_llm consecutive GPUs on this node)
+            llm_gpus = list(range(local_llm_idx * gpus_per_llm, (local_llm_idx + 1) * gpus_per_llm))
             # Use minimum GPU ID as the local_idx (for port assignment)
-            local_idx = min(llm_gpus) if llm_gpus else i
+            local_idx = min(llm_gpus) if llm_gpus else local_llm_idx
             port = 8080 + local_idx
             llm_ports.append(port)
-            logger.info(f"Starting LLM {i} on GPUs {llm_gpus}, port {port}")
-            process = start_actor_llm(cfg, i, local_idx, llm_gpus, output_dir)
+            logger.info(f"Starting LLM {global_llm_idx} (local {local_llm_idx}) on GPUs {llm_gpus}, port {port}")
+            process = start_actor_llm(cfg, global_llm_idx, local_idx, llm_gpus, output_dir)
             processes.append(process)
         
         # Wait for all LLM servers to be ready
@@ -545,22 +683,24 @@ def main(cfg: DictConfig):
         
         logger.info("✅ All vLLM servers are ready!")
         
-        # Step 3: Start summarization LLM servers (if configured)
+        # Step 3: Start summarization LLM servers (if configured, only for this node)
         summarization_llm_ports = []
-        if num_summarization_llms > 0:
+        if my_num_summarization_llms > 0:
             logger.info("=" * 80)
-            logger.info("Step 3: Starting summarization LLM servers")
+            logger.info(f"Step 3: Starting summarization LLM servers on node {my_rank}")
             logger.info("=" * 80)
             
-            base_gpu_offset = num_llms * gpus_per_llm
-            for i in range(num_summarization_llms):
-                # Allocate GPUs for this summarization LLM
-                llm_gpus = list(range(base_gpu_offset + i * summarization_gpus_per_llm,
-                                    base_gpu_offset + (i + 1) * summarization_gpus_per_llm))
-                port = 8280 + i
+            base_gpu_offset = my_num_llms * gpus_per_llm
+            for local_summ_idx in range(my_num_summarization_llms):
+                # Global summarization LLM index across all nodes
+                global_summ_idx = my_summarization_llm_start_idx + local_summ_idx
+                # Allocate GPUs for this summarization LLM on this node
+                llm_gpus = list(range(base_gpu_offset + local_summ_idx * summarization_gpus_per_llm,
+                                    base_gpu_offset + (local_summ_idx + 1) * summarization_gpus_per_llm))
+                port = 8280 + global_summ_idx
                 summarization_llm_ports.append(port)
-                logger.info(f"Starting summarization LLM {i} on GPUs {llm_gpus}, port {port}")
-                process = start_summarization_llm(cfg, i, i, llm_gpus, output_dir)
+                logger.info(f"Starting summarization LLM {global_summ_idx} (local {local_summ_idx}) on GPUs {llm_gpus}, port {port}")
+                process = start_summarization_llm(cfg, global_summ_idx, local_summ_idx, llm_gpus, output_dir)
                 processes.append(process)
             
             # Wait for all summarization LLM servers to be ready
@@ -577,22 +717,36 @@ def main(cfg: DictConfig):
             
             logger.info("✅ All summarization LLM servers are ready!")
         
-        # Run RC actor
-        logger.info("=" * 80)
-        step_num = 4 if num_summarization_llms > 0 else 3
-        logger.info(f"Step {step_num}: Running RC Actor")
-        logger.info("=" * 80)
-        
-        # Import and run
-        from pipelinerl import rc_actor
-        
-        # Run actor loop (it will set streams backend internally)
-        logger.info("Starting RC actor loop...")
-        logger.info(f"Output directory: {output_dir}")
-        logger.info(f"Stream file: {output_dir}/streams/actor/0/0/0.jsonl")
-        
-        rc_actor.run_actor_loop(cfg)
-        return 0
+        # Run RC actor (only on rank 0)
+        if my_rank == 0:
+            logger.info("=" * 80)
+            step_num = 4 if my_num_summarization_llms > 0 else 3
+            logger.info(f"Step {step_num}: Running RC Actor")
+            logger.info("=" * 80)
+            
+            # Import and run
+            from pipelinerl import rc_actor
+            
+            # Run actor loop (it will set streams backend internally)
+            logger.info("Starting RC actor loop...")
+            logger.info(f"Output directory: {output_dir}")
+            logger.info(f"Stream file: {output_dir}/streams/actor/0/0/0.jsonl")
+            
+            rc_actor.run_actor_loop(cfg)
+            return 0
+        else:
+            # Other ranks: keep LLM servers running and wait for termination
+            logger.info("=" * 80)
+            logger.info(f"Node {my_rank}: LLM servers running, waiting for termination signal...")
+            logger.info("=" * 80)
+            
+            # Wait indefinitely (until interrupted or rank 0 finishes)
+            try:
+                import signal as sig_module
+                sig_module.pause()  # Wait for signal
+            except KeyboardInterrupt:
+                logger.info(f"Node {my_rank}: Received termination signal")
+            return 0
         
     except KeyboardInterrupt:
         logger.info("\nTest interrupted by user")

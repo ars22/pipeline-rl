@@ -593,8 +593,8 @@ async def schedule_rollouts(
                         }
                         # logger.info(f"Reasoning problem: {reasoning_problem}")
                         
-                        solution_rollout_result = await solution_rollout_policy(cfg, llm, reasoning_problem, session)
                         started_solution_rollouts[llm_index] += 1
+                        solution_rollout_result = await solution_rollout_policy(cfg, llm, reasoning_problem, session)
                         
                         # Extract the reasoning text from the rollout result
                         try:
@@ -622,8 +622,8 @@ async def schedule_rollouts(
                         }
                         # logger.info(f"Summarization problem: {summarization_problem}")
                         
-                        summarization_rollout_result = await summarization_rollout_policy(cfg, summarization_llm, summarization_problem, session)
                         started_summarization_rollouts[summarization_llm_index] += 1
+                        summarization_rollout_result = await summarization_rollout_policy(cfg, summarization_llm, summarization_problem, session)
                         
                         # Extract and update the summary
                         try:
@@ -840,7 +840,10 @@ def rollout_maker_entrypoint(
     scheduler_name: str,
 ):
     trainer_state = TrainerState(Path(cfg.output_dir))
-    if cfg.debug.mode:
+    eval_only_mode = cfg.get('eval_only', False)
+    
+    if cfg.debug.mode or eval_only_mode:
+        # In debug or eval-only mode, don't listen for weight updates
         trainer_state.propagated_weight_version = 0
     else:
         trainer_state.start_listening()
@@ -1500,8 +1503,13 @@ def run_actor_loop(cfg: DictConfig):
     if summarization_llm_urls:
         wait_for_inference_servers(summarization_llm_urls)
     wait_for_environments(cfg)
+    
+    eval_only_mode = cfg.get('eval_only', False)
     trainer_state = TrainerState(exp_path)
-    if cfg.debug.mode:
+    
+    if cfg.debug.mode or eval_only_mode:
+        # In debug or eval-only mode, don't listen for weight updates
+        logger.info("Debug or eval-only mode, not listening for weight updates")
         trainer_state.debug_mode_init()
     else:
         trainer_state.start_listening()

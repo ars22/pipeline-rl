@@ -114,7 +114,7 @@ async def generate_math_rollout(
         
         # make sure original_problem is present when using RC stream, since generation prompt is not the same as the original problem but
         # we need to use the original problem for verification
-        if cfg.actor.get("use_rc_stream", False):
+        if rc_actor or cfg.actor.get("use_rc_stream", False):
             assert "original_problem" in problem, "original_problem must be present when using RC stream"
         verification = await verify_proof(
             problem=problem["original_problem"] if "original_problem" in problem else problem["task"],

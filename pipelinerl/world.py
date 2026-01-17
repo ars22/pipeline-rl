@@ -95,19 +95,25 @@ class WorldMap:
         rc_actor_tp = rc_actor_llm_kwargs.get("tensor-parallel-size", 1)
         rc_actor_pp = rc_actor_llm_kwargs.get("pipeline-parallel-size", 1)
         self.gpus_per_rc_actor_llm = rc_actor_tp * rc_actor_pp
+        if cfg.world.get("rc_actor_fraction", 0) == 0:
+            self.gpus_per_rc_actor_llm = 0
         
         # Regular Actor LLMs (use actor_vllm_config if available, else vllm_config)
         actor_llm_kwargs = self.cfg.get("actor_vllm_config", self.cfg.vllm_config).vllm_kwargs
         actor_tp = actor_llm_kwargs.get("tensor-parallel-size", 1)
         actor_pp = actor_llm_kwargs.get("pipeline-parallel-size", 1)
         self.gpus_per_actor_llm = actor_tp * actor_pp
-        
+        if cfg.world.get("actor_fraction", 0) == 0:
+            self.gpus_per_actor_llm = 0
+
         # Summarization LLMs (use summarization_vllm_config if available, else vllm_config)
         summ_llm_kwargs = self.cfg.get("summarization_vllm_config", self.cfg.vllm_config).vllm_kwargs
         summ_tp = summ_llm_kwargs.get("tensor-parallel-size", 1)
         summ_pp = summ_llm_kwargs.get("pipeline-parallel-size", 1)
         self.gpus_per_summarization_llm = summ_tp * summ_pp
-        
+        if cfg.world.get("summarization_fraction", 0) == 0:
+            self.gpus_per_summarization_llm = 0
+
         # Preprocessor LLMs (use vllm_config)
         self.gpus_per_preprocessor_llm = self.gpus_per_rc_actor_llm  # Same as RC actor by default
         
@@ -155,19 +161,21 @@ class WorldMap:
                     current_finetune_rank += 1
 
         assert current_finetune_rank == self.total_finetune_gpus
-        if self.total_finetune_gpus % cfg.finetune.seq_parallel != 0:
+        if self.total_finetune_gpus > 0 and self.total_finetune_gpus % cfg.finetune.seq_parallel != 0:
             raise ValueError(
                 f"Total finetune GPUs {self.total_finetune_gpus} is not divisible by seq_parallel {cfg.finetune.seq_parallel}"
             )
-        for leader_idx in range(0, current_finetune_rank, cfg.finetune.seq_parallel):
-            # Check that all workers in the leader's group are on the same node
-            leader_node = finetune_rank_node[leader_idx]
-            for offset in range(cfg.finetune.seq_parallel):
-                if finetune_rank_node[leader_idx + offset] != leader_node:
-                    raise ValueError(
-                        f"Sequence parallel ranks {leader_idx} and {leader_idx + offset} are on different nodes: "
-                        f"{finetune_rank_node[leader_idx]} and {finetune_rank_node[leader_idx + offset]}"
-                    )
+        
+        if self.total_finetune_gpus > 0:
+            for leader_idx in range(0, current_finetune_rank, cfg.finetune.seq_parallel):
+                # Check that all workers in the leader's group are on the same node
+                leader_node = finetune_rank_node[leader_idx]
+                for offset in range(cfg.finetune.seq_parallel):
+                    if finetune_rank_node[leader_idx + offset] != leader_node:
+                        raise ValueError(
+                            f"Sequence parallel ranks {leader_idx} and {leader_idx + offset} are on different nodes: "
+                            f"{finetune_rank_node[leader_idx]} and {finetune_rank_node[leader_idx + offset]}"
+                        )
 
 
         # Pretty-log the world map
@@ -238,20 +246,24 @@ class WorldMap:
         gpus_per_rc_actor = (
             int(desired_rc_actor_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 and rc_actor_fraction else 0
         )
-        gpus_per_rc_actor = gpus_per_rc_actor - (gpus_per_rc_actor % self.gpus_per_rc_actor_llm)
+        if self.gpus_per_rc_actor_llm > 0:
+            gpus_per_rc_actor = gpus_per_rc_actor - (gpus_per_rc_actor % self.gpus_per_rc_actor_llm)
         
         gpus_per_actor = int(desired_actor_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 else 0
-        gpus_per_actor = gpus_per_actor - (gpus_per_actor % self.gpus_per_actor_llm)
+        if self.gpus_per_actor_llm > 0:
+            gpus_per_actor = gpus_per_actor - (gpus_per_actor % self.gpus_per_actor_llm)
         
         gpus_per_summarization = (
             int(desired_summarization_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 and summarization_fraction else 0
         )
-        gpus_per_summarization = gpus_per_summarization - (gpus_per_summarization % self.gpus_per_summarization_llm)
+        if self.gpus_per_summarization_llm > 0:
+            gpus_per_summarization = gpus_per_summarization - (gpus_per_summarization % self.gpus_per_summarization_llm)
         
         gpus_per_preprocessor = (
             int(desired_preprocessor_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 else 0
         )
-        gpus_per_preprocessor = gpus_per_preprocessor - (gpus_per_preprocessor % self.gpus_per_preprocessor_llm)
+        if self.gpus_per_preprocessor_llm > 0:
+            gpus_per_preprocessor = gpus_per_preprocessor - (gpus_per_preprocessor % self.gpus_per_preprocessor_llm)
         
         # Calculate LLMs per worker (use appropriate GPUs per LLM for each type)
         self.llms_per_rc_actor = max(int(gpus_per_rc_actor / self.gpus_per_rc_actor_llm), 1) if gpus_per_rc_actor > 0 else 0
@@ -319,8 +331,10 @@ class WorldMap:
             # Add RC actor if configured
             if cfg.world.get("rc_actor_fraction", 0) > 0:
                 self.add_job(kind="rc_actor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
-            self.add_job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
-            self.add_job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
+            if cfg.world.get("actor_fraction", 0) > 0:
+                self.add_job(kind="actor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
+            if cfg.world.get("finetune_fraction", 0) > 0:
+                self.add_job(kind="preprocessor", replica_idx=worker_idx, node_rank=node, gpus=[], cpu_heavy=True)
 
     def _place_environments(self, cfg):
         for worker_idx in range(cfg.world.env_replicas):

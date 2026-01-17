@@ -51,6 +51,8 @@ def _popen(
 
 
 def validate_config(cfg: DictConfig):
+    if cfg.world.finetune_fraction == 0:
+        return
     if cfg.world.preprocessor_fraction == 0 and cfg.finetune.rl.kl_coef > 0.0:
         raise ValueError("Preprocessor fraction must be > 0 if KL is used")
     
@@ -262,7 +264,8 @@ def run_actor_llm(
             if v not in [None, ""]:
                 cmd.append(str(v))
 
-    if cfg.debug.mode:
+    # Disable weight updates in debug mode or eval_only mode
+    if cfg.debug.mode or cfg.get('eval_only', False):
         cmd.append("--disable-weight-updates")
 
     gpu_str = ",".join([str(gpu) for gpu in gpus])
@@ -334,7 +337,8 @@ def run_rc_actor_llm(
             if v not in [None, ""]:
                 cmd.append(str(v))
 
-    if cfg.debug.mode:
+    # Disable weight updates in debug mode or eval_only mode
+    if cfg.debug.mode or cfg.get('eval_only', False):
         cmd.append("--disable-weight-updates")
 
     gpu_str = ",".join([str(gpu) for gpu in gpus])
@@ -975,6 +979,13 @@ def main(cfg: DictConfig):
         os.makedirs(config_dir, exist_ok=True)
         OmegaConf.save(cfg, config_dir / "exp_config.yaml")
         logger.info("Orchestrator 0 created the exp folder")
+        
+        # Ensure streams directory exists for file-based streams
+        if cfg.streams.backend == "files":
+            streams_dir = exp_dir / "streams"
+            os.makedirs(streams_dir, exist_ok=True)
+            logger.info(f"Created streams directory at {streams_dir}")
+        
         if cfg.streams.backend == "redis":
             processes.extend(run_redis(cfg))
             redis = connect_to_redis(cfg.streams)
@@ -996,6 +1007,13 @@ def main(cfg: DictConfig):
 
         with write_to_streams(lead_launcher_stream) as stream:
             stream.write(init_msg)
+        
+        # Give filesystem time to sync (especially important for NFS/shared filesystems)
+        if world_map.world_size > 1:
+            import time
+            time.sleep(0.5)
+            logger.info("Rank 0 finished writing launcher stream, waiting for filesystem sync")
+        
         if cfg.debug.mode == "finetune":
             debug_link_streams(cfg, [cfg.finetune.input])
         elif cfg.debug.mode == "preprocessor":

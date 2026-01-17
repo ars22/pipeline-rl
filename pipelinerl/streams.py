@@ -309,9 +309,14 @@ class FileStreamReader(StreamReader):
         # TODO: support sharding
         self._file_path = stream_file(_file_dir, 0)
         # wait until the file is created with a delay of 3.0 seconds
-        # and a logger warning
+        # and a logger warning (throttled to once every 10 seconds)
+        last_warning_time = 0
+        warning_interval = 10.0  # seconds
         while not os.path.exists(self._file_path):
-            logger.warning(f"Waiting for {self.stream} to be created")
+            current_time = time.time()
+            if current_time - last_warning_time >= warning_interval:
+                logger.warning(f"Waiting for {self.stream} to be created")
+                last_warning_time = current_time
             time.sleep(_RECHECK_DELAY)
         self._file = open(self._file_path, "r")
         return self
