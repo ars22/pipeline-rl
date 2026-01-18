@@ -442,41 +442,65 @@ class SlidingWindowData(BaseModel):
 class SlidingWindowAggregator:
     def __init__(self, window_size: int):
         self.window_size = window_size
-        self.data = SlidingWindowData()
+        # Maintain separate sliding windows for each turn type
+        self.data_by_turn_type = defaultdict(SlidingWindowData)
 
-    def update(self, prompt_tokens: list[int], output_tokens: list[int]):
-        self.data.prompt_tokens_window.append(prompt_tokens)
-        self.data.output_tokens_window.append(output_tokens)
-        self.data.timestamps.append(time.time())
-        if len(self.data.prompt_tokens_window) > self.window_size:
-            self.data.prompt_tokens_window.pop(0)
-            self.data.output_tokens_window.pop(0)
-            self.data.timestamps.pop(0)
+    def update(self, prompt_tokens: list[int], output_tokens: list[int], turn_type: str = "unknown"):
+        """Update statistics for a specific turn type."""
+        data = self.data_by_turn_type[turn_type]
+        data.prompt_tokens_window.append(prompt_tokens)
+        data.output_tokens_window.append(output_tokens)
+        data.timestamps.append(time.time())
+        if len(data.prompt_tokens_window) > self.window_size:
+            data.prompt_tokens_window.pop(0)
+            data.output_tokens_window.pop(0)
+            data.timestamps.pop(0)
 
-    def get_stats(self):
-        if len(self.data.prompt_tokens_window) < self.window_size:
+    def get_stats(self, turn_type: str | None = None):
+        """
+        Get statistics for a specific turn type, or aggregated across all turn types.
+        
+        Args:
+            turn_type: If specified, return stats for that turn type only.
+                      If None, return aggregated stats across all turn types.
+        """
+        if turn_type is not None:
+            # Return stats for specific turn type
+            return self._compute_stats_for_data(self.data_by_turn_type[turn_type])
+        else:
+            # Return aggregated stats across all turn types
+            return self._compute_aggregated_stats()
+    
+    def get_all_turn_type_stats(self) -> dict[str, dict]:
+        """Get separate statistics for each turn type."""
+        result = {}
+        for turn_type, data in self.data_by_turn_type.items():
+            stats = self._compute_stats_for_data(data)
+            if stats is not None:
+                result[turn_type] = stats
+        return result
+
+    def _compute_stats_for_data(self, data: SlidingWindowData):
+        """Compute statistics for a single SlidingWindowData object."""
+        if len(data.prompt_tokens_window) < self.window_size:
             return None
 
-        # 1. How many samples do we produce per second?
-        # 2. How many output tokens do we produce per second?
-        # 3. How many prompt tokens do we produce per second?
-        # 4. How many total tokens do we produce per second?
         null_stats = {
             "samples_per_second": 0,
             "output_tokens_per_second": 0,
             "prompt_tokens_per_second": 0,
             "total_tokens_per_second": 0,
         }
-        if not self.data.timestamps:
+        if not data.timestamps:
             return null_stats
 
-        time_span = self.data.timestamps[-1] - self.data.timestamps[0]
+        time_span = data.timestamps[-1] - data.timestamps[0]
         if time_span < 1e-6:
             return null_stats
 
-        num_samples = sum(len(tokens) for tokens in self.data.prompt_tokens_window)
-        total_output_tokens = sum(sum(tokens) for tokens in self.data.output_tokens_window)
-        total_prompt_tokens = sum(sum(tokens) for tokens in self.data.prompt_tokens_window)
+        num_samples = sum(len(tokens) for tokens in data.prompt_tokens_window)
+        total_output_tokens = sum(sum(tokens) for tokens in data.output_tokens_window)
+        total_prompt_tokens = sum(sum(tokens) for tokens in data.prompt_tokens_window)
 
         return {
             "samples_per_second": num_samples / time_span,
@@ -484,6 +508,49 @@ class SlidingWindowAggregator:
             "prompt_tokens_per_second": total_prompt_tokens / time_span,
             "total_tokens_per_second": (total_output_tokens + total_prompt_tokens) / time_span,
         }
+    
+    def _compute_aggregated_stats(self):
+        """Compute aggregated statistics across all turn types."""
+        # Collect all data points across turn types
+        all_prompt_tokens = []
+        all_output_tokens = []
+        all_timestamps = []
+        
+        for data in self.data_by_turn_type.values():
+            all_prompt_tokens.extend(data.prompt_tokens_window)
+            all_output_tokens.extend(data.output_tokens_window)
+            all_timestamps.extend(data.timestamps)
+        
+        if not all_timestamps:
+            return None
+        
+        # Check if we have enough data
+        total_samples = sum(len(tokens) for tokens in all_prompt_tokens)
+        if total_samples < self.window_size:
+            return None
+        
+        null_stats = {
+            "samples_per_second": 0,
+            "output_tokens_per_second": 0,
+            "prompt_tokens_per_second": 0,
+            "total_tokens_per_second": 0,
+        }
+        
+        time_span = max(all_timestamps) - min(all_timestamps)
+        if time_span < 1e-6:
+            return null_stats
+
+        num_samples = sum(len(tokens) for tokens in all_prompt_tokens)
+        total_output_tokens = sum(sum(tokens) for tokens in all_output_tokens)
+        total_prompt_tokens = sum(sum(tokens) for tokens in all_prompt_tokens)
+
+        return {
+            "samples_per_second": num_samples / time_span,
+            "output_tokens_per_second": total_output_tokens / time_span,
+            "prompt_tokens_per_second": total_prompt_tokens / time_span,
+            "total_tokens_per_second": (total_output_tokens + total_prompt_tokens) / time_span,
+        }
+
 
 
 
@@ -989,24 +1056,60 @@ class RCActorLoop:
                 assert isinstance(result.metrics, BaseMetrics), "Metrics should be an instance of BaseMetrics"
                 dataset_name = result.dataset_name
                 group_id = result.group_id
+                
+                # Get turn_type and turn_number from the first training text's metadata
+                # All training texts in a result should have the same turn_type/turn_number
+                if result.training_texts:
+                    turn_type = result.training_texts[0].metadata.get("turn_type", "unknown")
+                    turn_number = result.training_texts[0].metadata.get("turn_number", 0)
+                else:
+                    turn_type = "unknown"
+                    turn_number = 0
+                metric_prefix = f"{turn_type}_turn_{turn_number}"
+                
                 self.latency_list.append(result.latency)
                 self.model_versions_list.append(result.model_version)
                 domain_agnostic_metrics = self.compute_domain_agnostic_metrics(result) 
                 all_metrics = result.metrics.model_dump() | domain_agnostic_metrics
                 for k, v in all_metrics.items():
+                    # Add turn type and number prefix to all metric keys
+                    metric_key = f"{metric_prefix}/{k}"
                     if isinstance(v, list):
-                        self.stats[k][dataset_name][group_id] += v
+                        self.stats[metric_key][dataset_name][group_id] += v
                     elif isinstance(v, float) | isinstance(v, bool) | isinstance(v, int):
-                        self.stats[k][dataset_name][group_id].append(v)
+                        self.stats[metric_key][dataset_name][group_id].append(v)
                     else:
                         raise ValueError(f"Unsupported metric type: {type(v)} for key {k}")
         
-        prompt_length_tokens = [training_text.prompt_tokens for attempt in rollout_results for result in attempt for training_text in result.training_texts]
-        output_length_tokens = [training_text.output_tokens for attempt in rollout_results for result in attempt for training_text in result.training_texts]
-        self.sliding_aggregator.update(prompt_length_tokens, output_length_tokens)
-        sliding_window_stats = self.sliding_aggregator.get_stats()
-        if sliding_window_stats is not None:
-            for k, v in sliding_window_stats.items():
+        # Update sliding window stats separately for each turn type
+        # Group results by turn type
+        results_by_turn_type = defaultdict(list)
+        for attempt in rollout_results:
+            for result in attempt:
+                if result.training_texts:
+                    turn_type = result.training_texts[0].metadata.get("turn_type", "unknown")
+                else:
+                    turn_type = "unknown"
+                results_by_turn_type[turn_type].append(result)
+        
+        # Update aggregator for each turn type
+        for turn_type, results in results_by_turn_type.items():
+            prompt_length_tokens = [training_text.prompt_tokens for result in results for training_text in result.training_texts]
+            output_length_tokens = [training_text.output_tokens for result in results for training_text in result.training_texts]
+            if prompt_length_tokens:  # Only update if we have data
+                self.sliding_aggregator.update(prompt_length_tokens, output_length_tokens, turn_type=turn_type)
+        
+        # Get stats for each turn type and log them
+        turn_type_stats = self.sliding_aggregator.get_all_turn_type_stats()
+        for turn_type, stats in turn_type_stats.items():
+            for k, v in stats.items():
+                metric_key = f"{turn_type}/{k}"
+                self.sliding_stats[metric_key].append(v)
+        
+        # Also get aggregated stats across all turn types
+        aggregated_stats = self.sliding_aggregator.get_stats()
+        if aggregated_stats is not None:
+            for k, v in aggregated_stats.items():
                 self.sliding_stats[k].append(v)
         
     def _measure_verifier_group_runtime(self) -> float | None:
