@@ -1,6 +1,6 @@
 # ---------------------
 # Config for:
-#   generation: 3 nodes (2 rc_actor, 1 summarizer, 21 actor)
+#   generation: 3 nodes (3 rc_actor, 1 summarizer, 20 actor)
 #   grader: api (set llm_grader.local to false to run via inference endpoints)
 #   finetuning: 1 node
 # ---------------------
@@ -28,9 +28,9 @@ n_problems_per_batch: 64
 finetune:
   seed: ${seed}
   attempts: 4
-  train_batch_size: 16
-  valid_batch_size: 16
-  gradient_accumulation_passes: 16
+  train_batch_size: 8
+  valid_batch_size: 8
+  gradient_accumulation_passes: 32
   lr_scheduler_type: constant_with_warmup
   config_name: ${model_path}
   model_revision: ${model_revision}
@@ -59,10 +59,10 @@ eval_every_n_versions: 12800
 world:
   replicas: 1
   # GPU allocation fractions (must sum to <= 8 per node)
-  rc_actor_fraction: 2  # GPUs for RC actor LLMs
+  rc_actor_fraction: 3  # GPUs for RC actor LLMs
   summarization_fraction: 1  # Set to >0 to use separate summarization LLMs
-  finetune_fraction: 8
-  actor_fraction: 21    # GPUs for regular actor LLMs
+  finetune_fraction: 4
+  actor_fraction: 24    # GPUs for regular actor LLMs
   preprocessor_fraction: 0
 
   env_replicas: 2
@@ -86,7 +86,7 @@ rc_actor:
   retry_base_delay: 1.0
   
   # RC-specific configuration
-  num_reasoning_steps: 3  # Number of reasoning/summarization cycles
+  num_reasoning_steps: 2  # Number of reasoning/summarization cycles
   attempts: 1  # Number of attempts per problem (for training use 1)
 
   # Solution and summarization rollout policies
