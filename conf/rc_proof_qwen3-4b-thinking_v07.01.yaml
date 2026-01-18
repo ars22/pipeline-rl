@@ -1,6 +1,6 @@
 # ---------------------
 # Config for:
-#   generation: 5 nodes (3 rc_actor, 1 summarizer, 36 actor)
+#   generation: 3 nodes (2 rc_actor, 1 summarizer, 21 actor)
 #   grader: api (set llm_grader.local to false to run via inference endpoints)
 #   finetuning: 1 node
 # ---------------------
@@ -30,7 +30,7 @@ finetune:
   attempts: 4
   train_batch_size: 16
   valid_batch_size: 16
-  gradient_accumulation_passes: 32
+  gradient_accumulation_passes: 16
   lr_scheduler_type: constant_with_warmup
   config_name: ${model_path}
   model_revision: ${model_revision}
