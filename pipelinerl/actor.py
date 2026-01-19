@@ -10,6 +10,7 @@ import time
 from collections import defaultdict, deque
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
+from pipelinerl.utils import strip_chat_template_tokens
 
 import aiohttp
 import aiohttp.client_exceptions
@@ -59,6 +60,7 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 from pipelinerl.finetune.data import MASKED_TOKEN_ID
+
 
 
 _WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
@@ -577,8 +579,10 @@ def stream_iter(stream_reader, num_samples_per_batch: int = 3, is_training: bool
         for sample in reasoning_samples:
             # Extract the problem from the prompt_text or reconstruct it
             # The training text should have prompt_text and output_text
+            # Strip chat template tokens from prompt_text to get the raw task
+            raw_prompt = strip_chat_template_tokens(sample.get("prompt_text", ""))
             problem = {
-                "task": sample.get("prompt_text", ""),
+                "task": raw_prompt,
                 "answer": sample.get("metadata", {}).get("answer", ""),  
                 "dataset": sample.get("metadata", {}).get("dataset_name", "unknown") + "_turn_" + str(sample.get("metadata", {}).get("turn_number", 0)),
                 "id": sample.get("metadata", {}).get("problem_id", 0),

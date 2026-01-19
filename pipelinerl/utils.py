@@ -26,6 +26,32 @@ from wandb.sdk import wandb_run
 logger = logging.getLogger(__name__)
 _REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
 
+def strip_chat_template_tokens(text: str) -> str:
+    """
+    Strip chat template tokens from text.
+    Removes common chat template tokens like <|im_start|>, <|im_end|>, etc.
+    """
+    if not text:
+        return text
+    
+    # Chat template tokens to remove
+    tokens_to_strip = [
+        "<|im_start|>system\n",
+        "<|im_start|>user\n",
+        "<|im_start|>assistant\n",
+        "<think>",
+        "<|im_end|>",
+        "</s>",
+        "<|endoftext|>",
+        "<s>",
+        "</think>",
+    ]
+    
+    result = text
+    for token in tokens_to_strip:
+        result = result.replace(token, "")
+    
+    return result.strip()
 
 def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
     """Upload the experiment config file to W&B."""
