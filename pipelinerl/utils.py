@@ -39,10 +39,12 @@ def strip_chat_template_tokens(text: str) -> str:
         "<|im_start|>system\n",
         "<|im_start|>user\n",
         "<|im_start|>assistant\n",
+        "<think>",
         "<|im_end|>",
         "</s>",
         "<|endoftext|>",
         "<s>",
+        "</think>",
     ]
     
     result = text
