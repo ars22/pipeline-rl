@@ -577,8 +577,9 @@ def stream_iter(stream_reader, num_samples_per_batch: int = 3, is_training: bool
         for sample in reasoning_samples:
             # Extract the problem from the prompt_text or reconstruct it
             # The training text should have prompt_text and output_text
+            raw_task = sample.get("metadata", {}).get("raw_task", "")
             problem = {
-                "task": sample.get("prompt_text", ""),
+                "task": raw_task or sample.get("prompt_text", ""),
                 "answer": sample.get("metadata", {}).get("answer", ""),  
                 "dataset": sample.get("metadata", {}).get("dataset_name", "unknown") + "_turn_" + str(sample.get("metadata", {}).get("turn_number", 0)),
                 "id": sample.get("metadata", {}).get("problem_id", 0),

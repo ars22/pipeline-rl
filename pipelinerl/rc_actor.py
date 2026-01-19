@@ -234,7 +234,15 @@ class InferenceProblemState:
         self.summarization_turn_number = 0
         self.overall_cycle_step = 0
 
-    def update_reasoning(self, rollout: RolloutResult, response_string: str, model_version: int, rollout_index: int, group_id: str):
+    def update_reasoning(
+        self,
+        rollout: RolloutResult,
+        response_string: str,
+        model_version: int,
+        rollout_index: int,
+        group_id: str,
+        raw_task: str | None = None,
+    ):
         # Increment reasoning turn counter
         self.reasoning_turn_number += 1
         
@@ -254,6 +262,8 @@ class InferenceProblemState:
             sample.metadata["dataset_name"] = self.dataset_name
             sample.metadata["schema"] = self.schema
             sample.metadata["original_problem"] = f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
+            if raw_task is not None:
+                sample.metadata["raw_task"] = raw_task
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -423,6 +433,7 @@ def generate_dummy_training_text_from_prompt_and_old_training_text(prompt: str, 
     new_training_text = copy.deepcopy(old_training_text)
     new_training_text.fixed_prompt_text = prompt
     new_training_text.text = prompt + new_training_text.output_text
+    new_training_text.metadata["raw_task"] = prompt
     new_training_text.metadata["turn_number"] += 1
     new_training_text.metadata["cycle_step"] += 2
     return new_training_text
@@ -676,7 +687,8 @@ async def schedule_rollouts(
                             reasoning_text,
                             model_version,
                             rollout_index,
-                            full_group_id
+                            full_group_id,
+                            raw_task=reasoning_problem.get("task"),
                         )
                     
                         # 2. Summarization step: summarize the reasoning (use summarization_llm)
