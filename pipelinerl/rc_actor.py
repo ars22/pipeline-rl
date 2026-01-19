@@ -655,7 +655,7 @@ async def schedule_rollouts(
                         # 1. Reasoning step: generate reasoning based on current summary
                         # Create a problem dict with the current state
                         reasoning_problem = {
-                            "task": problem_state.get_filled_reasoning_prompt(tokenizer=llm.tokenizer),
+                            "task": problem_state.get_filled_reasoning_prompt(),
                             "answer": problem_state.answer,
                             "dataset": problem_state.dataset_name,
                             "id": problem_state.problem_id,
@@ -723,7 +723,7 @@ async def schedule_rollouts(
                             last_but_one_reasoning_rollout_result = all_rollout_results[-2]
                             final_dummy_rollout_result = copy.deepcopy(last_but_one_reasoning_rollout_result)
                             final_dummy_rollout_result.training_texts[0] = generate_dummy_training_text_from_prompt_and_old_training_text(
-                                problem_state.get_filled_reasoning_prompt(), last_but_one_reasoning_rollout_result.training_texts[0])
+                                problem_state.get_filled_reasoning_prompt(tokenizer=llm.tokenizer), last_but_one_reasoning_rollout_result.training_texts[0])
                             all_rollout_results.append(final_dummy_rollout_result)
 
                         finished_solution_rollouts[llm_index] += 1
