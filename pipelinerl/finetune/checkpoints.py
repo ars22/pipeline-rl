@@ -360,9 +360,19 @@ def save_model_only(
     else:
         raise ValueError(f"model is neither a deepspeed model nor a transformers.PreTrainedModel: {type(model)}")
 
-    if os.path.exists(output_dir / "model.safetensors") and os.path.exists(output_dir / "model.safetensors.index.json"):
-        logger.info("Hide model.safetensors because it utterly confuses the HF model loading code")
-        os.rename(output_dir / "model.safetensors", output_dir / "model.safetensors.bak")
+    get_accelerator().wait_for_everyone()
+
+    safetensors_path = output_dir / "model.safetensors"
+    safetensors_index_path = output_dir / "model.safetensors.index.json"
+    if os.path.exists(safetensors_path) and os.path.exists(safetensors_index_path):
+        if get_accelerator().is_main_process:
+            logger.info("Hide model.safetensors because it utterly confuses the HF model loading code")
+            try:
+                os.replace(safetensors_path, output_dir / "model.safetensors.bak")
+            except FileNotFoundError:
+                pass
+
+    get_accelerator().wait_for_everyone()
 
 
 def save_tokenizer_only(
