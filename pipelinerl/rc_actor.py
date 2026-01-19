@@ -12,7 +12,7 @@ from collections import defaultdict, deque
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 from typing import List, Dict, Any
-
+from actor import strip_chat_template_tokens
 import aiohttp
 import aiohttp.client_exceptions
 import hydra
@@ -265,6 +265,9 @@ class InferenceProblemState:
         processed_response_string = response_string.replace("<think>", "")
         if "</think>" in processed_response_string:
             processed_response_string = processed_response_string.split("</think>")[0]
+        
+        processed_response_string = strip_chat_template_tokens(processed_response_string)
+        
         self.curr_reasoning = processed_response_string.strip()
         self.reasoning_string_store.append(self.curr_reasoning)
         
@@ -305,12 +308,14 @@ class InferenceProblemState:
             processed_response_string = response_string.replace("<think>", "").replace("</think>", "").strip()
         else:
             processed_response_string = response_string.strip()
+
+        processed_response_string = strip_chat_template_tokens(processed_response_string)
         
         # Update summary based on summarization style
         if self.summarization_style == "summ":
-            self.curr_summary = processed_response_string
+            self.curr_summary = processed_response_string.strip()
         else:  # sequential style
-            self.curr_summary = f"{self.curr_summary}\n\n{processed_response_string}"
+            self.curr_summary = f"{self.curr_summary}\n\n{processed_response_string.strip()}"
         self.summarization_string_store.append(self.curr_summary)
         
         # logger.info(f"[SUMMARIZATION UPDATE] problem_id={self.problem_id}, "
@@ -421,7 +426,6 @@ class InferenceProblemState:
 
 def generate_dummy_training_text_from_prompt_and_old_training_text(prompt: str, old_training_text: TrainingText) -> TrainingText:
     new_training_text = copy.deepcopy(old_training_text)
-    new_training_text.fixed_prompt_text = prompt
     new_training_text.text = prompt + new_training_text.output_text
     new_training_text.metadata["turn_number"] += 1
     new_training_text.metadata["cycle_step"] += 2
