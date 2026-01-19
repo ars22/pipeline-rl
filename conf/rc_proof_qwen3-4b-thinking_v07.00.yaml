@@ -14,8 +14,8 @@ defaults:
 seed: 42
 
 # Main model path for RC actor and regular actor
-model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-model_revision: v05.01-step-000100
+model_path: Qwen/Qwen3-4B-Thinking-2507
+model_revision: main
 
 # Separate model for summarization (optional)
 # If not set or null, uses the same model as RC actor
@@ -42,7 +42,7 @@ finetune:
   seq_length: 53000
   seq_parallel: 2
   learning_rate: 1.0e-6
-  save_checkpoint_steps: 10
+  save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
   hub_model_revision: rc_v07.00
@@ -100,8 +100,10 @@ rc_actor:
   
   # Task template for formatting the problem
   task_template: |-
+    Generate a rigorous proof to the following question:
+
     {task}
-  
+
   # RC specific Model configuration
   use_think_tags: false
   model_class: "qwen"  # Options: "qwen", "gptoss", etc.
@@ -133,9 +135,9 @@ actor:
 
   # task template for formatting the problem
   task_template: |-
+    Generate a rigorous proof to the following question:
+
     {task}
-
-
 preprocess:
   input: actor  # Preprocessor reads from regular actor as before
   output: training_data
