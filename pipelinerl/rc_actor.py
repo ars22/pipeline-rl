@@ -12,7 +12,7 @@ from collections import defaultdict, deque
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
 from typing import List, Dict, Any
-from actor import strip_chat_template_tokens
+from pipelinerl.utils import strip_chat_template_tokens
 import aiohttp
 import aiohttp.client_exceptions
 import hydra

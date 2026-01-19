@@ -10,6 +10,7 @@ import time
 from collections import defaultdict, deque
 from multiprocessing.managers import SharedMemoryManager
 from pathlib import Path
+from pipelinerl.utils import strip_chat_template_tokens
 
 import aiohttp
 import aiohttp.client_exceptions
@@ -60,31 +61,6 @@ logger = logging.getLogger(__name__)
 
 from pipelinerl.finetune.data import MASKED_TOKEN_ID
 
-
-def strip_chat_template_tokens(text: str) -> str:
-    """
-    Strip chat template tokens from text.
-    Removes common chat template tokens like <|im_start|>, <|im_end|>, etc.
-    """
-    if not text:
-        return text
-    
-    # Chat template tokens to remove
-    tokens_to_strip = [
-        "<|im_start|>system\n",
-        "<|im_start|>user\n",
-        "<|im_start|>assistant\n",
-        "<|im_end|>",
-        "</s>",
-        "<|endoftext|>",
-        "<s>",
-    ]
-    
-    result = text
-    for token in tokens_to_strip:
-        result = result.replace(token, "")
-    
-    return result.strip()
 
 
 _WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
