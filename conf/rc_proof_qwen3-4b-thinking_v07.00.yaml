@@ -53,7 +53,7 @@ finetune:
 # evaluation settings
 eval_only: false # set to true to only evaluate the model with RC actor
 skip_first_eval: true
-eval_every_n_versions: 12800
+eval_every_n_versions: 25600
 
 # world configuration for a 4 node (32 H100 GPU) setup
 world:
