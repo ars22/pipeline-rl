@@ -16,4 +16,4 @@ Some strategies you could use include:
 - Finding alternative problem-solving strategies.
 - Continuing from where the previous solution left off, assuming that the previous solution is incomplete.
 
-Reason step-by-step and return your final answer in \\boxed{{}}.
+Reason step-by-step.

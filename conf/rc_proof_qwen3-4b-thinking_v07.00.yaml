@@ -100,8 +100,6 @@ rc_actor:
   
   # Task template for formatting the problem
   task_template: |-
-    Generate a rigorous proof to the following question:
-
     {task}
 
   # RC specific Model configuration
@@ -135,8 +133,6 @@ actor:
 
   # task template for formatting the problem
   task_template: |-
-    Generate a rigorous proof to the following question:
-
     {task}
 preprocess:
   input: actor  # Preprocessor reads from regular actor as before

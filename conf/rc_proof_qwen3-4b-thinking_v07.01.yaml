@@ -101,7 +101,7 @@ rc_actor:
   # Task template for formatting the problem
   task_template: |-
     {task}
-  
+
   # RC specific Model configuration
   use_think_tags: false
   model_class: "qwen"  # Options: "qwen", "gptoss", etc.
