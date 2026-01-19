@@ -655,7 +655,7 @@ async def schedule_rollouts(
                         # 1. Reasoning step: generate reasoning based on current summary
                         # Create a problem dict with the current state
                         reasoning_problem = {
-                            "task": problem_state.get_filled_reasoning_prompt(),
+                            "task": problem_state.get_filled_reasoning_prompt(tokenizer=llm.tokenizer),
                             "answer": problem_state.answer,
                             "dataset": problem_state.dataset_name,
                             "id": problem_state.problem_id,
