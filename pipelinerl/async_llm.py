@@ -131,8 +131,19 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
     images = []
     use_processor = False
     visual_features = None
+    
+    # Strip trailing chat template tokens from LLM output to avoid duplication
+    # when apply_chat_template is called on the full conversation
+    output_content = llm_call.output.content
+    if output_content:
+        # Common chat template end tokens that might be in the output
+        end_tokens = ["<|im_end|>", "</s>", "<|endoftext|>"]
+        for token in end_tokens:
+            if output_content.endswith(token):
+                output_content = output_content[:-len(token)].rstrip()
+    
     full_messages = llm_call.prompt.messages + [
-        {"role": "assistant", "content": llm_call.output.content}
+        {"role": "assistant", "content": output_content}
     ]
 
     if hasattr(llm_call.prompt, "messages"):

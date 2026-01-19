@@ -1,8 +1,8 @@
 # ---------------------
 # Config for:
-#   generation: 3 nodes (3 rc_actor, 1 summarizer, 20 actor)
+#   generation: 3 nodes (5 rc_actor, 1 summarizer, 22 actor)
 #   grader: api (set llm_grader.local to false to run via inference endpoints)
-#   finetuning: 1 node
+#   finetuning: 4 cards
 # ---------------------
 
 defaults:
@@ -45,7 +45,7 @@ finetune:
   save_checkpoint_steps: 10
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: rc_v07.01
+  hub_model_revision: rc_v07.02
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -53,16 +53,16 @@ finetune:
 # evaluation settings
 eval_only: false # set to true to only evaluate the model with RC actor
 skip_first_eval: true
-eval_every_n_versions: 12800
+eval_every_n_versions: 51200
 
 # world configuration for a 4 node (32 H100 GPU) setup
 world:
   replicas: 1
   # GPU allocation fractions (must sum to <= 8 per node)
-  rc_actor_fraction: 3  # GPUs for RC actor LLMs
+  rc_actor_fraction: 5  # GPUs for RC actor LLMs
   summarization_fraction: 1  # Set to >0 to use separate summarization LLMs
   finetune_fraction: 4
-  actor_fraction: 24    # GPUs for regular actor LLMs
+  actor_fraction: 22    # GPUs for regular actor LLMs
   preprocessor_fraction: 0
 
   env_replicas: 2

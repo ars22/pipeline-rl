@@ -61,6 +61,32 @@ logger = logging.getLogger(__name__)
 from pipelinerl.finetune.data import MASKED_TOKEN_ID
 
 
+def strip_chat_template_tokens(text: str) -> str:
+    """
+    Strip chat template tokens from text.
+    Removes common chat template tokens like <|im_start|>, <|im_end|>, etc.
+    """
+    if not text:
+        return text
+    
+    # Chat template tokens to remove
+    tokens_to_strip = [
+        "<|im_start|>system\n",
+        "<|im_start|>user\n",
+        "<|im_start|>assistant\n",
+        "<|im_end|>",
+        "</s>",
+        "<|endoftext|>",
+        "<s>",
+    ]
+    
+    result = text
+    for token in tokens_to_strip:
+        result = result.replace(token, "")
+    
+    return result.strip()
+
+
 _WANDB_VERIFIER_TABLE_COLUMNS = ["group_index", "prompt", "reasoning", "output", "score"]
 _WANDB_ROLLOUT_TABLE_COLUMNS = [
     "group_index",
@@ -577,8 +603,10 @@ def stream_iter(stream_reader, num_samples_per_batch: int = 3, is_training: bool
         for sample in reasoning_samples:
             # Extract the problem from the prompt_text or reconstruct it
             # The training text should have prompt_text and output_text
+            # Strip chat template tokens from prompt_text to get the raw task
+            raw_prompt = strip_chat_template_tokens(sample.get("prompt_text", ""))
             problem = {
-                "task": sample.get("prompt_text", ""),
+                "task": raw_prompt,
                 "answer": sample.get("metadata", {}).get("answer", ""),  
                 "dataset": sample.get("metadata", {}).get("dataset_name", "unknown") + "_turn_" + str(sample.get("metadata", {}).get("turn_number", 0)),
                 "id": sample.get("metadata", {}).get("problem_id", 0),
