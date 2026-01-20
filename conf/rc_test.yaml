@@ -6,8 +6,9 @@ defaults:
 seed: 42
 
 # Main model path for RC actor and regular actor
-model_path: ars22/rc_qwen3_4b_thinking_2507_proof-20260112-064952
-model_revision: null
+model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof 
+# ars22/rc_qwen3_4b_thinking_2507_proof-20260112-064952
+model_revision: rc_v07.01-step-000100
 
 # Separate model for summarization (optional)
 # If not set or null, uses the same model as RC actor
@@ -52,7 +53,7 @@ rc_actor:
   
   # RC-specific configuration
   num_reasoning_steps: 12  # Number of reasoning/summarization cycles
-  attempts: 1  # Number of attempts per problem (for training use 1)
+  attempts: 4  # Number of attempts per problem (for training use 1)
 
   # Solution and summarization rollout policies
   solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout_rc
