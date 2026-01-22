@@ -67,9 +67,11 @@ def apply_score_threshold(score: float) -> float:
     """
 
     # custom thresholding for proof grading
+    if score < 1.0:
+        return score
     if score < 6.0:
-        return 0.0
-    return 7.0
+        return 1.0
+    return score
 
 async def generate_math_rollout_rc(
     cfg: DictConfig,
