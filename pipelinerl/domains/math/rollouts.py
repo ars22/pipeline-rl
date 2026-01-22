@@ -55,7 +55,7 @@ def length_penalty(max_length: int, sequence_length: int, buffer_tokens: int) ->
         return ((max_length - buffer_tokens) - sequence_length) / buffer_tokens
     return 0.
 
-def apply_reward_threshold(score: float) -> float:
+def apply_score_threshold(score: float) -> float:
     """
     Apply reward thresholding based on verification score.
     
@@ -69,7 +69,7 @@ def apply_reward_threshold(score: float) -> float:
     # custom thresholding for proof grading
     if score < 6.0:
         return 0.0
-    return 1.0
+    return 7.0
 
 async def generate_math_rollout_rc(
     cfg: DictConfig,
@@ -148,7 +148,7 @@ async def generate_math_rollout(
         verifier_table_entry = verification.table_entry
         # normalize score to [0, 1]
         if cfg.llm_grader.get("custom_reward_threshold", False):
-            reward = apply_reward_threshold(score) / 7.0
+            reward = apply_score_threshold(score) / 7.0
         else:
             reward = (score / 7.0) 
         
