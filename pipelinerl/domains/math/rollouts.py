@@ -148,7 +148,7 @@ async def generate_math_rollout(
         verifier_table_entry = verification.table_entry
         # normalize score to [0, 1]
         if cfg.llm_grader.get("custom_reward_threshold", False):
-            reward = apply_reward_threshold(score) 
+            reward = apply_reward_threshold(score) / 7.0
         else:
             reward = (score / 7.0) 
         

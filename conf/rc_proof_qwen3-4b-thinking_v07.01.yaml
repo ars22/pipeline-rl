@@ -15,7 +15,7 @@ seed: 42
 
 # Main model path for RC actor and regular actor
 model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-model_revision: v05.01-step-000100
+model_revision: rc_v07.00-step-000145
 
 # Separate model for summarization (optional)
 # If not set or null, uses the same model as RC actor
