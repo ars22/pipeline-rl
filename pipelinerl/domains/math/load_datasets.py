@@ -18,6 +18,8 @@ and this will not parse:
 \\begin{pmatrix} -\\frac{1}{3} \\ \\frac{2}{3} \\ \\frac{5}{3} \\end{pmatrix}
 """
 
+HUB_DATASETS = ["hf-imo-colab/olympiads-proof-schema", "hf-imo-colab/olympiads-proof-schema-benchmark", "hf-imo-colab/olympiads-proof-schema-cleaned", "hf-imo-colab/olympiads-proof-schema-cleaned-v2", "hf-imo-colab/aops_cleaned_v2", "hf-imo-colab/aops-olympiads"]
+
 logger = logging.getLogger(__name__)
 
 def process_proof_problem(dataset, dataset_name):
@@ -281,7 +283,7 @@ def load_datasets(
             if config is not None:
                 load_args += (config,)
             dataset = load_dataset(*load_args, split=split, trust_remote_code=trust_remote_code)
-            if hub_id in ["hf-imo-colab/olympiads-proof-schema", "hf-imo-colab/olympiads-proof-schema-benchmark", "hf-imo-colab/olympiads-proof-schema-cleaned", "hf-imo-colab/olympiads-proof-schema-cleaned-v2", "hf-imo-colab/aops_cleaned_v2"]:
+            if hub_id in HUB_DATASETS:
                 samples = [s for s in process_proof_problem(dataset, hub_id.split("/")[-1]) if s is not None]
             else:
                 samples = [dict(row) for row in dataset]

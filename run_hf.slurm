@@ -6,7 +6,7 @@
 #SBATCH --output=/fsx/h4/logs/%x-%j.out
 #SBATCH --error=/fsx/h4/logs/%x-%j.err
 #SBATCH --requeue
-#SBATCH --time=7-00:00:00
+#SBATCH --time=14-00:00:00
 
 # Specific configuration optimized for the Hugging Face Compute Cluster
 module load cuda/12.9
