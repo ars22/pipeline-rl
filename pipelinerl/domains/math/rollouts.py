@@ -55,22 +55,21 @@ def length_penalty(max_length: int, sequence_length: int, buffer_tokens: int) ->
         return ((max_length - buffer_tokens) - sequence_length) / buffer_tokens
     return 0.
 
-def apply_score_threshold(score: float) -> float:
+def apply_score_threshold(score: float, threshold: float | None) -> float:
     """
-    Apply reward thresholding based on verification score.
-    
-    Args:
-        score: The verification score (0-7 for proof grading)
-    
-    Returns:
-        Thresholded reward.
-    """
+    Apply score thresholding.
 
-    # custom thresholding for proof grading
-    if score < 1.0:
+    Args:
+        score: Raw verification score (0-7 for proof grading)
+        threshold: If set, scores below this are zeroed.
+
+    Returns:
+        Thresholded score.
+    """
+    if threshold is None:
         return score
-    if score < 6.0:
-        return 1.0
+    if score < threshold:
+        return 0.0
     return score
 
 async def generate_math_rollout_rc(
@@ -149,10 +148,8 @@ async def generate_math_rollout(
         verifier_metrics = verification.metrics
         verifier_table_entry = verification.table_entry
         # normalize score to [0, 1]
-        if cfg.llm_grader.get("custom_reward_threshold", False):
-            reward = apply_score_threshold(score) / 7.0
-        else:
-            reward = (score / 7.0) 
+        score_threshold = llm_grader_cfg.get("score_threshold", None) if llm_grader_cfg is not None else None
+        reward = apply_score_threshold(score, score_threshold) / 7.0
         
         reward = reward * (discount_factor ** llm_call.output_length_tokens)
 
