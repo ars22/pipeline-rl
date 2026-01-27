@@ -45,7 +45,7 @@ finetune:
   save_checkpoint_steps: 10
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: rc_v07.01
+  hub_model_revision: rc_v07.05
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -337,6 +337,7 @@ environment:
   prompt_name: ${llm_grader.prompt_name}
   
 llm_grader:
+  custom_reward_threshold: true
   local: false # set to false to run via inference endpoints
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
   vllm_kwargs:
