@@ -58,7 +58,7 @@ test_llm:
 
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
-  custom_reward_threshold: true
+  score_threshold: 6 # scores below this are zeroed
   vllm_kwargs:
     num_nodes: 1
     data-parallel-size: 8
