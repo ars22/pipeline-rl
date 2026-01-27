@@ -8,11 +8,10 @@ defaults:
     - base
     - _self_
 
-model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-model_revision: v07.00-step-000300
-# Eval every 25 steps (each batch is 32 samples with grad accumulation of 32 -> 1024 updates per eval)
-eval_every_n_versions: 25600
-skip_first_eval: true
+model_path: hf-imo-colab/DASD-4B-Thinking-SFT
+model_revision: v00.00-step-000000620
+# Eval every 25 steps (each batch is 32 samples with grad accumulation of 16 -> 512 updates per eval)
+eval_every_n_versions: 12800
 
 preprocess:
   shared_memory_entry_size: 2000000000
@@ -22,8 +21,8 @@ finetune:
   train_batch_size: 32
   valid_batch_size: 32
   gradient_accumulation_passes: 32
-  seq_length: 77568
-  seq_parallel: 4
+  seq_length: 49920
+  seq_parallel: 2
   learning_rate: 1.0e-6
   lr_scheduler_type: constant_with_warmup
   num_warmup_steps: 0
@@ -33,15 +32,15 @@ finetune:
     overlong_filtering: false
   save_checkpoint_steps: 5
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: v07.01
+  hub_model_id: hf-imo-colab/DASD-4B-Thinking-Proof
+  hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
 
 llm:
   parameters:
-    max_tokens: 76800 
+    max_tokens: 49152 
     temperature: 0.8
   reasoning_delimiters: ["</think>"]
   wandb_table:
@@ -51,14 +50,13 @@ llm:
 # Sampling params taken from Qwen3 tech report: https://arxiv.org/abs/2505.09388
 test_llm:
   parameters: 
-    max_tokens: 76800
+    max_tokens: 49152
     temperature: 0.8 
     top_p: 0.95
     top_k: 20
 
 llm_grader:
   name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
-  custom_reward_threshold: true
   vllm_kwargs:
     num_nodes: 1
     data-parallel-size: 8
@@ -100,13 +98,13 @@ dataset_loader_params:
   seed: 42
 train_dataset_names:
   - hub_id: hf-imo-colab/aops-olympiads
-    config: qwen3-4b-proof_v07.00_step-300_reward@16-lt-0.7_std-gt-0.08
+    config: dasd-4b-sft_v00.00_step-620_reward@16-lt-0.7_std-gt-0.08
     split: train
 test_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
     split: IMO2025
   - hub_id: hf-imo-colab/aops-olympiads
-    config: qwen3-4b-proof_v07.00_step-300_reward@16-lt-0.7_std-lt-0.08
+    config: dasd-4b-sft_v00.00_step-620_reward@16-lt-0.7_std-lt-0.08
     split: train
 
 vllm_config:
