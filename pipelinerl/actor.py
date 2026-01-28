@@ -1174,6 +1174,18 @@ def run_actor_loop(cfg: DictConfig):
         )
         for url in llm_urls
     ]
+    test_llms = [
+        TrainableLLM(
+            base_url=url,
+            model_name=str(actor_model_path),
+            tokenizer_name=str(actor_model_path),
+            parameters=cfg.test_llm.parameters,
+            use_cache=False,
+            collect_logprobs=True,
+            observe_llm_calls=False,
+        )
+        for url in llm_urls
+    ]
 
     wait_for_inference_servers(llm_urls)
     wait_for_environments(cfg)
@@ -1205,8 +1217,59 @@ def run_actor_loop(cfg: DictConfig):
     train_loop_run = train_loop.run(
         dataset=train_dataset_final,
     )
-    
+    test_loop = ActorLoop(
+        data_stream=test_data_stream,
+        cfg=cfg,
+        trainer_state=trainer_state,
+        stats_stream=test_stats_stream,
+        llms=test_llms,
+        is_training=False,
+    )
+    test_loop_run = None
+
+    last_regular_eval = -1
+    current_eval = -1
+    skip_first_eval = cfg.get("skip_first_eval", False)
+    logger.info(f"Skip first eval: {skip_first_eval}")
     while True:
         assert trainer_state.propagated_weight_version is not None
-        # keep running the training loop
+
+        # 1. Start a new test loop if needed
+        next_regular_eval = (
+            trainer_state.propagated_weight_version
+            if last_regular_eval == -1
+            else last_regular_eval + cfg.eval_every_n_versions
+        )
+        if (
+            cfg.eval_every_n_versions
+            and not cfg.debug.mode
+            and trainer_state.propagated_weight_version >= next_regular_eval
+            and test_dataset
+            and test_loop_run is None
+        ):
+            logger.info("Create test loop")
+            if skip_first_eval:
+                logger.info("Skipping first eval")
+                skip_first_eval = False
+                current_eval = next_regular_eval
+                last_regular_eval = current_eval
+                continue
+            test_loop_run = test_loop.run(
+                dataset=test_dataset,
+            )
+            train_loop.is_scheduling_paused = True
+            current_eval = next_regular_eval
+
+        # 2. If there is an active test loop, keep it running
+        if test_loop_run is not None:
+            try:
+                _ = next(test_loop_run)
+            except StopIteration:
+                # 2.1 If the test loop is finished, resume scheduling the training loop
+                test_loop_run = None
+                last_regular_eval = current_eval
+                train_loop.is_scheduling_paused = False
+                logger.info("Test loop finished")
+
+        # 3. Keep running the training loop
         _ = next(train_loop_run)
