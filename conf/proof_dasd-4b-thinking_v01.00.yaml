@@ -33,7 +33,7 @@ finetune:
   save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: hf-imo-colab/DASD-4B-Thinking-Proof
-  hub_model_revision: v00.00
+  hub_model_revision: v01.00
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
