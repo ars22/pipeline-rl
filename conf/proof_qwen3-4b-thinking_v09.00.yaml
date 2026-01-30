@@ -1,6 +1,6 @@
 # ---------------------
 # Config for:
-#   generation: 5 nodes
+#   generation: 7 nodes
 #   grader: 1 node
 #   finetuning: 4 nodes
 # ---------------------
@@ -131,7 +131,7 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 40
+  actor_fraction: 56
   preprocessor_fraction: 0
   finetune_fraction: 32
   env_replicas: 1
