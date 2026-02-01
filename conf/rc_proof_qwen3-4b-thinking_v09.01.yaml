@@ -1,6 +1,6 @@
 # ---------------------
 # Config for:
-#   generation: 7 nodes (6 rc_actor, 1 summarizer, 50 actor)
+#   generation: 5 nodes (3 rc_actor, 1 summarizer, 36 actor)
 #   grader: 1 node (set llm_grader.local to false to run via inference endpoints)
 #   finetuning: 4 nodes
 # ---------------------
@@ -59,10 +59,10 @@ eval_every_n_versions: 0 # 51200 # evaluate every 51200 / 1024 = 50 steps
 world:
   replicas: 1
   # GPU allocation fractions (must sum to <= 8 per node)
-  rc_actor_fraction: 5  # GPUs for RC actor LLMs
+  rc_actor_fraction: 3  # GPUs for RC actor LLMs
   summarization_fraction: 1  # Set to >0 to use separate summarization LLMs
   finetune_fraction: 32
-  actor_fraction: 50    # GPUs for regular actor LLMs
+  actor_fraction: 36    # GPUs for regular actor LLMs
   preprocessor_fraction: 0
 
   env_replicas: 2
