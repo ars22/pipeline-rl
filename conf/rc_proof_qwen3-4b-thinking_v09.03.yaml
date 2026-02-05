@@ -39,7 +39,7 @@ finetune:
     entropy_bonus: 0.0001
     final_entropy_bonus: ${finetune.rl.entropy_bonus}
     overlong_filtering: false
-  seq_length: 77568
+  seq_length: 81000
   seq_parallel: 4
   learning_rate: 1.0e-6
   save_checkpoint_steps: 5
