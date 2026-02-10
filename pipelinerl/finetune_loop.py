@@ -155,18 +155,28 @@ class WeightUpdateManager:
         self.actor_update_group = actor_update_group
         self.thread_pool = ThreadPoolExecutor(max_workers=len(llm_urls))
 
-    def _request_weight_update(self, url: str, message: WeightUpdateRequest):
+    def _request_weight_update(self, url: str, message: WeightUpdateRequest) -> tuple[str, bool, int | None, str | None]:
         response = None
         try:
-            response = requests.post(url + "/receive_weight_update", json=message.model_dump())
-            response.raise_for_status()
+            connect_timeout_s = float(os.getenv("PIPELINERL_WEIGHT_UPDATE_CONNECT_TIMEOUT_S", "10"))
+            read_timeout_s = float(os.getenv("PIPELINERL_WEIGHT_UPDATE_READ_TIMEOUT_S", "3600"))
+            response = requests.post(
+                url + "/receive_weight_update",
+                json=message.model_dump(),
+                timeout=(connect_timeout_s, read_timeout_s),
+            )
+            if not response.ok:
+                return (url, False, response.status_code, response.text)
+            return (url, True, response.status_code, None)
         except requests.RequestException as e:
             logger.error(f"Error sending weight update request to {url}: {e}")
             # print response details
             if response is not None:
                 logger.error(f"Response: {response.status_code} - {response.text}")
+                return (url, False, response.status_code, response.text)
+            return (url, False, None, str(e))
 
-    def request_weight_updates(self, message: WeightUpdateRequest):
+    def request_weight_updates(self, message: WeightUpdateRequest) -> list[Future[tuple[str, bool, int | None, str | None]]]:
         futures = []
         for url in self.llm_urls:
             futures.append(self.thread_pool.submit(self._request_weight_update, url, message))
@@ -190,6 +200,8 @@ class WeightUpdateManager:
                 else dict(module.named_parameters())
             )
             
+            futures: list[Future[tuple[str, bool, int | None, str | None]]] = []
+            abort_reason: str | None = None
             if get_accelerator().is_main_process:
                 parameters_info = [
                     # assume DeepSpeed Stage 3
@@ -200,15 +212,67 @@ class WeightUpdateManager:
                 futures = self.request_weight_updates(message)
                 logger.info(f"Published weight update request for version {version}")
 
+                # Fail fast on "immediate" 5xx/connection errors before entering
+                # the DeepSpeed/NCCL gather+broadcast loop. If one inference
+                # server rejects the request, the broadcast will hang until
+                # NCCL timeout (often ~30 minutes).
+                failfast_s = float(os.getenv("PIPELINERL_WEIGHT_UPDATE_FAILFAST_S", "3"))
+                if failfast_s > 0:
+                    deadline = time.time() + failfast_s
+                    while time.time() < deadline and abort_reason is None:
+                        for future in futures:
+                            if not future.done():
+                                continue
+                            url, ok, status_code, text = future.result()
+                            if ok:
+                                # Success here would imply the weight update
+                                # completed, which we don't expect pre-broadcast.
+                                continue
+                            detail = (text or "").strip()
+                            if detail:
+                                detail = detail[:2000]
+                            abort_reason = f"{url} returned {status_code}: {detail}"
+                            break
+                        if abort_reason is None:
+                            time.sleep(0.1)
+
+            # Broadcast abort decision to all finetune ranks so everyone exits
+            # consistently (otherwise non-main ranks may block in ZeRO gathers).
+            abort_flag = 1 if (get_accelerator().is_main_process and abort_reason) else 0
+            abort_tensor = torch.tensor([abort_flag], device=get_accelerator().device, dtype=torch.int32)
+            if dist.is_initialized():
+                dist.broadcast(abort_tensor, src=0)
+            if int(abort_tensor.item()) == 1:
+                if get_accelerator().is_main_process:
+                    raise RuntimeError(f"Aborting weight update before broadcast: {abort_reason}")
+                raise RuntimeError("Aborting weight update before broadcast (see rank 0 logs).")
+
             for name, parameter in named_parameters.items():
                 with deepspeed.zero.GatheredParameters([parameter]):
                     if get_accelerator().is_main_process:
                         dist.broadcast(parameter.data.bfloat16(), src=0, group=self.actor_update_group)
             if get_accelerator().is_main_process:
                 logger.info("Wait for HTTP requests")
-                for future in futures:  # type: ignore
-                    future.result()
+                failures: list[str] = []
+                for future in futures:
+                    url, ok, status_code, text = future.result()
+                    if ok:
+                        continue
+                    detail = (text or "").strip()
+                    if detail:
+                        detail = detail[:2000]
+                    failures.append(f"{url} returned {status_code}: {detail}")
+                abort_reason = "; ".join(failures) if failures else None
             logger.info("Finished broadcasting weights")
+
+            abort_flag = 1 if (get_accelerator().is_main_process and abort_reason) else 0
+            abort_tensor = torch.tensor([abort_flag], device=get_accelerator().device, dtype=torch.int32)
+            if dist.is_initialized():
+                dist.broadcast(abort_tensor, src=0)
+            if int(abort_tensor.item()) == 1:
+                if get_accelerator().is_main_process:
+                    raise RuntimeError(f"Weight update HTTP failures: {abort_reason}")
+                raise RuntimeError("Weight update HTTP failures (see rank 0 logs).")
 
             if get_accelerator().is_main_process:
                 assert self.update_stream is not None

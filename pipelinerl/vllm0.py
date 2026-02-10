@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import signal
+import traceback
 from pydantic import TypeAdapter
 import torch
 import uvloop
@@ -225,8 +226,32 @@ async def run_server(args, **uvicorn_kwargs) -> None:
 
     @app.post("/receive_weight_update")
     async def _receive_weight_update(request: WeightUpdateRequest):
-        await weight_update_manager.receive_weight_update(request)
-        return {"status": "ok"}
+        try:
+            await weight_update_manager.receive_weight_update(request)
+            return {"status": "ok"}
+        except Exception as e:
+            from fastapi.responses import JSONResponse
+            logger.error(
+                "Weight update failed (actor_llm_idx=%s port=%s version=%s): %s",
+                getattr(args, "actor_llm_idx", None),
+                getattr(args, "port", None),
+                getattr(request, "version", None),
+                e,
+            )
+            logger.error(traceback.format_exc())
+            # Returning structured details makes the trainer-side error logs
+            # actionable (otherwise we often just see an empty 500 response).
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                    "actor_llm_idx": getattr(args, "actor_llm_idx", None),
+                    "port": getattr(args, "port", None),
+                    "version": getattr(request, "version", None),
+                },
+            )
 
     await init_app_state(engine, engine_config, app.state, args)
     shutdown_task = await serve_http(
