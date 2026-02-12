@@ -830,7 +830,7 @@ def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str =
     max_num_batched_tokens = kwargs.get("max-num-batched-tokens", 8192)
     max_num_seqs = kwargs.get("max-num-seqs", 16)
     max_model_len = kwargs.get("max-model-len", 32768)
-    gpu_memory_util = kwargs.get("gpu-memory-utilization", 0.85)
+    gpu_memory_util = kwargs.get("gpu-memory-utilization", 0.85)    
     if "/" in name:
         logger.info(f"Starting local LLM grader {name}...")
         job_name = None
@@ -931,10 +931,13 @@ def main(cfg: DictConfig):
         logger.info(f"LLM grader is not local, skipping launch")
     else:
         if rank == 0:
-            start_llm_grader(
-                cfg.llm_grader.name,
-                vllm_kwargs=getattr(cfg.llm_grader, "vllm_kwargs", None),
-            )
+            if cfg.llm_grader.name:
+                start_llm_grader(
+                    cfg.llm_grader.name,
+                    vllm_kwargs=getattr(cfg.llm_grader, "vllm_kwargs", None),
+                )
+            else:
+                logger.info(f"LLM grader name is not specified, skipping launch")
         else:
             logger.info(
                 "Skipping LLM grader launch on rank %s; waiting for master to provision it",
