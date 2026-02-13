@@ -1,6 +1,6 @@
 # ---------------------
 # Config for:
-#   generation: 7 nodes (6 rc_actor, 1 summarizer, 50 actor)
+#   generation: 10 nodes (10 rc_actor, 2 summarizer, 68 actor)
 #   grader: 1 node (set llm_grader.local to false to run via inference endpoints)
 #   finetuning: 4 nodes
 # ---------------------
@@ -15,7 +15,7 @@ seed: 42
 
 # Main model path for RC actor and regular actor
 model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-SFT
-model_revision: v08.00-step-000000434
+model_revision: v08.00-step-000000372
 
 # Separate model for summarization (optional)
 # If not set or null, uses the same model as RC actor
@@ -39,13 +39,13 @@ finetune:
     entropy_bonus: 0.0001
     final_entropy_bonus: ${finetune.rl.entropy_bonus}
     overlong_filtering: false
-  seq_length: 53000
-  seq_parallel: 2
+  seq_length: 81000
+  seq_parallel: 4
   learning_rate: 1.0e-6
   save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: rc_v09.01
+  hub_model_revision: rc_v10.00
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -59,10 +59,10 @@ eval_every_n_versions: 0 # 51200 # evaluate every 51200 / 1024 = 50 steps
 world:
   replicas: 1
   # GPU allocation fractions (must sum to <= 8 per node)
-  rc_actor_fraction: 5  # GPUs for RC actor LLMs
-  summarization_fraction: 1  # Set to >0 to use separate summarization LLMs
+  rc_actor_fraction: 10  # GPUs for RC actor LLMs
+  summarization_fraction: 4  # Set to >0 to use separate summarization LLMs
   finetune_fraction: 32
-  actor_fraction: 50    # GPUs for regular actor LLMs
+  actor_fraction: 66    # GPUs for regular actor LLMs
   preprocessor_fraction: 0
 
   env_replicas: 2
@@ -158,7 +158,7 @@ preprocess:
 # LLM parameters for RC actor (solution generation)
 llm:
   parameters:
-    max_tokens: 49152 
+    max_tokens: 76800 
     temperature: 0.8 
   reasoning_delimiters: ["</think>"]
   wandb_table:
@@ -168,7 +168,7 @@ llm:
 
 actor_llm:
   parameters:
-    max_tokens: 49152
+    max_tokens: 76800
     temperature: 0.8
   reasoning_delimiters: ["</think>"]
   wandb_table:
@@ -178,7 +178,7 @@ actor_llm:
 
 test_llm:
   parameters: 
-    max_tokens: 49152
+    max_tokens: 76800
     temperature: 0.8
     top_p: 0.95
     top_k: 20
@@ -276,21 +276,12 @@ dataset_loader: pipelinerl.domains.math.load_datasets
 dataset_loader_params:
   seed: 42
 train_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema-cleaned-v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
-    split: train
-  - hub_id: hf-imo-colab/aops_cleaned_v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
+  - hub_id: hf-imo-colab/aops-olympiads
+    config: qwen3-4b_reward@128-lt-0.4_std-gt-0.08
     split: train
 test_dataset_names:
   - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
     split: IMO2025
-  - hub_id: hf-imo-colab/olympiads-proof-schema-cleaned-v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-lt-0.08
-    split: train
-  - hub_id: hf-imo-colab/aops_cleaned_v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-lt-0.08
-    split: train
 
 
 debug:
