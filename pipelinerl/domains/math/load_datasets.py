@@ -253,6 +253,35 @@ def process_answer_bench(dataset, dataset_name):
         index += 1
 
 
+def process_pope_hard_w_gemini_sol(dataset, dataset_name):
+    index = 0
+    for item in dataset:
+        task = item['problem']
+        answer = "\\boxed{" + item['answer'] + "}"
+        yield {
+            "dataset": dataset_name,
+            "task": task,
+            "answer": answer,
+            "reference_solution": item['gemini_solution'],
+            "id": index
+        }
+        index += 1
+
+
+def process_int_train(dataset, dataset_name):
+    index = 0
+    for item in dataset:
+        task = item['problem']
+        answer = "\\boxed{" + item['answer'] + "}"
+        yield {
+            "dataset": dataset_name,
+            "task": task,
+            "answer": answer,
+            "reference_solution": item['solution'],
+            "id": index
+        }
+        index += 1
+
 def load_datasets(
     dataset_names: List[str | Dict[str, Any]] | Dict[str, Any] | str | None, seed: int | None = None
 ) -> List[Tuple[str, Dict]]:
@@ -302,6 +331,18 @@ def load_datasets(
                 sample.setdefault("dataset", dataset_spec)
             logger.info(f"Loading hub dataset {dataset_spec} split=train: {len(samples)} samples")
             datasets += add_ids(samples)
+
+    if "pope_hard_w_gemini_sol" in dataset_names:
+        dataset = load_dataset("CohenQu/POPE-hard-dataset-Qwen3-4B-Instruct-32k-128-filtered-iter3-gemini-success", split="test", trust_remote_code=True)
+        samples = [s for s in process_pope_hard_w_gemini_sol(dataset, "pope_hard_w_gemini_sol") if s is not None]
+        logger.info(f"Loading pope hard w gemini sol dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
+
+    if "int_train" in dataset_names:
+        dataset = load_dataset("d1shs0ap/unified-hard-set-with-student-solutions-guided-rl", split="train", trust_remote_code=True)
+        samples = [s for s in process_int_train(dataset, "int_train") if s is not None]
+        logger.info(f"Loading int training dataset: {len(samples)} samples")
+        datasets += add_ids(samples)
 
     if "eurus_train" in dataset_names:
         dataset = load_dataset("PRIME-RL/Eurus-2-RL-Data", split="train", trust_remote_code=True)
