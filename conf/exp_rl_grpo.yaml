@@ -1,0 +1,83 @@
+defaults:
+    - base
+    - _self_
+
+model_path: Qwen/Qwen3-4B-Thinking-2507
+model_revision: main
+
+finetune:
+  attempts: 16
+  train_batch_size: 32
+  valid_batch_size: 32
+  gradient_accumulation_passes: 8
+  seq_length: 36864
+  seq_parallel: 2
+  learning_rate: 1.0e-6
+  lr_scheduler_type: constant_with_warmup
+  num_warmup_steps: 0
+  rl:
+    entropy_bonus: 0.0001
+    final_entropy_bonus: ${finetune.rl.entropy_bonus}
+    overlong_filtering: false
+  save_checkpoint_steps: 50
+  push_to_hub: false
+  max_train_steps: 200
+
+
+llm:
+  parameters:
+    max_tokens: 32768
+    temperature: 0.8
+  reasoning_delimiters: ["</think>"]
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 32
+    log_every_n_groups: 32
+
+test_llm:
+  parameters:
+    max_tokens: 32768
+    temperature: 0.8
+    top_p: 0.95
+    top_k: 20
+
+actor:
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+environment:
+  _target_: pipelinerl.domains.math.MathEnvironment
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - pope_hard_w_gemini_sol
+  - int_train
+test_dataset_names:
+  - imo_answer_bench
+  - aime_2025
+  - aime_2026
+
+vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 32768
+    max-model-len: ${finetune.seq_length}
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+  world:
+  replicas: 1
+  actor_fraction: 4
+  preprocessor_fraction: 0
+  finetune_fraction: 4
+  env_replicas: 1
+  actor_group_port: 9000
+  environment_start_port: 7777

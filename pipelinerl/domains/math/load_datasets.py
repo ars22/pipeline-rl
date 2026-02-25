@@ -197,7 +197,9 @@ def load_math(split):
 
 
 def _load_aime_dataset(year: int, upsample_factor: int = 0) -> list[dict]:
-    if year == 2025:
+    if year == 2026:
+        aime_dataset = load_dataset("MathArena/aime_2026", split="train", trust_remote_code=True)
+    elif year == 2025:
         aime_dataset = load_dataset("MathArena/aime_2025", split="train", trust_remote_code=True)
     else:
         aime_dataset = load_dataset("AI-MO/aimo-validation-aime", split="train", trust_remote_code=True)
@@ -489,6 +491,9 @@ def load_datasets(
 
     if "aime_2025" in dataset_names:
         datasets += _load_aime_dataset(2025, upsample_factor=32)
+
+    if "aime_2026" in dataset_names:
+        datasets += _load_aime_dataset(2026, upsample_factor=32)
 
     if "aime_2024_original" in dataset_names:
         datasets += _load_aime_dataset(2024)
