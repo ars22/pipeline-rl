@@ -8,7 +8,7 @@ defaults:
     - base
     - _self_
 
-model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
+model_path: lm-provers/Qwen3-4B-Thinking-2507-Proof
 model_revision: v07.00-step-000300
 # Eval every 25 steps (each batch is 32 samples with grad accumulation of 32 -> 1024 updates per eval)
 eval_every_n_versions: 25600
@@ -33,7 +33,7 @@ finetune:
     overlong_filtering: false
   save_checkpoint_steps: 5
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
+  hub_model_id: lm-provers/Qwen3-4B-Thinking-2507-Proof
   hub_model_revision: v07.01
   hub_ignore_patterns:
     - "*.pt"
@@ -99,13 +99,13 @@ dataset_loader: pipelinerl.domains.math.load_datasets
 dataset_loader_params:
   seed: 42
 train_dataset_names:
-  - hub_id: hf-imo-colab/aops-olympiads
+  - hub_id: lm-provers/aops-olympiads
     config: qwen3-4b-proof_v07.00_step-300_reward@16-lt-0.7_std-gt-0.08
     split: train
 test_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
+  - hub_id: lm-provers/olympiads-proof-schema-benchmark
     split: IMO2025
-  - hub_id: hf-imo-colab/aops-olympiads
+  - hub_id: lm-provers/aops-olympiads
     config: qwen3-4b-proof_v07.00_step-300_reward@16-lt-0.7_std-lt-0.08
     split: train
 

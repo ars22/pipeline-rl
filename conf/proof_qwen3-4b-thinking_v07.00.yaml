@@ -31,7 +31,7 @@ finetune:
     overlong_filtering: false
   save_checkpoint_steps: 5
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
+  hub_model_id: lm-provers/Qwen3-4B-Thinking-2507-Proof
   hub_model_revision: v07.00
   hub_ignore_patterns:
     - "*.pt"
@@ -96,19 +96,19 @@ dataset_loader: pipelinerl.domains.math.load_datasets
 dataset_loader_params:
   seed: 42
 train_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema-cleaned-v2
+  - hub_id: lm-provers/olympiads-proof-schema-cleaned-v2
     config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
     split: train
-  - hub_id: hf-imo-colab/aops_cleaned_v2
+  - hub_id: lm-provers/aops_cleaned_v2
     config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
     split: train
 test_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
+  - hub_id: lm-provers/olympiads-proof-schema-benchmark
     split: IMO2025
-  - hub_id: hf-imo-colab/olympiads-proof-schema-cleaned-v2
+  - hub_id: lm-provers/olympiads-proof-schema-cleaned-v2
     config: qwen3-4b-thinking_reward@128-lt-0.7_std-lt-0.08
     split: train
-  - hub_id: hf-imo-colab/aops_cleaned_v2
+  - hub_id: lm-provers/aops_cleaned_v2
     config: qwen3-4b-thinking_reward@128-lt-0.7_std-lt-0.08
     split: train
 

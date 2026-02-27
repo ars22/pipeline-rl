@@ -636,7 +636,7 @@ def main():
     args = parser.parse_args()
     sampling_kwargs = json.loads(args.sampling_kwargs) if args.sampling_kwargs else None
 
-    dataset = load_dataset("hf-imo-colab/olympiads-proof-schema", split="train")
+    dataset = load_dataset("lm-provers/olympiads-proof-schema", split="train")
     data = dataset[1]
     problem = data["problem"]
     ref_solution = data["solution"]

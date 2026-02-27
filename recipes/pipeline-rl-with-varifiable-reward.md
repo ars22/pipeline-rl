@@ -4,8 +4,8 @@
 ## Load dataset
 
 ```
-python scripts/load_dataset.py --hf_dataset hf-imo-colab/olympiads-ref-base-exact-matching --save_dir tmp/datasets --split train
-python scripts/load_dataset.py --hf_dataset hf-imo-colab/olympiads-ref-base-exact-matching --save_dir tmp/datasets --split test
+python scripts/load_dataset.py --hf_dataset lm-provers/olympiads-ref-base-exact-matching --save_dir tmp/datasets --split train
+python scripts/load_dataset.py --hf_dataset lm-provers/olympiads-ref-base-exact-matching --save_dir tmp/datasets --split test
 ```
 
 ## Run experiment

@@ -16,7 +16,7 @@ finetune:
   max_train_steps: 100
   save_checkpoint_steps: 5
   push_to_hub: true
-  hub_model_id: hf-imo-colab/pipeline-rl-demo
+  hub_model_id: lm-provers/pipeline-rl-demo
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
@@ -36,10 +36,10 @@ environment:
   _target_: pipelinerl.domains.math.MathEnvironment
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - hub_id: hf-imo-colab/DeepScaleR-Preview-Dataset
+  - hub_id: lm-provers/DeepScaleR-Preview-Dataset
     split: train
 test_dataset_names:
-  - hub_id: hf-imo-colab/aime_2025
+  - hub_id: lm-provers/aime_2025
     split: train
 model_path:
   hub_model_id: Qwen/Qwen2.5-0.5B-Instruct

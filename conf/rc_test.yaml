@@ -6,7 +6,7 @@ defaults:
 seed: 42
 
 # Main model path for RC actor and regular actor
-model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof 
+model_path: lm-provers/Qwen3-4B-Thinking-2507-Proof 
 # ars22/rc_qwen3_4b_thinking_2507_proof-20260112-064952
 model_revision: rc_v07.01-step-000100
 

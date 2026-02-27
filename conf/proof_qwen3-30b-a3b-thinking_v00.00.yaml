@@ -24,7 +24,7 @@ finetune:
   learning_rate: 1.0e-6
   save_checkpoint_steps: 10
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-30B-A3B-Thinking-2507-Proof
+  hub_model_id: lm-provers/Qwen3-30B-A3B-Thinking-2507-Proof
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
@@ -75,10 +75,10 @@ environment:
   prompt_name: ${llm_grader.prompt_name}
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema
+  - hub_id: lm-provers/olympiads-proof-schema
     split: train
 test_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
+  - hub_id: lm-provers/olympiads-proof-schema-benchmark
     split: IMO2025
 
 vllm_config:

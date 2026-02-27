@@ -18,7 +18,7 @@ and this will not parse:
 \\begin{pmatrix} -\\frac{1}{3} \\ \\frac{2}{3} \\ \\frac{5}{3} \\end{pmatrix}
 """
 
-HUB_DATASETS = ["hf-imo-colab/olympiads-proof-schema", "hf-imo-colab/olympiads-proof-schema-benchmark", "hf-imo-colab/olympiads-proof-schema-cleaned", "hf-imo-colab/olympiads-proof-schema-cleaned-v2", "hf-imo-colab/aops_cleaned_v2", "hf-imo-colab/aops-olympiads"]
+HUB_DATASETS = ["lm-provers/olympiads-proof-schema", "lm-provers/olympiads-proof-schema-benchmark", "lm-provers/olympiads-proof-schema-cleaned", "lm-provers/olympiads-proof-schema-cleaned-v2", "lm-provers/aops_cleaned_v2", "lm-provers/aops-olympiads"]
 
 logger = logging.getLogger(__name__)
 

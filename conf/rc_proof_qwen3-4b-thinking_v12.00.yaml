@@ -14,8 +14,8 @@ defaults:
 seed: 42
 
 # Main model path for RC actor and regular actor
-model_path: Qwen/Qwen3-4B-Thinking-2507
-model_revision: main
+model_path: lm-provers/Qwen3-4B-Thinking-2507-Proof
+model_revision: rc_v11.01-step-000050
 
 # Separate model for summarization (optional)
 # If not set or null, uses the same model as RC actor
@@ -38,14 +38,14 @@ finetune:
   rl:
     entropy_bonus: 0.0001
     final_entropy_bonus: ${finetune.rl.entropy_bonus}
-    overlong_filtering: false
+    overlong_filtering: true
   seq_length: 53000
   seq_parallel: 2
   learning_rate: 1.0e-6
   save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: lm-provers/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: rc_v07.00
+  hub_model_revision: rc_v12.00
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -276,21 +276,12 @@ dataset_loader: pipelinerl.domains.math.load_datasets
 dataset_loader_params:
   seed: 42
 train_dataset_names:
-  - hub_id: lm-provers/olympiads-proof-schema-cleaned-v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
-    split: train
-  - hub_id: lm-provers/aops_cleaned_v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
+  - hub_id: lm-provers/aops-olympiads
+    config: qwen3-4b_reward@128-gt-0.3-lt-0.7_std-gt-0.08
     split: train
 test_dataset_names:
   - hub_id: lm-provers/olympiads-proof-schema-benchmark
     split: IMO2025
-  - hub_id: lm-provers/olympiads-proof-schema-cleaned-v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-lt-0.08
-    split: train
-  - hub_id: lm-provers/aops_cleaned_v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-lt-0.08
-    split: train
 
 
 debug:

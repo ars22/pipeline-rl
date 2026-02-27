@@ -5,7 +5,7 @@ defaults:
 finetune:
   save_checkpoint_steps: 5
   push_to_hub: true
-  hub_model_id: hf-imo-colab/pipeline-rl-demo
+  hub_model_id: lm-provers/pipeline-rl-demo
   hub_model_revision: v00.00
   hub_ignore_patterns:
     - "*.pt"
@@ -24,10 +24,10 @@ environment:
   prompt_name: ${llm_grader.prompt_name}
 dataset_loader: pipelinerl.domains.math.load_datasets
 train_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema
+  - hub_id: lm-provers/olympiads-proof-schema
     split: train
 test_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
+  - hub_id: lm-provers/olympiads-proof-schema-benchmark
     split: IMO2025
 model_path:
   hub_model_id: Qwen/Qwen3-4B-Instruct-2507

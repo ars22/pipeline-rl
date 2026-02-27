@@ -14,7 +14,7 @@ defaults:
 seed: 42
 
 # Main model path for RC actor and regular actor
-model_path: hf-imo-colab/Qwen3-4B-Thinking-2507-SFT
+model_path: lm-provers/Qwen3-4B-Thinking-2507-SFT
 model_revision: v08.00-step-000000372
 
 # Separate model for summarization (optional)
@@ -44,7 +44,7 @@ finetune:
   learning_rate: 1.0e-6
   save_checkpoint_steps: 5
   push_to_hub: true
-  hub_model_id: hf-imo-colab/Qwen3-4B-Thinking-2507-Proof
+  hub_model_id: lm-provers/Qwen3-4B-Thinking-2507-Proof
   hub_model_revision: rc_v10.00
   hub_ignore_patterns:
     - "*.pt"
@@ -276,11 +276,11 @@ dataset_loader: pipelinerl.domains.math.load_datasets
 dataset_loader_params:
   seed: 42
 train_dataset_names:
-  - hub_id: hf-imo-colab/aops-olympiads
+  - hub_id: lm-provers/aops-olympiads
     config: qwen3-4b_reward@128-lt-0.4_std-gt-0.08
     split: train
 test_dataset_names:
-  - hub_id: hf-imo-colab/olympiads-proof-schema-benchmark
+  - hub_id: lm-provers/olympiads-proof-schema-benchmark
     split: IMO2025
 
 
