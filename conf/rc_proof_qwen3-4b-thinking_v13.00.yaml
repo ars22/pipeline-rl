@@ -52,8 +52,8 @@ finetune:
 
 # evaluation settings
 eval_only: false # set to true to only evaluate the model with RC actor
-# skip_first_eval: true
-eval_every_n_versions: 25600 # evaluate every 25600 / 1024 = 25 steps
+skip_first_eval: true
+eval_every_n_versions: 0 #25600 # evaluate every 25600 / 1024 = 25 steps
 
 # world configuration for a 4 node (32 H100 GPU) setup
 world:
@@ -282,9 +282,6 @@ train_dataset_names:
 test_dataset_names:
   - hub_id: lm-provers/olympiads-proof-schema-benchmark
     split: IMO2025
-  - hub_id: lm-provers/aops-olympiads
-    config: sft-merge_v08-0.6-0.4_reward@16-lt-0.7_std-lt-0.08
-    split: train
 
 
 debug:
