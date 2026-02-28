@@ -39,7 +39,7 @@ finetune:
     entropy_bonus: 0.0001
     final_entropy_bonus: ${finetune.rl.entropy_bonus}
     overlong_filtering: false
-  seq_length: 71680
+  seq_length: 75880
   seq_parallel: 4
   learning_rate: 1.0e-6
   save_checkpoint_steps: 5
@@ -158,7 +158,7 @@ preprocess:
 # LLM parameters for RC actor (solution generation)
 llm:
   parameters:
-    max_tokens: 61440 
+    max_tokens: 71680 
     temperature: 0.8 
   reasoning_delimiters: ["</think>"]
   wandb_table:
@@ -168,7 +168,7 @@ llm:
 
 actor_llm:
   parameters:
-    max_tokens: 61440
+    max_tokens: 71680
     temperature: 0.8
   reasoning_delimiters: ["</think>"]
   wandb_table:
@@ -178,7 +178,7 @@ actor_llm:
 
 test_llm:
   parameters: 
-    max_tokens: 61440
+    max_tokens: 71680
     temperature: 0.8
     top_p: 0.95
     top_k: 20
