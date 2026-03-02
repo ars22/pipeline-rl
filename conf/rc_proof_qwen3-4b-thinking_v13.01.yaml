@@ -118,7 +118,7 @@ actor:
   log_each_n_secs: 0
   problem_queue_size: ${n_problems_per_batch} 
   result_queue_size: 128  # Increased to prevent blocking when groups complete
-  llm_max_rollouts: 24  
+  llm_max_rollouts: 16
   rollout_workers: 1
   discount_factor: 1
   throughput_window_size: 50
@@ -197,7 +197,7 @@ rc_actor_vllm_config:
   use_v1: false
   vllm_kwargs:
     dtype: bfloat16
-    gpu-memory-utilization: 0.9
+    gpu-memory-utilization: 0.85
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
@@ -215,7 +215,7 @@ summarization_vllm_config:
   use_v1: false
   vllm_kwargs:
     dtype: bfloat16
-    gpu-memory-utilization: 0.9
+    gpu-memory-utilization: 0.85
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
@@ -234,7 +234,7 @@ vllm_config:
   use_v1: false
   vllm_kwargs:
     dtype: bfloat16
-    gpu-memory-utilization: 0.9
+    gpu-memory-utilization: 0.85
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
