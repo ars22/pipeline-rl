@@ -39,13 +39,13 @@ finetune:
     entropy_bonus: 0.0001
     final_entropy_bonus: ${finetune.rl.entropy_bonus}
     overlong_filtering: true
-  seq_length: 75880
+  seq_length: 84072
   seq_parallel: 4
   learning_rate: 1.0e-6
   save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: lm-provers/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: rc_v13.01
+  hub_model_revision: rc_v13.02
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -158,7 +158,7 @@ preprocess:
 # LLM parameters for RC actor (solution generation)
 llm:
   parameters:
-    max_tokens: 71680 
+    max_tokens: 79827 
     temperature: 0.8 
   reasoning_delimiters: ["</think>"]
   wandb_table:
@@ -168,7 +168,7 @@ llm:
 
 actor_llm:
   parameters:
-    max_tokens: 71680
+    max_tokens: 79827
     temperature: 0.8
   reasoning_delimiters: ["</think>"]
   wandb_table:
@@ -178,7 +178,7 @@ actor_llm:
 
 test_llm:
   parameters: 
-    max_tokens: 71680
+    max_tokens: 79827
     temperature: 0.8
     top_p: 0.95
     top_k: 20
@@ -333,12 +333,12 @@ llm_grader:
     data-parallel-size: 8
     tensor-parallel-size: 1
     max-num-batched-tokens: 24576
-    max-num-seqs: 32
-    max-model-len: 98304
+    max-num-seqs: 64
+    max-model-len: 49152
     gpu-memory-utilization: 0.9
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 81920
+    max_output_tokens: 40960
     reasoning:
       effort: medium
   reasoning_delimiters: ["</think>"]
