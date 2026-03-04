@@ -58,6 +58,7 @@ train_dataset_names:
   - int_train
 test_dataset_names:
   # - imo_answer_bench
+  - pope_hard_w_gemini_sol
   - aime_2025
   - aime_2026
 
