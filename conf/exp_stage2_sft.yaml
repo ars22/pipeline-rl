@@ -46,6 +46,7 @@ test_llm:
     top_k: 20
 
 actor:
+  shared_memory_entry_size: 2000000000
   rollout_policy: pipelinerl.domains.math.generate_math_rollout
   system_prompt: Please reason step by step, and put your final answer within \boxed{}.
   task_template: |-
