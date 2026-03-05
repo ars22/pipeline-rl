@@ -10,7 +10,7 @@ preprocess:
   shared_memory_entry_size: 2000000000
 
 finetune:
-  attempts: 16
+  attempts: 32
   train_batch_size: 32
   valid_batch_size: 32
   gradient_accumulation_passes: 16

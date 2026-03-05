@@ -2,7 +2,7 @@ defaults:
     - base
     - _self_
 
-model_path: violetxi/exp_stage1_qwen3-4b_grpo
+model_path: violetxi/exp_stage1_qwen3-4b_self_distill
 model_revision: main
 # Eval every 25 steps (each batch is 32 samples with grad accumulation of 8 -> 256 updates per eval)
 eval_every_n_versions: 6400
