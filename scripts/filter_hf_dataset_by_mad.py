@@ -10,6 +10,14 @@ def median_absolute_deviation(scores: list[int | float]) -> float:
     return float(statistics.median(deviations))
 
 
+def middle_score_fraction(scores: list[int | float]) -> float:
+    return sum(2 <= score <= 5 for score in scores) / len(scores)
+
+
+def extreme_score_fraction(scores: list[int | float]) -> float:
+    return sum(score in {0, 7} for score in scores) / len(scores)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Filter a Hugging Face dataset config by score MAD and optionally push it as a new config."
@@ -19,6 +27,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-config", required=True, help="Target dataset config name to create/update")
     parser.add_argument("--split", default="train", help="Dataset split to read and push")
     parser.add_argument("--mad-gte", type=float, required=True, help="Keep rows with MAD(scores) >= this value")
+    parser.add_argument(
+        "--min-mid-frac",
+        type=float,
+        default=0.0,
+        help="Keep rows with at least this fraction of scores in the middle range [2, 5]",
+    )
+    parser.add_argument(
+        "--max-extreme-frac",
+        type=float,
+        default=1.0,
+        help="Keep rows with at most this fraction of scores at the extremes {0, 7}",
+    )
     parser.add_argument(
         "--allow-existing-target",
         action="store_true",
@@ -46,12 +66,24 @@ def main() -> None:
     print(f"Loaded {args.repo_id}/{args.source_config}:{args.split} with {len(dataset)} rows")
 
     def keep_example(example: dict) -> bool:
-        return median_absolute_deviation(example["scores"]) >= args.mad_gte
+        scores = example["scores"]
+        return (
+            median_absolute_deviation(scores) >= args.mad_gte
+            and middle_score_fraction(scores) >= args.min_mid_frac
+            and extreme_score_fraction(scores) < args.max_extreme_frac
+        )
 
-    filtered = dataset.filter(keep_example, desc=f"Filtering rows with MAD(scores) >= {args.mad_gte}")
+    filter_parts = [f"MAD(scores) >= {args.mad_gte}"]
+    if args.min_mid_frac > 0.0:
+        filter_parts.append(f"mid_frac(scores in [2,5]) >= {args.min_mid_frac}")
+    if args.max_extreme_frac < 1.0:
+        filter_parts.append(f"extreme_frac(scores in {{0,7}}) < {args.max_extreme_frac}")
+    filter_desc = " and ".join(filter_parts)
+
+    filtered = dataset.filter(keep_example, desc=f"Filtering rows with {filter_desc}")
     print(
         f"Filtered rows: {len(filtered)} / {len(dataset)} "
-        f"({len(filtered) / len(dataset):.1%}) with MAD(scores) >= {args.mad_gte}"
+        f"({len(filtered) / len(dataset):.1%}) with {filter_desc}"
     )
 
     if not args.push:
