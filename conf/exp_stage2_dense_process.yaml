@@ -80,7 +80,8 @@ vllm_config:
     pipeline-parallel-size: 1
     generation-config: vllm
 
-  world:
+
+world:
   replicas: 1
   actor_fraction: 4
   preprocessor_fraction: 0
