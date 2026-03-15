@@ -29,3 +29,6 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["pipelinerl*"]
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch"]

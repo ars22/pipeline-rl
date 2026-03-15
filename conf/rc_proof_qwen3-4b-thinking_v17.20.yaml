@@ -45,7 +45,7 @@ finetune:
   save_checkpoint_steps: 5
   push_to_hub: true
   hub_model_id: lm-provers/Qwen3-4B-Thinking-2507-Proof
-  hub_model_revision: rc_v17.11
+  hub_model_revision: rc_v17.20
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -327,20 +327,22 @@ environment:
   
 llm_grader:
   local: true # set to false to run via inference endpoints
-  name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
-  vllm_kwargs:
-    num_nodes: 1
+  name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+  vllm_kwargs: # settings from https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16#vllm
+    num_nodes: 2
     data-parallel-size: 8
-    tensor-parallel-size: 1
+    tensor-parallel-size: 2
+    attention-backend: TRITON_ATTN
+    mamba-ssm-cache-dtype: float16
+    trust-remote-code: ""
     max-num-batched-tokens: 24576
     max-num-seqs: 64
     max-model-len: 49152
     gpu-memory-utilization: 0.85
   sampling_kwargs:
     temperature: 1.0
+    top_p: 0.95
     max_output_tokens: 40960
-    reasoning:
-      effort: medium
   reasoning_delimiters: ["</think>"]
   prompt_name: v1
   wandb_table:

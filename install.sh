@@ -25,7 +25,7 @@ echo "📦 Updating uv..."
 uv self update
 
 echo "🐍 Creating Python virtual environment..."
-uv venv prl --python 3.11
+uv venv prl --python 3.11 --allow-existing
 
 echo "🔧 Activating virtual environment and upgrading pip..."
 source prl/bin/activate

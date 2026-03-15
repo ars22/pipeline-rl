@@ -265,7 +265,7 @@ def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str =
         os.environ["OPENAI_BASE_URL"] = f"http://{node}:{vllm_port}/v1"
         os.environ["OPENAI_API_KEY"] = "grader"
         health_url = f"http://{node}:{vllm_port}/health"
-        health_retries = int(os.environ.get("HEALTH_CHECK_RETRIES", "90"))
+        health_retries = int(os.environ.get("HEALTH_CHECK_RETRIES", "120"))
         health_delay = int(os.environ.get("HEALTH_CHECK_DELAY", "10"))
         _wait_for_vllm_health(health_url, retries=health_retries, delay=health_delay)
         logger.info(
