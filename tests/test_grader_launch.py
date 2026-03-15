@@ -123,6 +123,8 @@ def test_start_llm_grader_builds_sbatch_command_and_uses_vllm_port(monkeypatch):
             "--gpu-memory-utilization",
             "0.85",
             "--",
+            "--api-server-count",
+            "1",
             "--enable-expert-parallel",
             "--hf-overrides",
             '{"num_nextn_predict_layers":1}',
@@ -158,3 +160,59 @@ def test_start_llm_grader_omits_passthrough_separator_for_reserved_only(monkeypa
     )
 
     assert "--" not in recorded_cmds[0]
+
+
+def test_start_llm_grader_preserves_explicit_api_server_count(monkeypatch):
+    recorded_cmds: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, text, check):
+        recorded_cmds.append(cmd)
+        return types.SimpleNamespace(stdout="12345\n")
+
+    monkeypatch.setattr(grader_launch.subprocess, "run", fake_run)
+    monkeypatch.setattr(grader_launch, "_wait_for_slurm_nodes", lambda job_id, timeout=900: "node-a")
+    monkeypatch.setattr(grader_launch, "_expand_slurm_node_list", lambda nodes: ["node-a"])
+    monkeypatch.setattr(grader_launch, "_wait_for_vllm_health", lambda url, retries, delay, timeout=5: None)
+    monkeypatch.setattr(grader_launch, "_ensure_grader_cleanup_hooks", lambda: None)
+    monkeypatch.setattr(grader_launch, "_GRADER_JOB_ID", None)
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+
+    grader_launch.start_llm_grader(
+        "openai/gpt-oss-20b",
+        vllm_kwargs={
+            "num_nodes": 1,
+            "data-parallel-size": 8,
+            "tensor-parallel-size": 1,
+            "api-server-count": 2,
+        },
+    )
+
+    assert recorded_cmds == [
+        [
+            "sbatch",
+            "--parsable",
+            "--nodes=1",
+            "run_grader.slurm",
+            "--model",
+            "openai/gpt-oss-20b",
+            "--data-parallel-size",
+            "8",
+            "--tensor-parallel-size",
+            "1",
+            "--ray-port",
+            "6379",
+            "--vllm-port",
+            "8000",
+            "--max-num-batched-tokens",
+            "8192",
+            "--max-num-seqs",
+            "16",
+            "--max-model-len",
+            "32768",
+            "--gpu-memory-utilization",
+            "0.85",
+            "--",
+            "--api-server-count",
+            "2",
+        ]
+    ]

@@ -183,6 +183,11 @@ def _build_grader_extra_vllm_args(vllm_kwargs: dict[str, Any]) -> list[str]:
     return cli_args
 
 
+def _has_grader_vllm_arg(cli_args: list[str], arg_name: str) -> bool:
+    option = f"--{arg_name}"
+    return any(arg == option or arg.startswith(f"{option}=") for arg in cli_args)
+
+
 def _parse_grader_vllm_kwargs(vllm_kwargs: Any | None) -> tuple[dict[str, Any], list[str]]:
     normalized_kwargs = _normalize_grader_vllm_kwargs(vllm_kwargs)
     reserved = dict(_GRADER_RESERVED_VLLM_DEFAULTS)
@@ -194,6 +199,11 @@ def _parse_grader_vllm_kwargs(vllm_kwargs: Any | None) -> tuple[dict[str, Any], 
 
 def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str = "HuggingFaceH4", timeout=900):
     reserved_kwargs, extra_vllm_args = _parse_grader_vllm_kwargs(vllm_kwargs)
+    if not _has_grader_vllm_arg(extra_vllm_args, "api-server-count"):
+        # vLLM 0.17.x defaults api_server_count to data_parallel_size for internal
+        # load balancing, which has been unreliable for the grader's multi-node
+        # launches. Keep a single frontend by default unless the config opts in.
+        extra_vllm_args = ["--api-server-count", "1", *extra_vllm_args]
     num_nodes = int(reserved_kwargs["num-nodes"])
     data_parallel_size = int(reserved_kwargs["data-parallel-size"])
     tensor_parallel_size = int(reserved_kwargs["tensor-parallel-size"])
