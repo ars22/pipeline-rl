@@ -112,6 +112,28 @@ llm_grader:
     gpu-memory-utilization: 0.85    # fraction of GPU memory vLLM can use
 ```
 
+Any additional `llm_grader.vllm_kwargs` entries are passed through to `vllm serve` for the grader. Use `""` for bare flags, and use structured YAML for JSON-valued options:
+
+```yaml
+llm_grader:
+  name: stepfun-ai/Step-3.5-Flash
+  vllm_kwargs:
+    num_nodes: 1
+    data-parallel-size: 1
+    tensor-parallel-size: 8
+    enable-expert-parallel: ""
+    disable-cascade-attn: ""
+    reasoning-parser: step3p5
+    enable-auto-tool-choice: ""
+    tool-call-parser: step3p5
+    hf-overrides:
+      num_nextn_predict_layers: 1
+    speculative-config:
+      method: step3p5_mtp
+      num_speculative_tokens: 1
+    trust-remote-code: ""
+```
+
 > [!NOTE]
 > Make sure that `data-parallel-size * tensor-parallel-size` matches the total number of GPUs allocated to the grader server (e.g., for 2 nodes with 8 GPUs each, use `data-parallel-size:16` and `tensor-parallel-size:1` or `data-parallel-size:8` and `tensor-parallel-size:2`, etc).
 
