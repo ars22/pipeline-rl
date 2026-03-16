@@ -9,6 +9,7 @@ import hydra
 from datasets import load_dataset
 from omegaconf import DictConfig, ListConfig, OmegaConf
 import pandas as pd
+import requests
 
 """
 math_verify expects the following LaTeX format for the gold answer (with $ or \\boxed).
@@ -21,6 +22,22 @@ and this will not parse:
 HUB_DATASETS = ["lm-provers/olympiads-proof-schema", "lm-provers/olympiads-proof-schema-benchmark", "lm-provers/olympiads-proof-schema-cleaned", "lm-provers/olympiads-proof-schema-cleaned-v2", "lm-provers/aops_cleaned_v2", "lm-provers/aops-olympiads"]
 
 logger = logging.getLogger(__name__)
+
+
+def _load_json_dataset(data_files: str, split: str = "train"):
+    if re.match(r"^https?://", data_files):
+        response = requests.get(data_files, timeout=300)
+        response.raise_for_status()
+        payload = response.json()
+        if isinstance(payload, list):
+            if payload and isinstance(payload[0], list):
+                payload = [{str(i): value for i, value in enumerate(row)} for row in payload]
+            return datasets.Dataset.from_list(payload)
+        if isinstance(payload, dict):
+            return datasets.Dataset.from_dict(payload)
+        raise ValueError(f"Unsupported remote JSON payload type: {type(payload)!r}")
+
+    return load_dataset("json", data_files=data_files, split=split, trust_remote_code=True)
 
 def process_proof_problem(dataset, dataset_name):
     for row in dataset:
@@ -339,11 +356,8 @@ def load_datasets(
         # SimpleRL MATH dataset
         #   level 3-5 math problems from both train and test sets of the original MATH dataset (excluding problems from MATH-500)
         # math_dataset = load_math("train")
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/hkust-nlp/simpleRL-reason/refs/heads/v0/train/data/math_level3to5_data_processed_with_qwen_prompt.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/hkust-nlp/simpleRL-reason/refs/heads/v0/train/data/math_level3to5_data_processed_with_qwen_prompt.json"
         )
         samples = [s for s in process_math(dataset, "math_simplerl_train") if s is not None]
         logger.info(f"Loading math simplerl train dataset: {len(samples)} samples")
@@ -353,11 +367,8 @@ def load_datasets(
         # SimpleRL MATH dataset subset
         #   level 3-5 math problems from both train and test sets of the original MATH dataset (excluding problems from MATH-500)
         # math_dataset = load_math("train")
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/hkust-nlp/simpleRL-reason/refs/heads/v0/train/data/math_level3to5_data_processed_with_qwen_prompt.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/hkust-nlp/simpleRL-reason/refs/heads/v0/train/data/math_level3to5_data_processed_with_qwen_prompt.json"
         )
         samples = [s for s in process_math(dataset, "math_simplerl_subset") if s is not None]
         if seed is not None:
@@ -499,33 +510,24 @@ def load_datasets(
             datasets += add_ids(samples)
 
     if "open_reasoner_zero_57k" in dataset_names:
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_57k_collected.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_57k_collected.json"
         )
         samples = [s for s in process_open_reasoner(dataset, "open_reasoner_zero_57k") if s is not None]
         logger.info(f"Loading Open Reasoner Zero dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "open_reasoner_zero_extended_72k" in dataset_names:
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_72k_collection_extended.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_72k_collection_extended.json"
         )
         samples = [s for s in process_open_reasoner(dataset, "open_reasoner_zero_extended_72k") if s is not None]
         logger.info(f"Loading Open Reasoner Zero extended dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "open_reasoner_zero_hard_13k" in dataset_names:
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_13k_collection_hard.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_13k_collection_hard.json"
         )
         samples = [s for s in process_open_reasoner(dataset, "open_reasoner_zero_hard_13k") if s is not None]
         logger.info(f"Loading Open Reasoner Zero hard dataset: {len(samples)} samples")

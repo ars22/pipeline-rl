@@ -1,8 +1,10 @@
 import types
 
 import pytest
+from omegaconf import OmegaConf
 
 import pipelinerl.grader_launch as grader_launch
+import pipelinerl.launch as launch
 
 
 def test_parse_grader_vllm_kwargs_serializes_structured_values():
@@ -216,3 +218,26 @@ def test_start_llm_grader_preserves_explicit_api_server_count(monkeypatch):
             "2",
         ]
     ]
+
+
+def test_maybe_start_llm_grader_skips_when_name_missing(monkeypatch):
+    start_calls: list[tuple[str, object | None]] = []
+
+    monkeypatch.setattr(
+        launch,
+        "start_llm_grader",
+        lambda name, vllm_kwargs=None: start_calls.append((name, vllm_kwargs)),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "llm_grader": {
+                "name": None,
+                "vllm_kwargs": {"num_nodes": 1},
+            }
+        }
+    )
+
+    launch._maybe_start_llm_grader(cfg, rank=0)
+
+    assert start_calls == []

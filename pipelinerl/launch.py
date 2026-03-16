@@ -115,6 +115,29 @@ def validate_config(cfg: DictConfig):
             raise ValueError("value_loss_coef must be greater than 0 when using causal-language-modeling-with-value-head")
 
 
+def _maybe_start_llm_grader(cfg: DictConfig, rank: int) -> None:
+    grader_cfg = cfg.get("llm_grader")
+    grader_name = grader_cfg.get("name") if grader_cfg else None
+    if not grader_name:
+        logger.info("LLM grader is not configured, skipping launch")
+        return
+
+    if grader_cfg.get("local") is False:
+        logger.info("LLM grader is not local, skipping launch")
+        return
+
+    if rank == 0:
+        start_llm_grader(
+            grader_name,
+            vllm_kwargs=getattr(grader_cfg, "vllm_kwargs", None),
+        )
+    else:
+        logger.info(
+            "Skipping LLM grader launch on rank %s; waiting for master to provision it",
+            rank,
+        )
+
+
 def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path):
     # Use actor_vllm_config if available, else fall back to vllm_config
     actor_vllm_cfg = cfg.get("actor_vllm_config")
@@ -778,21 +801,7 @@ def main(cfg: DictConfig):
     validate_config(cfg)
 
     rank = int(os.environ.get("RANK", "0"))
-
-    # Spin up LLM grader if specified
-    if "local" in cfg.llm_grader and not cfg.llm_grader.local:
-        logger.info(f"LLM grader is not local, skipping launch")
-    else:
-        if rank == 0:
-            start_llm_grader(
-                cfg.llm_grader.name,
-                vllm_kwargs=getattr(cfg.llm_grader, "vllm_kwargs", None),
-            )
-        else:
-            logger.info(
-                "Skipping LLM grader launch on rank %s; waiting for master to provision it",
-                rank,
-            )
+    _maybe_start_llm_grader(cfg, rank)
 
     exp_dir = Path(cfg.output_dir)
     config_dir = exp_dir / "conf"
