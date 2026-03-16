@@ -1,5 +1,6 @@
 import importlib
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
 
@@ -115,6 +116,49 @@ class MathStackCompatTest(unittest.TestCase):
             (None, None),
         )
 
+    def test_qwen35_runtime_guard_requires_ninja_on_sm90(self):
+        vllm1 = importlib.import_module("pipelinerl.vllm1")
+        config = SimpleNamespace(
+            model_config=SimpleNamespace(
+                hf_config=SimpleNamespace(model_type="qwen3_5"),
+            )
+        )
+
+        with (
+            mock.patch.object(vllm1.current_platform, "is_device_capability", return_value=True),
+            mock.patch.object(vllm1.shutil, "which", return_value=None),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "requires the `ninja` executable"):
+                vllm1._ensure_qwen35_runtime_dependencies(config)
+
+    def test_qwen35_runtime_guard_allows_ninja_on_sm90(self):
+        vllm1 = importlib.import_module("pipelinerl.vllm1")
+        config = SimpleNamespace(
+            model_config=SimpleNamespace(
+                hf_config=SimpleNamespace(model_type="qwen3_5"),
+            )
+        )
+
+        with (
+            mock.patch.object(vllm1.current_platform, "is_device_capability", return_value=True),
+            mock.patch.object(vllm1.shutil, "which", return_value="/usr/bin/ninja"),
+        ):
+            vllm1._ensure_qwen35_runtime_dependencies(config)
+
+    def test_qwen35_runtime_guard_skips_non_qwen35_models(self):
+        vllm1 = importlib.import_module("pipelinerl.vllm1")
+        config = SimpleNamespace(
+            model_config=SimpleNamespace(
+                hf_config=SimpleNamespace(model_type="qwen2"),
+            )
+        )
+
+        with (
+            mock.patch.object(vllm1.current_platform, "is_device_capability", return_value=True),
+            mock.patch.object(vllm1.shutil, "which", return_value=None),
+        ):
+            vllm1._ensure_qwen35_runtime_dependencies(config)
+
     def test_remote_model_source_is_prefetched_once_then_resolved_locally(self):
         checkpoints = importlib.import_module("pipelinerl.finetune.checkpoints")
 
@@ -158,6 +202,16 @@ class MathStackCompatTest(unittest.TestCase):
                 },
             ],
         )
+
+    def test_gsm8k_qwen35_override_caps_vllm_context(self):
+        conf_dir = Path(__file__).resolve().parents[1] / "conf"
+        GlobalHydra.instance().clear()
+        with initialize_config_dir(config_dir=str(conf_dir), version_base=None):
+            cfg = compose(
+                config_name="gsm8k",
+                overrides=["model_path=Qwen/Qwen3.5-2B"],
+            )
+        self.assertEqual(cfg.vllm_config.vllm_kwargs["max-model-len"], cfg.finetune.seq_length)
 
 
 if __name__ == "__main__":

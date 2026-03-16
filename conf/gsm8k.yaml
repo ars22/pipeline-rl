@@ -18,6 +18,10 @@ test_dataset_names:
 model_path: Qwen/Qwen2.5-1.5B-Instruct
 model_revision: main
 
+vllm_config:
+  vllm_kwargs:
+    max-model-len: ${finetune.seq_length}
+
 world:
   replicas: 1
   actor_fraction: 4

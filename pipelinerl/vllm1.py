@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import shutil
 import signal
 from typing import Any, Protocol, runtime_checkable
 
@@ -22,6 +23,7 @@ from vllm.reasoning import ReasoningParserManager
 from vllm.tool_parsers import ToolParserManager
 from vllm.usage.usage_lib import UsageContext
 from vllm.config import ModelConfig
+from vllm.platforms import current_platform
 from vllm.version import __version__ as VLLM_VERSION
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.core_client import AsyncMPClient
@@ -41,6 +43,7 @@ handler.setFormatter(formatter)
 if not logger.handlers:
     logger.addHandler(handler)
 
+
 def _translate_weight_name_for_vllm(vllm_model_name: str, source_name: str) -> tuple[str | None, str | None]:
     if vllm_model_name not in {"Qwen3_5ForConditionalGeneration", "qwen3_5"}:
         return source_name, None
@@ -54,6 +57,24 @@ def _translate_weight_name_for_vllm(vllm_model_name: str, source_name: str) -> t
         return source_name, None
 
     return f"language_model.{source_name}", None
+
+
+def _requires_ninja_for_qwen35(vllm_config: Any) -> bool:
+    model_config = getattr(vllm_config, "model_config", None)
+    hf_config = getattr(model_config, "hf_config", None)
+    model_type = getattr(hf_config, "model_type", None)
+    return model_type == "qwen3_5" and current_platform.is_device_capability(90)
+
+
+def _ensure_qwen35_runtime_dependencies(vllm_config: Any) -> None:
+    if not _requires_ninja_for_qwen35(vllm_config):
+        return
+    if shutil.which("ninja") is not None:
+        return
+    raise RuntimeError(
+        "Qwen3.5 inference on SM90 requires the `ninja` executable in the active runtime. "
+        "Install `ninja` into the `prl` environment or add it to PATH before launching this model."
+    )
 
 
 @runtime_checkable
@@ -206,6 +227,7 @@ async def run_server(args, **uvicorn_kwargs) -> None:
     engine_args = AsyncEngineArgs.from_cli_args(args)
     engine_args.worker_extension_cls = "pipelinerl.vllm1.WorkerExtension"
     engine_config = engine_args.create_engine_config(UsageContext.OPENAI_API_SERVER)
+    _ensure_qwen35_runtime_dependencies(engine_config)
     engine = AsyncLLM.from_vllm_config(
         vllm_config=engine_config,
         usage_context=UsageContext.OPENAI_API_SERVER,
