@@ -13,12 +13,9 @@ authors = [
     { name = "ServiceNow" },
 ]
 dependencies = [
-    "torch>=2.6",
-    "vllm==0.8.5.post1",
-    "accelerate==1.7.0",
-    "Tapeagents[finetune]==0.1.16",
-    "transformers==4.51.1" ,
-    "flash-attn==2.7.4.post1",
+    "accelerate==1.13.0",
+    "deepspeed==0.18.8",
+    "transformers==5.3.0",
     "ring-flash-attn==0.1.6",
     "math-verify[antlr4_9_3]==0.7.0",
     "orjson==3.10.16",
@@ -29,6 +26,3 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["pipelinerl*"]
-
-[tool.uv.extra-build-dependencies]
-flash-attn = ["torch"]

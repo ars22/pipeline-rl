@@ -35,6 +35,14 @@ uv pip install setuptools
 echo "⚡ Installing vLLM ${VLLM_VERSION}..."
 uv pip install vllm==${VLLM_VERSION}
 
+echo "⚡ Installing flash-attn from source (takes a long time)..."
+git clone https://github.com/Dao-AILab/flash-attention.git
+cd flash-attention
+MAX_JOBS=8 python setup.py install
+# Clean up
+cd ..
+rm -rf flash-attention
+
 echo "📚 Installing PipelineRL dependencies..."
 uv pip install -e .
 
@@ -46,6 +54,13 @@ try:
     print('✅ vLLM import successful')
 except ImportError as e:
     print(f'❌ vLLM import failed: {e}')
+    sys.exit(1)
+
+try:
+    from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
+    print('✅ flash-attn import successful')
+except ImportError as e:
+    print(f'❌ flash-attn import failed: {e}')
     sys.exit(1)
 
 try:
