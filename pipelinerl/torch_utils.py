@@ -1,14 +1,36 @@
+import logging
 from datetime import timedelta
 from typing import Any, Optional, Union
+from urllib.parse import urlparse
+
+import torch
 from torch.distributed.distributed_c10d import (
     Backend,
     PrefixStore,
+    ProcessGroupNCCL,
     Store,
     _new_process_group_helper,
     _world,
     default_pg_timeout,
     rendezvous,
 )
+from vllm.distributed.device_communicators.pynccl import PyNcclCommunicator
+from vllm.distributed.utils import StatelessProcessGroup
+
+logger = logging.getLogger(__name__)
+
+
+def stateless_init_process_group(init_method, rank, world_size, device):
+    parsed = urlparse(init_method)
+    master_address = parsed.hostname or "localhost"
+    master_port = parsed.port or 9000
+    process_group = StatelessProcessGroup.create(
+        host=master_address,
+        port=master_port,
+        rank=rank,
+        world_size=world_size,
+    )
+    return PyNcclCommunicator(process_group, device=device)
 
 
 # Copy from pytorch to allow creating multiple main groups.
@@ -49,6 +71,17 @@ def init_extra_process_group(
         # different systems (e.g. RPC) in case the store is multi-tenant.
         store = PrefixStore(group_name, store)
 
+    if pg_options is None and str(backend) == "nccl":
+        pg_options = ProcessGroupNCCL.Options()
+        pg_options.is_high_priority_stream = False
+
+    logger.info(
+        "[%s] Creating process group rank=%s world_size=%s backend=%s",
+        group_name,
+        rank,
+        world_size,
+        backend,
+    )
     pg, _ = _new_process_group_helper(
         world_size,
         rank,
@@ -61,5 +94,5 @@ def init_extra_process_group(
     )
 
     _world.pg_group_ranks[pg] = {i: i for i in range(world_size)}
-
+    logger.info("[%s] Process group created", group_name)
     return pg

@@ -11,7 +11,6 @@ import transformers
 from omegaconf import DictConfig
 
 import wandb
-from wandb.sdk import wandb_run
 
 from pipelinerl.utils import init_wandb
 
@@ -19,7 +18,7 @@ from .context import get_accelerator, logger
 
 
 
-def setup_logging(cfg: DictConfig, output_dir: Path, run: wandb_run.Run | None = None):
+def setup_logging(cfg: DictConfig, output_dir: Path, run: Any | None = None):
     log_dir = output_dir / "log/"
     log_dir.mkdir(parents=True, exist_ok=True)
     debug_handler = logging.FileHandler(log_dir / f"info_{get_accelerator().process_index}.log")
@@ -78,6 +77,8 @@ def log_metrics(logger: logging.Logger, completed_steps: int, metrics: dict[str,
     # Print metrics with appropriate formatting
     metrics_pretty = {k: format_metric_value(v) for k, v in metrics.items()}
     logger.info(f"Completed steps {completed_steps}: {metrics_pretty}")
+    if not hasattr(wandb, "log"):
+        return
     try:
         metrics = {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
         wandb.log(metrics, step=completed_steps)

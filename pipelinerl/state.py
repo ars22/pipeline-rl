@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from pipelinerl.finetune_loop import (
+from pipelinerl.trainer_messages import (
     TRAINER_TOPIC,
     TrainerMessage,
     WeightUpdateSuccess,
@@ -38,7 +38,7 @@ class TrainerState:
                     if isinstance(message, SamplesProcessed):
                         self.samples_processed = message.samples_processed
 
-        self._thread = threading.Thread(target=listen)
+        self._thread = threading.Thread(target=listen, daemon=True)
         self._thread.start()
     
     def wait_for_processed_samples(self):

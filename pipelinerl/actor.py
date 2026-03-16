@@ -33,7 +33,7 @@ TRANSIENT_EXCEPTIONS = (
 MAX_REQUEUE_ATTEMPTS = 10
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
-from tapeagents.llms import TrainableLLM
+from pipelinerl.llm import TrainableLLM
 
 import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
@@ -1168,9 +1168,7 @@ def run_actor_loop(cfg: DictConfig):
             model_name=str(actor_model_path),
             tokenizer_name=str(actor_model_path),
             parameters=cfg.llm.parameters,
-            use_cache=False,
             collect_logprobs=True,
-            observe_llm_calls=False,
         )
         for url in llm_urls
     ]
@@ -1180,9 +1178,7 @@ def run_actor_loop(cfg: DictConfig):
             model_name=str(actor_model_path),
             tokenizer_name=str(actor_model_path),
             parameters=cfg.test_llm.parameters,
-            use_cache=False,
             collect_logprobs=True,
-            observe_llm_calls=False,
         )
         for url in llm_urls
     ]

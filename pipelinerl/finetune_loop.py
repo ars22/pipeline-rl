@@ -11,7 +11,7 @@ from functools import partial
 import numpy as np
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List
 
 import deepspeed
 import requests
@@ -19,15 +19,13 @@ import torch
 import torch.distributed as dist
 from accelerate.utils import FullyShardedDataParallelPlugin
 from omegaconf import DictConfig
-from pydantic import BaseModel
 from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import MixedPrecision
 from transformers import PreTrainedTokenizerFast, get_scheduler, set_seed
-from ring_flash_attn import substitute_hf_flash_attn, update_ring_flash_attn_params
 
 from pipelinerl.finetune.value_model import AutoModelForCausalLMWithValueHead
-import pipelinerl.torch_utils
+from pipelinerl.torch_utils import stateless_init_process_group
 from pipelinerl.finetune.types import PipelineBatchEncoding
 from pipelinerl.finetune.checkpoints import (
     load_model,
@@ -54,6 +52,13 @@ from pipelinerl.streams import (
     read_stream,
     set_streams_backend,
     write_to_streams,
+)
+from pipelinerl.trainer_messages import (
+    TRAINER_TOPIC,
+    ParameterInfo,
+    SamplesProcessed,
+    WeightUpdateRequest,
+    WeightUpdateSuccess,
 )
 from pipelinerl.utils import wait_for_inference_servers
 
@@ -116,37 +121,6 @@ def run_data_loader(
                 break
 
 
-#TODO: should the topic be renamed to trainer_messages since it contains more than just weight updates?
-TRAINER_TOPIC = "weight_update_request"
-
-
-class ParameterInfo(BaseModel):
-    name: str
-    shape: list[int]
-    dtype: str
-
-
-class WeightUpdateRequest(BaseModel):
-    kind: Literal["weight_update_request"] = "weight_update_request"
-    version: int
-    parameters_info: list[ParameterInfo]
-    timestamp: float = time.time()
-
-
-class WeightUpdateSuccess(BaseModel):
-    kind: Literal["weight_update_success"] = "weight_update_success"
-    version: int
-    timestamp: float = time.time()
-
- 
-class SamplesProcessed(BaseModel):
-    kind: Literal["samples_processed"] = "samples_processed"
-    samples_processed: int
-    timestamp: float = time.time()
-
-TrainerMessage = WeightUpdateRequest | WeightUpdateSuccess | SamplesProcessed
-
-
 class WeightUpdateManager:
     def __init__(self, llm_urls: list[str], accelerated_model, update_stream, actor_update_group):
         self.llm_urls = llm_urls
@@ -181,6 +155,9 @@ class WeightUpdateManager:
         for url in self.llm_urls:
             futures.append(self.thread_pool.submit(self._request_weight_update, url, message))
         return futures
+
+    def close(self) -> None:
+        self.thread_pool.shutdown(wait=True, cancel_futures=False)
 
     def send_weight_update(
         self,
@@ -250,7 +227,11 @@ class WeightUpdateManager:
             for name, parameter in named_parameters.items():
                 with deepspeed.zero.GatheredParameters([parameter]):
                     if get_accelerator().is_main_process:
-                        dist.broadcast(parameter.data.bfloat16(), src=0, group=self.actor_update_group)
+                        self.actor_update_group.broadcast(
+                            parameter.data.bfloat16(),
+                            src=0,
+                            stream=torch.cuda.current_stream(),
+                        )
             if get_accelerator().is_main_process:
                 logger.info("Wait for HTTP requests")
                 failures: list[str] = []
@@ -309,8 +290,11 @@ class WeightUpdateManager:
                 futures = self.request_weight_updates(messages)
                 logger.info(f"Published weight update request for version {version}")
                 for _, parameter in named_parameters.items():
-                    dist.broadcast(parameter.data.bfloat16(), src=0, group=self.actor_update_group)
-                dist.barrier(self.actor_update_group)
+                    self.actor_update_group.broadcast(
+                        parameter.data.bfloat16(),
+                        src=0,
+                        stream=torch.cuda.current_stream(),
+                    )
                 for future in futures:
                     future.result()
                 logger.info("Finished broadcasting weights")
@@ -419,12 +403,6 @@ def run_finetuning_loop(
     logger.info(f"Using {'packed' if args.seq_packing else 'unpacked'} collate function")
 
     optimizer = get_optimizer(args.optim, model, args.learning_rate, args.weight_decay)
-    lr_scheduler = get_scheduler(
-        args.lr_scheduler_type,
-        optimizer,
-        args.num_warmup_steps,
-        args.max_train_steps,
-    )
     dtypes = set()
     for group in optimizer.param_groups:
         for param in group["params"]:
@@ -443,12 +421,14 @@ def run_finetuning_loop(
             )
         else:
             logger.info("No mixed precision for FSDP")
-    (
-        model,
+    model, optimizer = get_accelerator().prepare(model, optimizer)
+    lr_scheduler = get_scheduler(
+        args.lr_scheduler_type,
         optimizer,
-        lr_scheduler,
-    ) = get_accelerator().prepare(model, optimizer, lr_scheduler)
-    logger.info("Model, optimizer and lr_scheduler prepared")
+        args.num_warmup_steps,
+        args.max_train_steps,
+    )
+    logger.info("Model and optimizer prepared; lr_scheduler created on the wrapped optimizer")
     logger.info(
         f"Model class is {model.__class__}, optimizer class is {optimizer.__class__}, lr_scheduler class is {lr_scheduler.__class__}"
     )
@@ -464,12 +444,12 @@ def run_finetuning_loop(
 
     if get_accelerator().is_main_process and args.send_weight_updates:
         logger.info("Initializing actor process group")
-        actor_update_group = pipelinerl.torch_utils.init_extra_process_group(
-            group_name="actor",
-            backend="nccl",
+        torch.cuda.set_device(get_accelerator().device)
+        actor_update_group = stateless_init_process_group(
             init_method=cfg.me.weight_update_group_init_method,
             rank=0,
             world_size=cfg.me.weight_update_group_world_size,
+            device=get_accelerator().device,
         )
         logger.info("Actor process group initialized")
     else:
@@ -513,7 +493,7 @@ def run_finetuning_loop(
         data_stream=data_stream,
         batch_queue=batch_queue,
     )
-    data_loader_thread = threading.Thread(target=data_loader_worker_fn, args=())
+    data_loader_thread = threading.Thread(target=data_loader_worker_fn, args=(), daemon=True)
 
     get_accelerator().wait_for_everyone()
     model.train()
@@ -521,6 +501,8 @@ def run_finetuning_loop(
 
     seq_parallel_group = None
     if cfg.finetune.seq_parallel > 1:
+        import ring_flash_attn
+
         assert get_accelerator().state.num_processes % cfg.finetune.seq_parallel == 0
         for leader_rank in range(0, get_accelerator().state.num_processes, cfg.finetune.seq_parallel):
             group_ranks = [leader_rank + i for i in range(cfg.finetune.seq_parallel)]
@@ -529,7 +511,7 @@ def run_finetuning_loop(
             if get_accelerator().process_index in group_ranks:
                 seq_parallel_group = group
         assert seq_parallel_group is not None
-        substitute_hf_flash_attn(seq_parallel_group, heads_k_stride=1)
+        ring_flash_attn.substitute_hf_flash_attn(seq_parallel_group, heads_k_stride=1)
 
     try:
         logger.info("Start training")
@@ -546,8 +528,10 @@ def run_finetuning_loop(
             seq_parallel_group, 
         )
     finally:
+        if weight_update_manager is not None:
+            weight_update_manager.close()
         if actor_update_group:
-            dist.destroy_process_group(actor_update_group)
+            actor_update_group = None
 
 
 def rl_finetuning_worker(
@@ -742,8 +726,10 @@ def rl_finetuning_worker(
         with toggle_sync(do_optimizer_step):
             # Choose RL step function based on seq_packing config
             if seq_parallel_group is not None:
+                import ring_flash_attn
+
                 assert batch.seq_boundaries is not None
-                update_ring_flash_attn_params(batch.seq_boundaries, seq_parallel_group)
+                ring_flash_attn.update_ring_flash_attn_params(batch.seq_boundaries, seq_parallel_group)
             loss, this_step_rl_metrics = rl_step(
                 model, batch, training_metrics.completed_steps, final_train_steps, rl_config
             )

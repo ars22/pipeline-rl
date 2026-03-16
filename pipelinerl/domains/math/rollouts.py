@@ -5,10 +5,9 @@ import aiohttp
 import os
 from omegaconf import DictConfig
 from pydantic import BaseModel
+from pipelinerl.llm import Prompt, TrainableLLM
 from pipelinerl.rollouts import RolloutResult, BaseMetrics
 from pipelinerl.world import Job
-from tapeagents.core import Prompt
-from tapeagents.llms.trainable import TrainableLLM
 
 from pipelinerl.async_llm import llm_async_generate, make_training_text
 from .verifier_api import verify_answer_rpc, verify_proof, parse_schema

@@ -18,7 +18,7 @@ from typing import List
 
 import datasets
 import transformers
-from litellm import BaseModel, Field
+from pydantic import BaseModel, Field
 
 from pipelinerl.finetune.logging_ import flatten_dict_config
 from pipelinerl.shared_memory_array import SharedMemoryArray, SharedMemoryQueue
@@ -30,7 +30,7 @@ datasets.disable_caching()
 from datasets.arrow_dataset import Dataset
 from datasets.fingerprint import Hasher
 from omegaconf import DictConfig
-from tapeagents.llms import TrainableLLM
+from pipelinerl.llm import TrainableLLM
 
 from pipelinerl.finetune.checkpoints import (
     load_tokenizer,

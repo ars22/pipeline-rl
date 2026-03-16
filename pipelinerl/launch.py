@@ -21,12 +21,17 @@ from pipelinerl.world import Job, WorldMap
 logger = logging.getLogger(__name__)
 
 # All the launch commands in this file pass the environment to child processes
-os.environ["PYTHONPATH"] = f"/home/toolkit/TapeAgents"
 os.environ["NCCL_CUMEM_ENABLE"] = "0"
 os.environ["TORCH_DISABLE_SHARE_RDZV_TCP_STORE"] = "1"
 os.environ["HF_DATASETS_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
 os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
+
+_V1_UNSUPPORTED_VLLM_KWARGS = {"disable-log-requests", "num-scheduler-steps"}
+_ACTOR_VLLM_INTERNAL_PORT_BASE = 38000
+_RC_ACTOR_VLLM_INTERNAL_PORT_BASE = 39000
+_REF_VLLM_INTERNAL_PORT_BASE = 40000
+_SUMMARIZATION_VLLM_INTERNAL_PORT_BASE = 41000
 
 def _popen(
     cmd: list[str],
@@ -43,6 +48,39 @@ def _popen(
         stdout=stdout,
         stderr=stderr,
     )
+
+
+def _append_vllm_kwargs(cmd: list[str], use_v1: bool, kwargs: dict | None) -> None:
+    if not kwargs:
+        return
+
+    filtered_kwargs = dict(kwargs)
+    if use_v1:
+        for key in sorted(_V1_UNSUPPORTED_VLLM_KWARGS):
+            if key in filtered_kwargs:
+                logger.info("Ignoring V0-only vLLM kwarg on V1 path: --%s", key)
+                filtered_kwargs.pop(key, None)
+
+    for key, value in filtered_kwargs.items():
+        cmd.append(f"--{key}")
+        if value not in [None, ""]:
+            cmd.append(str(value))
+
+
+def _with_vllm_runtime_env(gpu_str: str, port_seed: int | None = None) -> dict[str, str]:
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str}
+    if port_seed is not None:
+        env["VLLM_PORT"] = str(port_seed)
+    return env
+
+
+def _is_finetune_process(proc: subprocess.Popen) -> bool:
+    args = proc.args
+    if isinstance(args, (list, tuple)):
+        command = " ".join(str(part) for part in args)
+    else:
+        command = str(args)
+    return "run_finetune.py" in command
 
 
 def validate_config(cfg: DictConfig):
@@ -83,7 +121,7 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
     if actor_vllm_cfg is None:
         actor_vllm_cfg = cfg.vllm_config
     kwargs = actor_vllm_cfg.vllm_kwargs
-    if kwargs["num-scheduler-steps"] > 1:
+    if kwargs.get("num-scheduler-steps", 1) > 1:
         kwargs["num-scheduler-steps"] = 1
         logger.warning("Set num-scheduler-steps to 1 for reference vLLM")
     log_dir = exp_dir / f"ref_vllm_{preprocessor_llm_idx}"
@@ -109,15 +147,8 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
     if model_revision:
         cmd.extend(["--revision", str(model_revision)])
 
-    model_revision = getattr(cfg, "model_revision", None)
-    if model_revision and not Path(str(cfg.model_path)).exists():
-        cmd.extend(["--revision", str(model_revision)])
-
     # Add vLLM kwargs as separate arguments
-    for k, v in kwargs.items():
-        cmd.append(f"--{k}")
-        if v not in [None, ""]:
-            cmd.append(str(v))
+    _append_vllm_kwargs(cmd, bool(getattr(actor_vllm_cfg, "use_v1", False)), kwargs)
 
     gpu_str = ",".join([str(gpu) for gpu in gpus])
     logger.info(f"Running reference LLM with command: {' '.join(cmd)} with gpus: {gpu_str}")
@@ -126,7 +157,10 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
         yield _popen(
             cmd,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            env=_with_vllm_runtime_env(
+                gpu_str,
+                _REF_VLLM_INTERNAL_PORT_BASE + local_idx * 100,
+            ),
             stdout=log_file,
             stderr=err_file,
         )
@@ -181,10 +215,7 @@ def run_summarization_llm(
         cmd.extend(["--revision", str(model_revision)])
 
     # Add vLLM kwargs as separate arguments
-    for k, v in kwargs.items():
-        cmd.append(f"--{k}")
-        if v not in [None, ""]:
-            cmd.append(str(v))
+    _append_vllm_kwargs(cmd, bool(vllm_cfg.use_v1), kwargs)
 
     gpu_str = ",".join([str(gpu) for gpu in gpus])
     logger.info(f"Running summarization LLM with command: {' '.join(cmd)} with gpus: {gpu_str}")
@@ -194,7 +225,10 @@ def run_summarization_llm(
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
         yield _popen(
             cmd,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            env=_with_vllm_runtime_env(
+                gpu_str,
+                _SUMMARIZATION_VLLM_INTERNAL_PORT_BASE + local_idx * 100,
+            ),
             stdout=log_file,
             stderr=err_file,
         )
@@ -248,16 +282,8 @@ def run_actor_llm(
     if actor_model_revision:
         cmd.extend(["--revision", str(actor_model_revision)])
 
-    model_revision = getattr(cfg, "model_revision", None)
-    if model_revision and not Path(str(actor_model_path)).exists():
-        cmd.extend(["--revision", str(model_revision)])
-
     # Add vLLM kwargs as separate arguments
-    if vllm_cfg.vllm_kwargs:
-        for k, v in vllm_cfg.vllm_kwargs.items():
-            cmd.append(f"--{k}")
-            if v not in [None, ""]:
-                cmd.append(str(v))
+    _append_vllm_kwargs(cmd, bool(vllm_cfg.use_v1), vllm_cfg.vllm_kwargs)
 
     # Disable weight updates in debug mode or eval_only mode
     if cfg.debug.mode or cfg.get('eval_only', False):
@@ -271,7 +297,10 @@ def run_actor_llm(
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
         yield _popen(
             cmd,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            env=_with_vllm_runtime_env(
+                gpu_str,
+                _ACTOR_VLLM_INTERNAL_PORT_BASE + local_idx * 100,
+            ),
             stdout=log_file,
             stderr=err_file,
         )
@@ -326,11 +355,7 @@ def run_rc_actor_llm(
         cmd.extend(["--revision", str(rc_actor_model_revision)])
 
     # Add vLLM kwargs as separate arguments
-    if rc_actor_vllm_cfg.vllm_kwargs:
-        for k, v in rc_actor_vllm_cfg.vllm_kwargs.items():
-            cmd.append(f"--{k}")
-            if v not in [None, ""]:
-                cmd.append(str(v))
+    _append_vllm_kwargs(cmd, bool(rc_actor_vllm_cfg.use_v1), rc_actor_vllm_cfg.vllm_kwargs)
 
     # Disable weight updates in debug mode or eval_only mode
     if cfg.debug.mode or cfg.get('eval_only', False):
@@ -344,7 +369,10 @@ def run_rc_actor_llm(
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
         yield _popen(
             cmd,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            env=_with_vllm_runtime_env(
+                gpu_str,
+                _RC_ACTOR_VLLM_INTERNAL_PORT_BASE + local_idx * 100,
+            ),
             stdout=log_file,
             stderr=err_file,
         )
@@ -618,10 +646,13 @@ def watch_processes_running(exp_path: Path, processes: List[subprocess.Popen], d
         trainer_state = None
 
     # Wait for all processes to complete
-    def gently_stop_all_processes():
+    def gently_stop_all_processes(skip_pids: set[int] | None = None):
         logger.info("\nShutting down processes...")
         # Terminate all running processes
+        skip_pids = skip_pids or set()
         for proc in processes:
+            if proc.pid in skip_pids:
+                continue
             logger.info(f"Terminating {proc.args}")
             terminate_with_children(proc.pid)
 
@@ -636,9 +667,12 @@ def watch_processes_running(exp_path: Path, processes: List[subprocess.Popen], d
         while True:
             for proc in processes:
                 if (return_code := proc.poll()) is not None:
-                    # print which process terminate and with what code
+                    if return_code == 0 and _is_finetune_process(proc):
+                        logger.info("Finetune process exited cleanly; shutting down remaining processes.")
+                        gently_stop_all_processes(skip_pids={proc.pid})
+                        return
                     logger.error(f"Process {proc.args} terminated with code {proc.returncode}")
-                    gently_stop_all_processes()
+                    gently_stop_all_processes(skip_pids={proc.pid})
                     sys.exit(1)
             # TODO: make the watcdog code below more stable
             # if (trainer_state is not None

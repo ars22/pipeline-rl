@@ -5,14 +5,25 @@ import logging
 import aiohttp
 import numpy as np
 from PIL import Image
-from tapeagents.core import LLMCall, LLMOutput, Prompt, TokenLogprob
-from tapeagents.llms.trainable import TrainableLLM
+from transformers.tokenization_utils_base import BatchEncoding
+from pipelinerl.llm import LLMCall, LLMOutput, Prompt, TokenLogprob, TrainableLLM
 
 from pipelinerl.finetune.data import MASKED_TOKEN_ID
 from pipelinerl.rollouts import TrainingText
 from pipelinerl.processor_factory import get_processor
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_token_ids(token_ids: BatchEncoding | list[int] | list[list[int]] | np.ndarray) -> list[int]:
+    """Normalize tokenizer outputs across transformer versions to a flat token-id list."""
+    if isinstance(token_ids, BatchEncoding):
+        token_ids = token_ids["input_ids"]
+    if isinstance(token_ids, np.ndarray):
+        token_ids = token_ids.tolist()
+    if token_ids and isinstance(token_ids[0], list):
+        return list(token_ids[0])
+    return list(token_ids)
 
 
 def extract_images_from_messages(messages: list[dict]) -> list[Image.Image]:
@@ -179,7 +190,7 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
             )
 
             # prompt_inputs["input_ids"] is a list of list
-            prompt_token_ids = prompt_inputs["input_ids"][0]
+            prompt_token_ids = _normalize_token_ids(prompt_inputs["input_ids"])
 
             # Process images to get visual features
             processed = processor(
@@ -205,10 +216,12 @@ def make_training_text(llm: TrainableLLM, llm_call: LLMCall) -> TrainingText:
             full_messages,
             tokenize=False,
         )
-        prompt_token_ids = llm.tokenizer.apply_chat_template(
+        prompt_token_ids = _normalize_token_ids(
+            llm.tokenizer.apply_chat_template(
             llm_call.prompt.messages,
             add_special_tokens=True,
             add_generation_prompt=True,
+        )
         )
 
     output_text = text[len(prompt_text) :]

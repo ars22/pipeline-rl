@@ -7,21 +7,27 @@ from typing import Any, Type
 
 import torch
 import transformers
+from huggingface_hub import snapshot_download
 from packaging import version
 from transformers import (
     AutoModelForCausalLM,
+    AutoModelForImageTextToText,
     AutoModelForSeq2SeqLM,
-    AutoModelForVision2Seq,
-    AutoTokenizer,
     AutoProcessor,
+    AutoTokenizer,
     BitsAndBytesConfig,
 )
 from transformers.models.auto.modeling_auto import _BaseAutoModelClass
 
 from .context import get_accelerator, logger
-from .lora import has_lora_checkpoint, lora_load, lora_save, prepare_lora_model
 from .types import ModelClass, TrainingMetrics
 from .value_model import AutoModelForCausalLMWithValueHead
+
+
+def _load_lora_helpers():
+    from .lora import has_lora_checkpoint, lora_load, lora_save, prepare_lora_model
+
+    return has_lora_checkpoint, lora_load, lora_save, prepare_lora_model
 
 
 def is_deepspeed_model(model) -> bool:
@@ -41,7 +47,7 @@ def get_auto_model_class(
         case "seq2seq-language-modeling":
             return AutoModelForSeq2SeqLM
         case "vision2seq-language-modeling":
-            return AutoModelForVision2Seq
+            return AutoModelForImageTextToText
         case _:
             raise ValueError(f"Unsupported model class: {model_class}")
 
@@ -78,6 +84,20 @@ def load_processor(config_name: str, revision: str | None = None):
         return None
 
 
+def _resolve_model_source(config_name: str, revision: str | None = None) -> str:
+    config_path = Path(config_name)
+    if config_path.exists():
+        return str(config_path)
+
+    if get_accelerator().is_main_process:
+        logger.info(f"Prefetching remote model snapshot for {config_name}")
+        snapshot_download(config_name, revision=revision)
+    get_accelerator().wait_for_everyone()
+    local_snapshot = snapshot_download(config_name, revision=revision, local_files_only=True)
+    logger.info(f"Resolved remote model {config_name} to local snapshot {local_snapshot}")
+    return local_snapshot
+
+
 def load_model(args, model_class, current_dir):
     get_accelerator().wait_for_everyone()
 
@@ -90,14 +110,14 @@ def load_model(args, model_class, current_dir):
         "This may happen if combining deepspeed and non-deepsped training"
     )
 
-    model_to_load = args.config_name
+    model_revision = getattr(args, "model_revision", None)
+    model_to_load = _resolve_model_source(args.config_name, model_revision)
     loading_args: dict[str, Any] = dict(
         use_safetensors=args.use_safetensors,
         trust_remote_code=args.trust_remote_code,
         low_cpu_mem_usage=True,  # this is essential for quick model loading as it does not spend time on a random weights initialization. It cuts loading time of a 15B params model from 100 sec to 12 sec.
     )
-    model_revision = getattr(args, "model_revision", None)
-    if model_revision:
+    if model_revision and not Path(model_to_load).exists():
         loading_args["revision"] = str(model_revision)
     if args.use_flash_attention:
         assert version.parse(transformers.__version__) >= version.parse("4.34.0"), (
@@ -124,7 +144,7 @@ def load_model(args, model_class, current_dir):
     ):  # resume
         # Size mismatch errors here may be due to improper used of Deepspeed+save_pretrained()
         # instead, always call save_model_only() in all processes
-        model_to_load = args.config_name 
+        model_to_load = args.config_name
         logger.info(f"Loading model {model_cls} weights from {current_dir}")
     else:  # from scratch
         logger.info(f"Initializing model {model_cls} from {args.config_name}")
