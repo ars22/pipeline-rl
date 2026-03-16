@@ -334,6 +334,10 @@ llm_grader:
     tensor-parallel-size: 16
     enable-expert-parallel: ""
     disable-cascade-attn: ""
+    max-num-batched-tokens: 24576
+    max-num-seqs: 64
+    max-model-len: 49152
+    gpu-memory-utilization: 0.85
     hf-overrides:
       num_nextn_predict_layers: 1
     speculative-config:
