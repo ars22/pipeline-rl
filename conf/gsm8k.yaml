@@ -18,7 +18,7 @@ test_dataset_names:
 finetune:
   attempts: 4
   train_batch_size: 2
-  seq_length: 4096
+  seq_length: 8192
   gradient_accumulation_passes: 128
   learning_rate: 1.7e-5
   weight_decay: 0.017
