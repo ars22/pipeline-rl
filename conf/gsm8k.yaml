@@ -15,11 +15,25 @@ train_dataset_names:
 test_dataset_names:
   - gsm8k_test
 
+finetune:
+  train_batch_size: 2
+  seq_length: 4096
+  gradient_accumulation_passes: 128
+
+llm:
+  parameters:
+    max_tokens: 1024
+
+test_llm:
+  parameters:
+    max_tokens: 1024
+
 model_path: Qwen/Qwen2.5-1.5B-Instruct
 model_revision: main
 
 vllm_config:
   vllm_kwargs:
+    enforce-eager: ""
     max-model-len: ${finetune.seq_length}
 
 world:
