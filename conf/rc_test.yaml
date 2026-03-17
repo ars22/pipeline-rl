@@ -102,7 +102,7 @@ summarization_llm:
 
 # vLLM configuration for RC actor LLMs
 rc_actor_vllm_config:
-  use_v1: false
+  use_v1: true
   vllm_kwargs:
     dtype: bfloat16
     gpu-memory-utilization: 0.9
@@ -120,7 +120,7 @@ rc_actor_vllm_config:
 
 # vLLM configuration for summarization LLMs 
 summarization_vllm_config:
-  use_v1: false
+  use_v1: true
   vllm_kwargs:
     dtype: bfloat16
     gpu-memory-utilization: 0.9
@@ -139,7 +139,7 @@ summarization_vllm_config:
 
 # vLLM configuration for generation/actor LLMs
 vllm_config:
-  use_v1: false
+  use_v1: true
   vllm_kwargs:
     dtype: bfloat16
     gpu-memory-utilization: 0.9

@@ -106,7 +106,7 @@ test_dataset_names:
     split: train
 
 vllm_config:
-  use_v1: false
+  use_v1: true
   vllm_kwargs:
     dtype: bfloat16
     gpu-memory-utilization: 0.9
