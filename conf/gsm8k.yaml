@@ -41,7 +41,7 @@ test_llm:
     max_tokens: 1024
     temperature: 1.0
 
-model_path: Qwen/Qwen2.5-1.5B-Instruct
+model_path: Qwen/Qwen3.4-2B
 model_revision: main
 
 vllm_config:
