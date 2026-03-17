@@ -36,7 +36,7 @@ TRANSIENT_EXCEPTIONS = (
 MAX_REQUEUE_ATTEMPTS = 10
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
-from tapeagents.llms import TrainableLLM
+from pipelinerl.llm import TrainableLLM
 
 import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
@@ -1557,6 +1557,7 @@ def run_actor_loop(cfg: DictConfig):
             base_url=url,
             model_name=str(actor_model_path),
             tokenizer_name=str(actor_tokenizer_path),
+            tokenizer=actor_tokenizer,
             parameters=cfg.llm.parameters,
             use_cache=False,
             collect_logprobs=True,
@@ -1569,6 +1570,7 @@ def run_actor_loop(cfg: DictConfig):
             base_url=url,
             model_name=str(actor_model_path),
             tokenizer_name=str(actor_tokenizer_path),
+            tokenizer=actor_tokenizer,
             parameters=cfg.test_llm.parameters,
             use_cache=False,
             collect_logprobs=not eval_only_mode,  # Don't collect logprobs in eval-only mode
@@ -1586,6 +1588,7 @@ def run_actor_loop(cfg: DictConfig):
                 base_url=url,
                 model_name=str(summarization_model_path),
                 tokenizer_name=str(summarization_tokenizer_path),
+                tokenizer=summarization_tokenizer,
                 parameters=summarization_llm_params,
                 use_cache=False,
                 collect_logprobs=True,
@@ -1598,6 +1601,7 @@ def run_actor_loop(cfg: DictConfig):
                 base_url=url,
                 model_name=str(summarization_model_path),
                 tokenizer_name=str(summarization_tokenizer_path),
+                tokenizer=summarization_tokenizer,
                 parameters=summarization_llm_params,
                 use_cache=False,
                 collect_logprobs=not eval_only_mode,  # Don't collect logprobs in eval-only mode
