@@ -252,8 +252,11 @@ class InferenceProblemState:
             sample.metadata["sample_id"] = self.sample_id
             sample.metadata["answer"] = self.answer
             sample.metadata["dataset_name"] = self.dataset_name
-            sample.metadata["schema"] = self.schema
-            sample.metadata["original_problem"] = f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
+            if self.schema is not None:
+                sample.metadata["schema"] = self.schema
+                sample.metadata["original_problem"] = (
+                    f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
+                )
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -293,8 +296,11 @@ class InferenceProblemState:
             sample.metadata["sample_id"] = self.sample_id
             sample.metadata["answer"] = self.answer
             sample.metadata["dataset_name"] = self.dataset_name
-            sample.metadata["schema"] = self.schema
-            sample.metadata["original_problem"] = f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
+            if self.schema is not None:
+                sample.metadata["schema"] = self.schema
+                sample.metadata["original_problem"] = (
+                    f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
+                )
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -659,9 +665,10 @@ async def schedule_rollouts(
                             "answer": problem_state.answer,
                             "dataset": problem_state.dataset_name,
                             "id": problem_state.problem_id,
-                            "schema": problem_state.schema,
-                            "original_problem": problem_state.problem_text,
                         }
+                        if problem_state.schema is not None:
+                            reasoning_problem["schema"] = problem_state.schema
+                            reasoning_problem["original_problem"] = problem_state.problem_text
                         # logger.info(f"Reasoning problem: {reasoning_problem}")
                         
                         started_solution_rollouts[llm_index] += 1

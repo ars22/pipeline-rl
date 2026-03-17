@@ -1,9 +1,12 @@
 import importlib
+import asyncio
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
+from omegaconf import OmegaConf
 
 
 class RCStackCompatTest(unittest.TestCase):
@@ -48,6 +51,11 @@ class RCStackCompatTest(unittest.TestCase):
 
         self.assertEqual(cfg.model_path, "Qwen/Qwen3.5-0.8B")
         self.assertEqual(cfg.summarization_model_path, "Qwen/Qwen3.5-0.8B")
+        self.assertTrue(cfg.actor.use_rc_stream)
+        self.assertEqual(
+            cfg.actor.rollout_policy,
+            "pipelinerl.domains.math.rollouts.generate_math_rollout",
+        )
 
         launch._apply_model_compat_overrides(cfg)
 
@@ -103,6 +111,90 @@ class RCStackCompatTest(unittest.TestCase):
         self.assertFalse(finetune_jobs)
         self.assertEqual([job.port for job in rc_actor_jobs], [8000, 8001, 8002, 8003])
         self.assertEqual([job.port for job in summarization_jobs], [8204, 8205, 8206, 8207])
+
+    def test_rc_rollout_ignores_null_schema_for_gsm8k(self):
+        llm_module = importlib.import_module("pipelinerl.llm")
+        rollout_models = importlib.import_module("pipelinerl.rollouts")
+        rollouts = importlib.import_module("pipelinerl.domains.math.rollouts")
+
+        cfg = OmegaConf.create(
+            {
+                "rc_actor": {
+                    "system_prompt": None,
+                    "task_template": "{task}",
+                    "discount_factor": 1.0,
+                },
+                "actor": {},
+                "llm_grader": {},
+                "llm": {"parameters": {"max_tokens": 16}},
+                "rewards": {
+                    "wrong_answer_not_finished": 0.0,
+                    "wrong_answer_finished": 0.0,
+                    "no_answer_not_finished": 0.0,
+                    "no_answer_finished": 0.0,
+                    "unparsable_not_finished": 0.0,
+                    "unparsable_finished": 0.0,
+                    "correct_answer_not_finished": 1.0,
+                    "correct_answer_finished": 1.0,
+                },
+                "jobs": [
+                    {
+                        "kind": "environment",
+                        "idx": 0,
+                        "replica_idx": 0,
+                        "node_rank": 0,
+                        "hostname": "localhost",
+                        "port": 7777,
+                        "gpus": [],
+                        "url": "",
+                    }
+                ],
+                "wandb": {"use_wandb": False},
+            }
+        )
+        llm = llm_module.TrainableLLM(
+            base_url="http://localhost:8000",
+            model_name="stub-model",
+            parameters={"max_tokens": 16},
+        )
+        llm_call = llm_module.LLMCall(
+            prompt=llm_module.Prompt(messages=[{"role": "user", "content": "2+2?"}]),
+            output=llm_module.LLMOutput(content="4"),
+            prompt_length_tokens=1,
+            output_length_tokens=1,
+        )
+        training_text = rollout_models.TrainingText(
+            text="Q4",
+            output_text="4",
+            n_predicted=1,
+            finished=True,
+            prompt_tokens=1,
+            output_tokens=1,
+        )
+
+        async def invoke():
+            with (
+                mock.patch.object(rollouts, "llm_async_generate", new=mock.AsyncMock(return_value=llm_call)),
+                mock.patch.object(rollouts, "make_training_text", return_value=training_text),
+                mock.patch.object(rollouts, "verify_answer_rpc", new=mock.AsyncMock(return_value="correct")),
+                mock.patch.object(rollouts, "parse_schema", side_effect=AssertionError("parse_schema should not run")),
+            ):
+                return await rollouts.generate_math_rollout_rc(
+                    cfg,
+                    llm,
+                    {
+                        "task": "2+2?",
+                        "answer": "\\boxed{4}",
+                        "dataset": "gsm8k_test",
+                        "id": 0,
+                        "schema": None,
+                    },
+                    session=None,
+                )
+
+        result = asyncio.run(invoke())
+        self.assertTrue(result.metrics.success)
+        self.assertEqual(result.metrics.reward, 1.0)
 
 
 if __name__ == "__main__":

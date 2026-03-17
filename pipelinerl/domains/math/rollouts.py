@@ -120,14 +120,15 @@ async def generate_math_rollout(
     # ===========================================================
     verifier_metrics: dict[str, float | int] = {}
     verifier_table_entry: dict[str, str | int] | None = None
-    if "schema" in problem:
+    schema = problem.get("schema")
+    if schema not in (None, "", []):
         llm_grader_cfg = cfg.get("llm_grader", None)
         wandb_table_cfg = llm_grader_cfg.get("wandb_table", None) if llm_grader_cfg is not None else None
         wandb_table_enabled = True
         if wandb_table_cfg is not None:
             wandb_table_enabled = bool(wandb_table_cfg.get("enabled", True))
 
-        schema_text = parse_schema(problem["schema"])
+        schema_text = parse_schema(schema)
         
         # make sure original_problem is present when using RC stream, since generation prompt is not the same as the original problem but
         # we need to use the original problem for verification

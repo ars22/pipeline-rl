@@ -62,6 +62,15 @@ rc_actor:
   reasoning_prompt_style: "structured"
   summarization_style: "summ"
 
+actor:
+  use_rc_stream: true
+  rc_stream_topic: "rc_actor"
+  rc_stream_samples_per_batch: 1
+  rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  system_prompt: null
+  task_template: |-
+    {task}
+
 llm:
   parameters:
     max_tokens: 512
