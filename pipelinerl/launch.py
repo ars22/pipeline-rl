@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import List, TextIO
 
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from pipelinerl.grader_launch import start_llm_grader
+from pipelinerl.model_compat import is_qwen35_multimodal_model
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import SingleStreamSpec, connect_to_redis, read_stream, set_streams_backend, write_to_streams
 from pipelinerl.utils import terminate_with_children
@@ -113,6 +114,50 @@ def validate_config(cfg: DictConfig):
     if cfg.finetune.model_class == "causal-language-modeling-with-value-head":
         if not hasattr(cfg.finetune.rl, "value_loss_coef") or cfg.finetune.rl.value_loss_coef <= 0.0:
             raise ValueError("value_loss_coef must be greater than 0 when using causal-language-modeling-with-value-head")
+
+
+def _apply_model_compat_overrides(cfg: DictConfig) -> None:
+    model_path = cfg.get("model_path")
+    if not is_qwen35_multimodal_model(model_path):
+        return
+
+    if cfg.finetune.model_class == "causal-language-modeling":
+        if cfg.finetune.use_flash_attention:
+            logger.warning(
+                "Disabling flash attention for %s in text-only finetuning; "
+                "Qwen3.5 multimodal checkpoints are unstable on this path.",
+                model_path,
+            )
+            cfg.finetune.use_flash_attention = False
+            cfg.finetune.attn_implementation = "sdpa"
+        if cfg.finetune.seq_packing:
+            logger.warning(
+                "Disabling sequence packing for %s because the text-only Qwen3.5 compatibility "
+                "path also disables flash attention.",
+                model_path,
+            )
+            cfg.finetune.seq_packing = False
+
+    for config_name in (
+        "vllm_config",
+        "actor_vllm_config",
+        "rc_actor_vllm_config",
+        "summarization_vllm_config",
+    ):
+        vllm_cfg = cfg.get(config_name)
+        if vllm_cfg is None:
+            continue
+        if not getattr(vllm_cfg, "vllm_kwargs", None):
+            continue
+        if "language-model-only" in vllm_cfg.vllm_kwargs:
+            continue
+        with open_dict(vllm_cfg.vllm_kwargs):
+            vllm_cfg.vllm_kwargs["language-model-only"] = ""
+        logger.warning(
+            "Enabling --language-model-only for %s on %s to skip the vision encoder in text-only runs.",
+            model_path,
+            config_name,
+        )
 
 
 def _maybe_start_llm_grader(cfg: DictConfig, rank: int) -> None:
@@ -784,6 +829,8 @@ def setup_logging(log_file: Path):
     version_base="1.3.2",
 )
 def main(cfg: DictConfig):
+    _apply_model_compat_overrides(cfg)
+
     # Resolve all interpolations in config (e.g., ${actor.problem_queue_size} // ${world.actor_fraction})
     resolved_cfg = OmegaConf.to_container(cfg, resolve=True)
     

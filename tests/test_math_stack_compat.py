@@ -213,6 +213,23 @@ class MathStackCompatTest(unittest.TestCase):
             )
         self.assertEqual(cfg.vllm_config.vllm_kwargs["max-model-len"], cfg.finetune.seq_length)
 
+    def test_gsm8k_qwen35_override_applies_text_only_compat(self):
+        launch = importlib.import_module("pipelinerl.launch")
+        conf_dir = Path(__file__).resolve().parents[1] / "conf"
+        GlobalHydra.instance().clear()
+        with initialize_config_dir(config_dir=str(conf_dir), version_base=None):
+            cfg = compose(
+                config_name="gsm8k",
+                overrides=["model_path=Qwen/Qwen3.5-2B"],
+            )
+
+        launch._apply_model_compat_overrides(cfg)
+
+        self.assertFalse(cfg.finetune.use_flash_attention)
+        self.assertEqual(cfg.finetune.attn_implementation, "sdpa")
+        self.assertFalse(cfg.finetune.seq_packing)
+        self.assertIn("language-model-only", cfg.vllm_config.vllm_kwargs)
+
 
 if __name__ == "__main__":
     unittest.main()

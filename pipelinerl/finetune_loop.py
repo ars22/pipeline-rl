@@ -47,6 +47,7 @@ from pipelinerl.finetune.rl.utils import aggregate_rl_stats
 from pipelinerl.finetune.types import TrainingMetrics
 from pipelinerl.finetune.utils import create_sentinel_batch
 from pipelinerl.finetune.hf_hub import push_checkpoint_to_hub
+from pipelinerl.model_compat import is_qwen35_multimodal_model
 from pipelinerl.streams import (
     SingleStreamSpec,
     read_stream,
@@ -336,6 +337,30 @@ def validate_packing_config(args):
         )
 
 
+def _apply_finetune_model_compat_overrides(args) -> None:
+    if getattr(args, "model_class", None) != "causal-language-modeling":
+        return
+
+    model_ref = getattr(args, "config_name", None)
+    if not is_qwen35_multimodal_model(model_ref):
+        return
+
+    if getattr(args, "use_flash_attention", False):
+        logger.warning(
+            "Disabling flash attention for %s in text-only finetuning; "
+            "Qwen3.5 multimodal checkpoints are unstable on this path.",
+            model_ref,
+        )
+        args.use_flash_attention = False
+        args.attn_implementation = "sdpa"
+    if getattr(args, "seq_packing", False):
+        logger.warning(
+            "Disabling sequence packing for %s because the Qwen3.5 compatibility path uses SDPA.",
+            model_ref,
+        )
+        args.seq_packing = False
+
+
 def run_finetuning_loop(
     cfg: DictConfig,
 ):
@@ -348,6 +373,7 @@ def run_finetuning_loop(
     output_dir = Path(cfg.finetune.output_dir)
     num_processes = get_accelerator().state.num_processes  # type: ignore
     args = cfg.finetune if "finetune" in cfg else cfg
+    _apply_finetune_model_compat_overrides(args)
     validate_packing_config(args)
 
     if not args.gradient_accumulation_passes % num_processes == 0:
