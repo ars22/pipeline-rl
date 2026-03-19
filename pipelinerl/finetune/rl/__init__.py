@@ -148,6 +148,12 @@ def rl_step(
     Returns:
         tuple[torch.Tensor, dict[str, float]]: Loss tensor and metrics dictionary
     """
+    if config.temperature <= 0:
+        raise ValueError(
+            "RL training temperature must be greater than 0. "
+            "Set finetune.rl.temperature explicitly if generation uses temperature 0."
+        )
+
     # pre-compute masks
     masks = batch.labels != -100
     masks_shifted = masks[:, 1:]

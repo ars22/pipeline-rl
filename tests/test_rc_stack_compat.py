@@ -39,6 +39,7 @@ class RCStackCompatTest(unittest.TestCase):
     def test_rc_configs_compose(self):
         for config_name in [
             "rc_smoke",
+            "rc_tiny",
             "rc_test",
             "rc_proof_qwen3-4b-thinking_v18.00",
         ]:
@@ -66,7 +67,8 @@ class RCStackCompatTest(unittest.TestCase):
         test_rc_actor = importlib.import_module("pipelinerl.test_rc_actor")
         cfg = self._compose("rc_smoke", overrides=["output_dir=/tmp/rc-smoke"])
 
-        cfg, world_map = test_rc_actor.prepare_config_for_test(cfg, Path("/tmp/rc-smoke"))
+        with mock.patch("torch.cuda.device_count", return_value=8):
+            cfg, world_map = test_rc_actor.prepare_config_for_test(cfg, Path("/tmp/rc-smoke"))
 
         self.assertEqual(cfg.me.llm_urls, "+".join(world_map.get_rc_actor_urls()))
         self.assertEqual(cfg.me.summarization_llm_urls, "+".join(world_map.get_summarization_urls()))
@@ -98,7 +100,8 @@ class RCStackCompatTest(unittest.TestCase):
             ],
         )
 
-        world_map = world_module.WorldMap(cfg, verbose=False)
+        with mock.patch("torch.cuda.device_count", return_value=8):
+            world_map = world_module.WorldMap(cfg, verbose=False)
 
         rc_actor_jobs = [job for job in world_map.get_all_jobs() if job.kind == "rc_actor_llm"]
         summarization_jobs = [job for job in world_map.get_all_jobs() if job.kind == "summarization_llm"]
@@ -111,6 +114,44 @@ class RCStackCompatTest(unittest.TestCase):
         self.assertFalse(finetune_jobs)
         self.assertEqual([job.port for job in rc_actor_jobs], [8000, 8001, 8002, 8003])
         self.assertEqual([job.port for job in summarization_jobs], [8204, 8205, 8206, 8207])
+
+    def test_rc_tiny_world_map_matches_single_node_smoke_layout(self):
+        launch = importlib.import_module("pipelinerl.launch")
+        world_module = importlib.import_module("pipelinerl.world")
+        cfg = self._compose("rc_tiny", overrides=["output_dir=/tmp/rc-tiny"])
+
+        launch._apply_model_compat_overrides(cfg)
+
+        with mock.patch("torch.cuda.device_count", return_value=8):
+            world_map = world_module.WorldMap(cfg, verbose=False)
+
+        rc_actor_jobs = [job for job in world_map.get_all_jobs() if job.kind == "rc_actor_llm"]
+        summarization_jobs = [job for job in world_map.get_all_jobs() if job.kind == "summarization_llm"]
+        actor_jobs = [job for job in world_map.get_all_jobs() if job.kind == "actor_llm"]
+        finetune_jobs = [job for job in world_map.get_all_jobs() if job.kind == "finetune"]
+
+        self.assertEqual(len(rc_actor_jobs), 2)
+        self.assertEqual(len(summarization_jobs), 1)
+        self.assertEqual(len(actor_jobs), 3)
+        self.assertEqual(len(finetune_jobs), 1)
+        self.assertEqual(len(finetune_jobs[0].gpus), 2)
+        self.assertEqual(cfg.finetune.seq_parallel, 1)
+        self.assertEqual(cfg.finetune.gradient_accumulation_passes, 2)
+        self.assertEqual(cfg.finetune.rl.temperature, 1.0)
+        self.assertFalse(cfg.finetune.seq_packing)
+        self.assertEqual(cfg.finetune.attn_implementation, "sdpa")
+        self.assertIn("language-model-only", cfg.vllm_config.vllm_kwargs)
+        self.assertIn("language-model-only", cfg.rc_actor_vllm_config.vllm_kwargs)
+        self.assertIn("language-model-only", cfg.summarization_vllm_config.vllm_kwargs)
+        self.assertEqual(cfg.llm_grader.vllm_kwargs["max-num-batched-tokens"], 8192)
+        self.assertEqual(cfg.llm_grader.vllm_kwargs["max-num-seqs"], 16)
+        self.assertEqual(cfg.llm_grader.vllm_kwargs["max-model-len"], 32768)
+        self.assertEqual(cfg.llm_grader.vllm_kwargs["gpu-memory-utilization"], 0.85)
+        self.assertEqual(cfg.llm_grader.sampling_kwargs.max_output_tokens, 32768)
+        self.assertEqual(cfg.llm_grader.reasoning_delimiters, [])
+        self.assertEqual(cfg.train_dataset_names[0].hub_id, "lm-provers/olympiads-proof-schema")
+        self.assertEqual(cfg.train_dataset_names[0].split, "train")
+        self.assertEqual(list(cfg.test_dataset_names), ["imo_proof_bench"])
 
     def test_rc_rollout_ignores_null_schema_for_gsm8k(self):
         llm_module = importlib.import_module("pipelinerl.llm")
