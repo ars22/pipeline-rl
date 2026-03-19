@@ -9,6 +9,9 @@ eval_every_n_versions: 6400
 preprocess:
   shared_memory_entry_size: 2000000000
 
+wandb:
+  resume: never
+
 finetune:
   attempts: 32
   train_batch_size: 32
@@ -83,9 +86,9 @@ vllm_config:
 
 world:
   replicas: 1
-  actor_fraction: 4
+  actor_fraction: 6
   preprocessor_fraction: 0
-  finetune_fraction: 4
+  finetune_fraction: 2
   env_replicas: 1
   actor_group_port: 9998
   environment_start_port: 7777
