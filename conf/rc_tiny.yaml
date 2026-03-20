@@ -140,15 +140,25 @@ wandb:
     - qwen3.5-2b
 
 llm_grader:
-  # The proof RC defaults OOM during gpt-oss-20b warmup on a 1-node smoke
-  # launch; keep the grader on the smaller proof-demo footprint.
+  # Smoke-run stability:
+  # - avoid the multi-replica DP path that is tripping vLLM/Ray on single-node runs
+  # - fail fast so one wedged grader request cannot stall training indefinitely
+  timeout_seconds: 60
+  max_retries: 1
+  retry_backoff: [5]
   vllm_kwargs:
-    max-num-batched-tokens: 8192
-    max-num-seqs: 16
+    data-parallel-size: 1
+    tensor-parallel-size: 2
+    max-num-batched-tokens: 4096
+    max-num-seqs: 4
     max-model-len: 32768
     gpu-memory-utilization: 0.85
+    enforce-eager: ""
   sampling_kwargs:
-    max_output_tokens: 32768
+    max_output_tokens: 2048
+    temperature: 0.0
+    reasoning:
+      effort: low
   # Qwen3.5-2B is not a thinking checkpoint, so proof text should not be
   # stripped when </think> is absent.
   reasoning_delimiters: []

@@ -271,59 +271,63 @@ trap 'cleanup $?' EXIT
 trap 'cleanup 130; exit 130' SIGINT
 trap 'cleanup 143; exit 143' SIGTERM
 
-export RAY_ADDRESS="${HEAD_NODE_IP}:${RAY_PORT}"
+if (( DATA_PARALLEL_SIZE > 1 )); then
+  export RAY_ADDRESS="${HEAD_NODE_IP}:${RAY_PORT}"
 
-echo "Cleaning up any stale Ray sessions..."
-srun --nodes=$NUM_NODES --ntasks=$NUM_NODES ray stop --force 2>/dev/null || true
-sleep 3
+  echo "Cleaning up any stale Ray sessions..."
+  srun --nodes=$NUM_NODES --ntasks=$NUM_NODES ray stop --force 2>/dev/null || true
+  sleep 3
 
-echo "Starting Ray head node on $HEAD_NODE ($HEAD_NODE_IP)..."
-srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" \
-  ray start --head \
-  --node-ip-address="$HEAD_NODE_IP" \
-  --port=$RAY_PORT \
-  --num-cpus=$CPUS_PER_NODE \
-  --num-gpus=$NUM_GPUS_PER_NODE \
-  --block &
-SRUN_HEAD_PID=$!
-RAY_CLUSTER_STARTED=1
-
-echo "Waiting for Ray head node initialization..."
-sleep 20
-
-if (( NUM_NODES > 1 )); then
-  WORKER_COUNT=$((NUM_NODES - 1))
-  echo "Starting $WORKER_COUNT Ray worker node(s)..."
-  srun --nodes=$WORKER_COUNT --ntasks=$WORKER_COUNT --exclude="$HEAD_NODE" \
-    ray start --address="$RAY_ADDRESS" \
+  echo "Starting Ray head node on $HEAD_NODE ($HEAD_NODE_IP)..."
+  srun --nodes=1 --ntasks=1 -w "$HEAD_NODE" \
+    ray start --head \
+    --node-ip-address="$HEAD_NODE_IP" \
+    --port=$RAY_PORT \
     --num-cpus=$CPUS_PER_NODE \
     --num-gpus=$NUM_GPUS_PER_NODE \
     --block &
-  SRUN_WORKER_PID=$!
-  echo "Waiting for Ray workers to connect..."
-  sleep 30
+  SRUN_HEAD_PID=$!
+  RAY_CLUSTER_STARTED=1
+
+  echo "Waiting for Ray head node initialization..."
+  sleep 20
+
+  if (( NUM_NODES > 1 )); then
+    WORKER_COUNT=$((NUM_NODES - 1))
+    echo "Starting $WORKER_COUNT Ray worker node(s)..."
+    srun --nodes=$WORKER_COUNT --ntasks=$WORKER_COUNT --exclude="$HEAD_NODE" \
+      ray start --address="$RAY_ADDRESS" \
+      --num-cpus=$CPUS_PER_NODE \
+      --num-gpus=$NUM_GPUS_PER_NODE \
+      --block &
+    SRUN_WORKER_PID=$!
+    echo "Waiting for Ray workers to connect..."
+    sleep 30
+  fi
+
+  echo "Waiting for Ray cluster to register $TOTAL_GPUS GPUs..."
+  for attempt in {1..60}; do
+    CURRENT_GPUS=$(python3 -c "import ray; ray.init(); print(int(ray.cluster_resources().get('GPU', 0)))" 2>/dev/null || echo "0")
+
+    echo "Ray cluster status: $CURRENT_GPUS / $TOTAL_GPUS GPUs ready (attempt $attempt/60)"
+
+    if [ "$CURRENT_GPUS" -ge "$TOTAL_GPUS" ]; then
+      echo "✓ Ray cluster ready with $TOTAL_GPUS GPUs!"
+      break
+    fi
+
+    if [ $attempt -eq 60 ]; then
+      echo "ERROR: Ray cluster failed to report $TOTAL_GPUS GPUs within timeout." >&2
+      exit 1
+    fi
+
+    sleep 5
+  done
+else
+  echo "Single-replica launch detected; skipping Ray cluster setup."
 fi
 
-echo "Waiting for Ray cluster to register $TOTAL_GPUS GPUs..."
-for attempt in {1..60}; do
-  CURRENT_GPUS=$(python3 -c "import ray; ray.init(); print(int(ray.cluster_resources().get('GPU', 0)))" 2>/dev/null || echo "0")
-
-  echo "Ray cluster status: $CURRENT_GPUS / $TOTAL_GPUS GPUs ready (attempt $attempt/60)"
-
-  if [ "$CURRENT_GPUS" -ge "$TOTAL_GPUS" ]; then
-    echo "✓ Ray cluster ready with $TOTAL_GPUS GPUs!"
-    break
-  fi
-
-  if [ $attempt -eq 60 ]; then
-    echo "ERROR: Ray cluster failed to report $TOTAL_GPUS GPUs within timeout." >&2
-    exit 1
-  fi
-
-  sleep 5
-done
-
-echo "Launching vLLM server on Ray backend..."
+echo "Launching vLLM server..."
 echo "Server command log: $VLLM_LOG"
 
 # Optimised for gpt-oss models: https://docs.vllm.ai/projects/recipes/en/latest/OpenAI/GPT-OSS.html
@@ -336,12 +340,6 @@ VLLM_CMD=(
   vllm serve "$MODEL"
   --host 0.0.0.0
   --port "$VLLM_PORT"
-  --distributed-executor-backend ray
-  --data-parallel-backend ray
-  --data-parallel-address "$HEAD_NODE_IP"
-  --data-parallel-size "$DATA_PARALLEL_SIZE"
-  --data-parallel-size-local "$DATA_PARALLEL_PER_NODE"
-  --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
   --no-enable-prefix-caching
   --enable-chunked-prefill
   --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
@@ -349,6 +347,22 @@ VLLM_CMD=(
   --max-model-len "$MAX_MODEL_LEN"
   --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
 )
+
+if (( DATA_PARALLEL_SIZE > 1 )); then
+  VLLM_CMD+=(
+    --distributed-executor-backend ray
+    --data-parallel-backend ray
+    --data-parallel-address "$HEAD_NODE_IP"
+    --data-parallel-size "$DATA_PARALLEL_SIZE"
+    --data-parallel-size-local "$DATA_PARALLEL_PER_NODE"
+    --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
+  )
+else
+  VLLM_CMD+=(
+    --distributed-executor-backend mp
+    --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
+  )
+fi
 
 if (( ${#EXTRA_VLLM_ARGS[@]} > 0 )); then
   VLLM_CMD+=("${EXTRA_VLLM_ARGS[@]}")

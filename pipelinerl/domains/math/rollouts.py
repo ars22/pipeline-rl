@@ -127,6 +127,10 @@ async def generate_math_rollout(
         wandb_table_enabled = True
         if wandb_table_cfg is not None:
             wandb_table_enabled = bool(wandb_table_cfg.get("enabled", True))
+        timeout_seconds = int(llm_grader_cfg.get("timeout_seconds", 900)) if llm_grader_cfg is not None else 900
+        max_retries = int(llm_grader_cfg.get("max_retries", 3)) if llm_grader_cfg is not None else 3
+        retry_backoff = llm_grader_cfg.get("retry_backoff", None) if llm_grader_cfg is not None else None
+        retry_backoff = list(retry_backoff) if retry_backoff is not None else [15, 30, 60, 90, 120]
 
         schema_text = parse_schema(schema)
         
@@ -142,6 +146,9 @@ async def generate_math_rollout(
             prompt_name=getattr(cfg.llm_grader, "prompt_name", None),
             model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
             sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            retry_backoff=retry_backoff,
             log_wandb_metrics=cfg.wandb.use_wandb,
             collect_table_entry=bool(cfg.wandb.use_wandb and wandb_table_enabled),
         )
