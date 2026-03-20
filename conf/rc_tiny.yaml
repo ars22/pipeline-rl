@@ -81,6 +81,10 @@ llm:
     max_tokens: 64
     temperature: 0.0
   reasoning_delimiters: []
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 16
+    log_every_n_groups: 1
 
 actor_llm:
   parameters:
@@ -148,3 +152,7 @@ llm_grader:
   # Qwen3.5-2B is not a thinking checkpoint, so proof text should not be
   # stripped when </think> is absent.
   reasoning_delimiters: []
+  wandb_table:
+      enabled: true
+      keep_last_k_groups: 32
+      log_every_n_groups: 2
