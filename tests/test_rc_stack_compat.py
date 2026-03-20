@@ -40,6 +40,7 @@ class RCStackCompatTest(unittest.TestCase):
         for config_name in [
             "rc_smoke",
             "rc_tiny",
+            "rc_tiny_flash_probe",
             "rc_test",
             "rc_proof_qwen3-4b-thinking_v18.00",
         ]:
@@ -138,20 +139,65 @@ class RCStackCompatTest(unittest.TestCase):
         self.assertEqual(cfg.finetune.seq_parallel, 1)
         self.assertEqual(cfg.finetune.gradient_accumulation_passes, 2)
         self.assertEqual(cfg.finetune.rl.temperature, 1.0)
+        self.assertTrue(cfg.finetune.allow_qwen35_text_flash_probe)
+        self.assertTrue(cfg.finetune.use_flash_attention)
         self.assertFalse(cfg.finetune.seq_packing)
-        self.assertEqual(cfg.finetune.attn_implementation, "sdpa")
+        self.assertEqual(cfg.finetune.attn_implementation, "flash_attention_2")
+        self.assertEqual(cfg.vllm_config.vllm_kwargs["attention-backend"], "FLASH_ATTN")
+        self.assertEqual(cfg.rc_actor_vllm_config.vllm_kwargs["attention-backend"], "FLASH_ATTN")
+        self.assertEqual(cfg.summarization_vllm_config.vllm_kwargs["attention-backend"], "FLASH_ATTN")
         self.assertIn("language-model-only", cfg.vllm_config.vllm_kwargs)
         self.assertIn("language-model-only", cfg.rc_actor_vllm_config.vllm_kwargs)
         self.assertIn("language-model-only", cfg.summarization_vllm_config.vllm_kwargs)
-        self.assertEqual(cfg.llm_grader.vllm_kwargs["max-num-batched-tokens"], 8192)
-        self.assertEqual(cfg.llm_grader.vllm_kwargs["max-num-seqs"], 16)
+        self.assertEqual(cfg.llm_grader.vllm_kwargs["max-num-batched-tokens"], 4096)
+        self.assertEqual(cfg.llm_grader.vllm_kwargs["max-num-seqs"], 4)
         self.assertEqual(cfg.llm_grader.vllm_kwargs["max-model-len"], 32768)
         self.assertEqual(cfg.llm_grader.vllm_kwargs["gpu-memory-utilization"], 0.85)
-        self.assertEqual(cfg.llm_grader.sampling_kwargs.max_output_tokens, 32768)
+        self.assertEqual(cfg.llm_grader.sampling_kwargs.max_output_tokens, 2048)
         self.assertEqual(cfg.llm_grader.reasoning_delimiters, [])
         self.assertEqual(cfg.train_dataset_names[0].hub_id, "lm-provers/olympiads-proof-schema")
         self.assertEqual(cfg.train_dataset_names[0].split, "train")
         self.assertEqual(list(cfg.test_dataset_names), ["imo_proof_bench"])
+
+    def test_rc_tiny_flash_probe_preserves_flash_attention_and_packing(self):
+        launch = importlib.import_module("pipelinerl.launch")
+        cfg = self._compose("rc_tiny_flash_probe", overrides=["output_dir=/tmp/rc-tiny-flash-probe"])
+
+        launch._apply_model_compat_overrides(cfg)
+
+        self.assertTrue(cfg.finetune.allow_qwen35_text_flash_probe)
+        self.assertTrue(cfg.finetune.use_flash_attention)
+        self.assertTrue(cfg.finetune.seq_packing)
+        self.assertEqual(cfg.finetune.attn_implementation, "flash_attention_2")
+        self.assertEqual(cfg.vllm_config.vllm_kwargs["attention-backend"], "FLASH_ATTN")
+        self.assertEqual(cfg.rc_actor_vllm_config.vllm_kwargs["attention-backend"], "FLASH_ATTN")
+        self.assertEqual(cfg.summarization_vllm_config.vllm_kwargs["attention-backend"], "FLASH_ATTN")
+        self.assertIn("language-model-only", cfg.vllm_config.vllm_kwargs)
+        self.assertIn("language-model-only", cfg.rc_actor_vllm_config.vllm_kwargs)
+        self.assertIn("language-model-only", cfg.summarization_vllm_config.vllm_kwargs)
+
+    def test_finetune_qwen35_probe_flag_controls_override(self):
+        finetune_loop = importlib.import_module("pipelinerl.finetune_loop")
+
+        base_args = {
+            "model_class": "causal-language-modeling",
+            "config_name": "Qwen/Qwen3.5-2B",
+            "use_flash_attention": True,
+            "attn_implementation": "flash_attention_2",
+            "seq_packing": True,
+        }
+        default_args = OmegaConf.create(base_args)
+        probe_args = OmegaConf.create({**base_args, "allow_qwen35_text_flash_probe": True})
+
+        finetune_loop._apply_finetune_model_compat_overrides(default_args)
+        finetune_loop._apply_finetune_model_compat_overrides(probe_args)
+
+        self.assertFalse(default_args.use_flash_attention)
+        self.assertEqual(default_args.attn_implementation, "sdpa")
+        self.assertFalse(default_args.seq_packing)
+        self.assertTrue(probe_args.use_flash_attention)
+        self.assertEqual(probe_args.attn_implementation, "flash_attention_2")
+        self.assertTrue(probe_args.seq_packing)
 
     def test_rc_rollout_ignores_null_schema_for_gsm8k(self):
         llm_module = importlib.import_module("pipelinerl.llm")

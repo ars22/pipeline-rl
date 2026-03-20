@@ -1,0 +1,28 @@
+defaults:
+  - rc_tiny
+  - _self_
+
+finetune:
+  allow_qwen35_text_flash_probe: true
+  use_flash_attention: true
+  attn_implementation: flash_attention_2
+  seq_packing: true
+
+rc_actor_vllm_config:
+  vllm_kwargs:
+    attention-backend: FLASH_ATTN
+
+summarization_vllm_config:
+  vllm_kwargs:
+    attention-backend: FLASH_ATTN
+
+vllm_config:
+  vllm_kwargs:
+    attention-backend: FLASH_ATTN
+
+wandb:
+  tags:
+    - rc_tiny
+    - smoke
+    - qwen3.5-2b
+    - flash_probe

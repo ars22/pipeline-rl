@@ -11,6 +11,7 @@ optim: adamw_torch
 load_as_bf16: True
 use_flash_attention: true
 attn_implementation: flash_attention_2
+allow_qwen35_text_flash_probe: false
 auto_device_map: False
 #LoRA adapter tuning config
 lora:

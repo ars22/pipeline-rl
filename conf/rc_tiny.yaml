@@ -35,6 +35,10 @@ finetune:
   gradient_accumulation_passes: 2
   seq_length: 2048
   seq_parallel: 1
+  allow_qwen35_text_flash_probe: true
+  use_flash_attention: true
+  attn_implementation: flash_attention_2
+  seq_packing: false
   save_checkpoint_steps: 10
   push_to_hub: false
   interrupt_train_steps: 10
@@ -110,6 +114,7 @@ rc_actor_vllm_config:
     max-num-batched-tokens: 2048
     max-model-len: ${finetune.seq_length}
     pipeline-parallel-size: 1
+    attention-backend: FLASH_ATTN
 
 summarization_vllm_config:
   vllm_kwargs:
@@ -119,6 +124,7 @@ summarization_vllm_config:
     max-num-batched-tokens: 2048
     max-model-len: ${finetune.seq_length}
     pipeline-parallel-size: 1
+    attention-backend: FLASH_ATTN
 
 vllm_config:
   vllm_kwargs:
@@ -128,6 +134,7 @@ vllm_config:
     max-num-batched-tokens: 2048
     max-model-len: ${finetune.seq_length}
     pipeline-parallel-size: 1
+    attention-backend: FLASH_ATTN
 
 train_subset:
   begin: 0

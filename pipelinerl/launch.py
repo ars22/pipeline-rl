@@ -122,7 +122,13 @@ def _apply_model_compat_overrides(cfg: DictConfig) -> None:
         return
 
     if cfg.finetune.model_class == "causal-language-modeling":
-        if cfg.finetune.use_flash_attention:
+        if getattr(cfg.finetune, "allow_qwen35_text_flash_probe", False):
+            logger.warning(
+                "Keeping flash attention compatibility overrides disabled for %s because "
+                "finetune.allow_qwen35_text_flash_probe=true.",
+                model_path,
+            )
+        elif cfg.finetune.use_flash_attention:
             logger.warning(
                 "Disabling flash attention for %s in text-only finetuning; "
                 "Qwen3.5 multimodal checkpoints are unstable on this path.",
@@ -130,7 +136,7 @@ def _apply_model_compat_overrides(cfg: DictConfig) -> None:
             )
             cfg.finetune.use_flash_attention = False
             cfg.finetune.attn_implementation = "sdpa"
-        if cfg.finetune.seq_packing:
+        if not getattr(cfg.finetune, "allow_qwen35_text_flash_probe", False) and cfg.finetune.seq_packing:
             logger.warning(
                 "Disabling sequence packing for %s because the text-only Qwen3.5 compatibility "
                 "path also disables flash attention.",

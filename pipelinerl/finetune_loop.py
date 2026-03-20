@@ -345,6 +345,14 @@ def _apply_finetune_model_compat_overrides(args) -> None:
     if not is_qwen35_multimodal_model(model_ref):
         return
 
+    if getattr(args, "allow_qwen35_text_flash_probe", False):
+        logger.warning(
+            "Keeping flash attention compatibility overrides disabled for %s because "
+            "allow_qwen35_text_flash_probe=true.",
+            model_ref,
+        )
+        return
+
     if getattr(args, "use_flash_attention", False):
         logger.warning(
             "Disabling flash attention for %s in text-only finetuning; "
