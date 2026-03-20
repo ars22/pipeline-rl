@@ -9,7 +9,7 @@
 # FLASH_ATTN_REF=v2.8.4 ./install.sh
 
 # Configuration
-VLLM_VERSION=${VLLM_VERSION:-0.8.5.post1}
+VLLM_VERSION=${VLLM_VERSION:-0.17.1}
 FLASH_ATTN_REF=${FLASH_ATTN_REF:-v2.8.4}
 
 set -e  # Exit on any error
