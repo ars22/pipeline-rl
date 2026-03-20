@@ -345,25 +345,10 @@ def _apply_finetune_model_compat_overrides(args) -> None:
     if not is_qwen35_multimodal_model(model_ref):
         return
 
-    if getattr(args, "allow_qwen35_text_flash_probe", False):
-        logger.warning(
-            "Keeping flash attention compatibility overrides disabled for %s because "
-            "allow_qwen35_text_flash_probe=true.",
-            model_ref,
-        )
-        return
-
-    if getattr(args, "use_flash_attention", False):
-        logger.warning(
-            "Disabling flash attention for %s in text-only finetuning; "
-            "Qwen3.5 multimodal checkpoints are unstable on this path.",
-            model_ref,
-        )
-        args.use_flash_attention = False
-        args.attn_implementation = "sdpa"
     if getattr(args, "seq_packing", False):
         logger.warning(
-            "Disabling sequence packing for %s because the Qwen3.5 compatibility path uses SDPA.",
+            "Disabling sequence packing for %s because packed text-only Qwen3.5 training is "
+            "unstable, while unpacked flash attention is supported.",
             model_ref,
         )
         args.seq_packing = False

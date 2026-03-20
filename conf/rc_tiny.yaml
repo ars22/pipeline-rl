@@ -35,7 +35,6 @@ finetune:
   gradient_accumulation_passes: 2
   seq_length: 2048
   seq_parallel: 1
-  allow_qwen35_text_flash_probe: true
   use_flash_attention: true
   attn_implementation: flash_attention_2
   seq_packing: false
