@@ -6,9 +6,11 @@
 
 # # Use custom version
 # VLLM_VERSION=0.11.0 ./install.sh
+# FLASH_ATTN_REF=v2.8.4 ./install.sh
 
 # Configuration
 VLLM_VERSION=${VLLM_VERSION:-0.8.5.post1}
+FLASH_ATTN_REF=${FLASH_ATTN_REF:-v2.8.4}
 
 set -e  # Exit on any error
 
@@ -35,8 +37,8 @@ uv pip install setuptools
 echo "⚡ Installing vLLM ${VLLM_VERSION}..."
 uv pip install vllm==${VLLM_VERSION}
 
-echo "⚡ Installing flash-attn from source (takes a long time)..."
-git clone https://github.com/Dao-AILab/flash-attention.git
+echo "⚡ Installing flash-attn from source at ${FLASH_ATTN_REF} (takes a long time)..."
+git clone --branch "${FLASH_ATTN_REF}" --depth 1 https://github.com/Dao-AILab/flash-attention.git
 cd flash-attention
 MAX_JOBS=8 python setup.py install
 # Clean up
@@ -83,6 +85,9 @@ echo "✅ Installation complete!"
 echo ""
 echo "To activate the environment in future sessions, run:"
 echo "   source prl/bin/activate"
+echo ""
+echo "To run commands through uv without modifying the hand-managed environment:"
+echo "   uv run --active python -m pipelinerl.launch --config-name=<config_name> output_dir=<output_dir>"
 echo ""
 echo "💡 Tips for Hugging Face cluster users:"
 echo "   - Add 'export UV_LINK_MODE=copy' to your ~/.bashrc"

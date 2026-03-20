@@ -23,6 +23,14 @@ Install the required dependencies from the root directory as follows:
 ./install_grader.sh
 ```
 
+`flash-attn` is intentionally built from source by `./install.sh` into the repo-local `prl` environment, so it should not be added to `pyproject.toml`.
+Activate `prl` before running project commands. If you want to use `uv run`, use it only as a launcher into the active environment:
+
+```sh
+source prl/bin/activate
+uv run --active python -m pipelinerl.launch --config-name=guessing output_dir=tmp/results/test_run/
+```
+
 Then make sure you are authenticated with the Hugging Face Hub:
 
 ```sh
