@@ -1,0 +1,174 @@
+# ---------------------
+# Config for latent_thought RL training.
+#
+# The policy generates auxiliary text AUX given (PREFIX, SUFFIX) sliced from a
+# raw text row. A frozen evaluator vLLM scores the average per-token NLL of
+# (AUX || SUFFIX | PREFIX) and (SUFFIX | PREFIX); reward = baseline - treatment.
+#
+# Layout (5-node, 3/1/1 split):
+#   actor:     3 nodes (24 GPUs)  — fraction 24
+#   evaluator: 1 node  ( 8 GPUs)  — fraction  8 (frozen base, e.g. Qwen3-4B-Base)
+#   finetune:  1 node  ( 8 GPUs)  — fraction  8
+#   total:     5 nodes (40 GPUs)
+# Set --nodes=5 in the sbatch.
+# ---------------------
+defaults:
+    - base
+    - _self_
+
+# Policy init (the trainable model). May be an instruct/thinking variant.
+model_path: Qwen/Qwen3-4B-Instruct-2507
+model_revision: main
+
+# Frozen evaluator (independent of policy). Only this model's vLLM is used to
+# score logprobs for the reward. Weight updates are disabled at launch.
+evaluator:
+    model_path: Qwen/Qwen3-4B-Base
+    # model_revision: main
+
+eval_every_n_versions: 12800
+
+preprocess:
+    shared_memory_entry_size: 2000000000
+
+finetune:
+    attempts: 8
+    train_batch_size: 32
+    valid_batch_size: 32
+    gradient_accumulation_passes: 32
+    seq_length: 18432
+    seq_parallel: 2
+    learning_rate: 1.0e-6
+    lr_scheduler_type: constant_with_warmup
+    num_warmup_steps: 0
+    rl:
+        kl_coef: 0
+        entropy_bonus: 0.0001
+        final_entropy_bonus: ${finetune.rl.entropy_bonus}
+        overlong_filtering: false
+    save_checkpoint_steps: 50
+    push_to_hub: false
+
+llm:
+    parameters:
+        max_tokens: 1024     # cap on aux length; reward already dampens runaway aux
+        temperature: 1.0
+    reasoning_delimiters: ["</think>"]
+    wandb_table:
+        enabled: true
+        keep_last_k_groups: 32
+        log_every_n_groups: 32
+
+test_llm:
+    parameters:
+        max_tokens: 1024
+        temperature: 0.8
+        top_p: 0.95
+        top_k: 20
+
+# This domain has no external LLM grader (the evaluator is a local frozen vLLM
+# launched as the new evaluator_llm job). Skip the grader provisioning path.
+llm_grader:
+    local: false
+
+actor:
+    llm_max_rollouts: 16
+    max_retries: 5
+    shared_memory_entry_size: 2000000000
+    rollout_policy: pipelinerl.domains.latent_thought.generate_latent_thought_rollout
+    system_prompt: null
+    task_template: |-
+        You will be shown a PREFIX and a SUFFIX from a text document. Your task is to generate auxiliary text AUX such that the combined continuation AUX followed by SUFFIX is easy on average for a frozen base language model to predict, given only the PREFIX. The reward depends on the joint per-token predictability of AUX and SUFFIX together — both must be easy to predict; making only one of them easy is not enough.
+
+        Write anything you want. There is no required format.
+
+        PREFIX:
+        {prefix}
+
+        SUFFIX:
+        {suffix}
+
+        AUXILIARY TEXT:
+    discount_factor: 1.0
+
+# Domain-specific knobs read by generate_latent_thought_rollout.
+latent_thought:
+    max_total_tokens: 16384   # prefix+aux+suffix budget for the evaluator
+    min_side_tokens: 64       # skip rollouts where prefix or suffix falls below this
+
+dataset_loader: pipelinerl.domains.latent_thought.load_datasets
+dataset_loader_params:
+    seed: 42
+    min_side_chars: 256
+    max_total_chars: 24000
+    text_field: text
+train_dataset_names:
+    - hub_id: wikitext
+      config: wikitext-103-raw-v1
+      split: train
+test_dataset_names:
+    - hub_id: wikitext
+      config: wikitext-103-raw-v1
+      split: validation
+
+vllm_config:
+    use_v1: false
+    vllm_kwargs:
+        dtype: bfloat16
+        gpu-memory-utilization: 0.9
+        num-scheduler-steps: 1
+        disable-log-requests: ""
+        disable-frontend-multiprocessing: ""
+        max-num-seqs: ${actor.llm_max_rollouts}
+        max-num-batched-tokens: 16384
+        max-model-len: ${finetune.seq_length}
+        return-tokens-as-token-ids: ""
+        tensor-parallel-size: 1
+        pipeline-parallel-size: 1
+        generation-config: vllm
+
+# vLLM config used for the frozen evaluator. Sized to the latent_thought token
+# budget: max-model-len matches latent_thought.max_total_tokens, and chunked
+# prefill is enabled so max-num-batched-tokens can stay tight without violating
+# vllm's "max_num_batched_tokens >= max_model_len" check (which the actor
+# avoids the same way).
+evaluator_vllm_config:
+    use_v1: false
+    vllm_kwargs:
+        dtype: bfloat16
+        gpu-memory-utilization: 0.9
+        num-scheduler-steps: 1
+        disable-log-requests: ""
+        disable-frontend-multiprocessing: ""
+        max-num-seqs: 64
+        max-num-batched-tokens: 16384
+        max-model-len: 16384
+        enable-chunked-prefill: ""
+        return-tokens-as-token-ids: ""
+        tensor-parallel-size: 1
+        pipeline-parallel-size: 1
+        generation-config: vllm
+
+world:
+    replicas: 1
+    actor_fraction: 24       # 3 nodes on a 5-node allocation
+    evaluator_fraction: 8    # 1 node
+    preprocessor_fraction: 0
+    finetune_fraction: 8     # 1 node
+    env_replicas: 0
+    actor_group_port: 9000
+    environment_start_port: 7777
+
+wandb:
+    use_wandb: true
+    wandb_id: null
+    wandb_name: null
+    wandb_entity_name: null
+    wandb_project_name: AI-CSI
+    wandb_resume: always
+    wandb_use_basename: True
+    wandb_workspace_root: null
+    wandb_group: null
+    wandb_dir: null
+    tags: ["latent_thought"]
+    log_verifier_table: false

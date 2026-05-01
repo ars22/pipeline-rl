@@ -114,6 +114,14 @@ class WorldMap:
         if cfg.world.get("summarization_fraction", 0) == 0:
             self.gpus_per_summarization_llm = 0
 
+        # Evaluator LLMs (use evaluator_vllm_config if available, else vllm_config)
+        eval_llm_kwargs = self.cfg.get("evaluator_vllm_config", self.cfg.vllm_config).vllm_kwargs
+        eval_tp = eval_llm_kwargs.get("tensor-parallel-size", 1)
+        eval_pp = eval_llm_kwargs.get("pipeline-parallel-size", 1)
+        self.gpus_per_evaluator_llm = eval_tp * eval_pp
+        if cfg.world.get("evaluator_fraction", 0) == 0:
+            self.gpus_per_evaluator_llm = 0
+
         # Preprocessor LLMs (use vllm_config)
         self.gpus_per_preprocessor_llm = self.gpus_per_rc_actor_llm  # Same as RC actor by default
         
@@ -126,6 +134,7 @@ class WorldMap:
             f"GPUs per LLM: RC Actor={self.gpus_per_rc_actor_llm}, "
             f"Actor={self.gpus_per_actor_llm}, "
             f"Summarization={self.gpus_per_summarization_llm}, "
+            f"Evaluator={self.gpus_per_evaluator_llm}, "
             f"Preprocessor={self.gpus_per_preprocessor_llm}"
         )
 
@@ -211,10 +220,11 @@ class WorldMap:
         # Check if we're using RC actor mode
         rc_actor_fraction = cfg.world.get("rc_actor_fraction", 0)
         summarization_fraction = cfg.world.get("summarization_fraction", 0)
-        
+        evaluator_fraction = cfg.world.get("evaluator_fraction", 0)
+
         fraction_sum = (
             rc_actor_fraction + cfg.world.actor_fraction + summarization_fraction +
-            cfg.world.preprocessor_fraction + cfg.world.finetune_fraction
+            evaluator_fraction + cfg.world.preprocessor_fraction + cfg.world.finetune_fraction
         )
         
         # TODO: support nodes with less than 8 GPUs available
@@ -228,17 +238,21 @@ class WorldMap:
         desired_summarization_gpu_share = (
             max(int(total_gpus * summarization_fraction / fraction_sum), self.gpus_per_summarization_llm) if summarization_fraction else 0
         )
+        desired_evaluator_gpu_share = (
+            max(int(total_gpus * evaluator_fraction / fraction_sum), self.gpus_per_evaluator_llm) if evaluator_fraction else 0
+        )
         desired_preprocessor_gpu_share = (
             max(int(total_gpus * cfg.world.preprocessor_fraction / fraction_sum), self.gpus_per_preprocessor_llm) if cfg.world.preprocessor_fraction else 0
         )
         desired_finetune_gpu_share = (
-            total_gpus - desired_rc_actor_gpu_share - desired_actor_gpu_share - 
-            desired_summarization_gpu_share - desired_preprocessor_gpu_share
+            total_gpus - desired_rc_actor_gpu_share - desired_actor_gpu_share -
+            desired_summarization_gpu_share - desired_evaluator_gpu_share - desired_preprocessor_gpu_share
         )
-        
+
         self._log_info(
             f"Desired GPU share: {desired_rc_actor_gpu_share} for RC actors, "
             f"{desired_actor_gpu_share} for actors, {desired_summarization_gpu_share} for summarization, "
+            f"{desired_evaluator_gpu_share} for evaluators, "
             f"{desired_preprocessor_gpu_share} for preprocessors, {desired_finetune_gpu_share} for finetune"
         )
 
@@ -258,7 +272,13 @@ class WorldMap:
         )
         if self.gpus_per_summarization_llm > 0:
             gpus_per_summarization = gpus_per_summarization - (gpus_per_summarization % self.gpus_per_summarization_llm)
-        
+
+        gpus_per_evaluator = (
+            int(desired_evaluator_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 and evaluator_fraction else 0
+        )
+        if self.gpus_per_evaluator_llm > 0:
+            gpus_per_evaluator = gpus_per_evaluator - (gpus_per_evaluator % self.gpus_per_evaluator_llm)
+
         gpus_per_preprocessor = (
             int(desired_preprocessor_gpu_share / cfg.world.replicas) if cfg.world.replicas > 0 else 0
         )
@@ -274,7 +294,10 @@ class WorldMap:
         
         self.llms_per_summarization = max(int(gpus_per_summarization / self.gpus_per_summarization_llm), 1) if gpus_per_summarization > 0 else 0
         self.total_summarization_llms = self.llms_per_summarization * cfg.world.replicas
-        
+
+        self.llms_per_evaluator = max(int(gpus_per_evaluator / self.gpus_per_evaluator_llm), 1) if gpus_per_evaluator > 0 else 0
+        self.total_evaluator_llms = self.llms_per_evaluator * cfg.world.replicas
+
         self.llms_per_preprocessor = (
             max(int(gpus_per_preprocessor / self.gpus_per_preprocessor_llm), 1) if gpus_per_preprocessor > 0 else 0
         )
@@ -282,22 +305,25 @@ class WorldMap:
         self.gpus_per_rc_actor = gpus_per_rc_actor
         self.gpus_per_actor = gpus_per_actor
         self.gpus_per_summarization = gpus_per_summarization
+        self.gpus_per_evaluator = gpus_per_evaluator
         self.gpus_per_preprocessor = gpus_per_preprocessor
 
         total_rc_actor_gpus = cfg.world.replicas * gpus_per_rc_actor
         total_actor_gpus = cfg.world.replicas * gpus_per_actor
         total_summarization_gpus = cfg.world.replicas * gpus_per_summarization
+        total_evaluator_gpus = cfg.world.replicas * gpus_per_evaluator
         total_preprocessor_gpus = cfg.world.replicas * gpus_per_preprocessor
         self.total_finetune_gpus = (
-            total_gpus - total_rc_actor_gpus - total_actor_gpus - 
-            total_summarization_gpus - total_preprocessor_gpus
+            total_gpus - total_rc_actor_gpus - total_actor_gpus -
+            total_summarization_gpus - total_evaluator_gpus - total_preprocessor_gpus
         )
-        
+
         self._log_info(
             f"The configuration required:\n"
             f"{desired_rc_actor_gpu_share} for RC actors ({self.gpus_per_rc_actor_llm} GPUs/LLM), "
             f"{desired_actor_gpu_share} for actors ({self.gpus_per_actor_llm} GPUs/LLM), "
             f"{desired_summarization_gpu_share} for summarization ({self.gpus_per_summarization_llm} GPUs/LLM), "
+            f"{desired_evaluator_gpu_share} for evaluators ({self.gpus_per_evaluator_llm} GPUs/LLM), "
             f"{desired_preprocessor_gpu_share} for preprocessors ({self.gpus_per_preprocessor_llm} GPUs/LLM), "
             f"{self.total_finetune_gpus} for finetune,\n"
             f"with {cfg.world.replicas} workers.\n"
@@ -306,6 +332,7 @@ class WorldMap:
         self._log_info(
             f"Actual GPU share: {total_rc_actor_gpus} for RC actors, {total_actor_gpus} for actors, "
             f"{total_summarization_gpus} for summarization, "
+            f"{total_evaluator_gpus} for evaluators, "
             f"{total_preprocessor_gpus} for preprocessors, {self.total_finetune_gpus} for finetune"
         )
         if self.total_finetune_gpus < 0:
@@ -418,6 +445,28 @@ class WorldMap:
                     url=summ_url,
                 )
 
+        # Place evaluator LLMs (port 8300+)
+        for _ in range(cfg.world.replicas):
+            for evaluator_llm_idx in range(self.llms_per_evaluator):
+                node = next(
+                    (node for node in self.available_gpus if len(self.available_gpus[node]) >= self.gpus_per_evaluator_llm), None
+                )
+                if node is None:
+                    raise ValueError("Not enough gpus to place all evaluator LLMs")
+                gpus = [self.available_gpus[node].pop() for _ in range(self.gpus_per_evaluator_llm)]
+                local_idx = min(gpus)
+                eval_url = f"http://{self.address_map[node]}:{8300 + local_idx}"
+                logger.info(f"Placing evaluator LLM {evaluator_llm_idx} on node {node} at port {8300 + local_idx} with URL {eval_url}")
+                self.add_job(
+                    kind="evaluator_llm",
+                    replica_idx=evaluator_llm_idx,
+                    local_idx=local_idx,
+                    node_rank=node,
+                    gpus=gpus,
+                    port=8300 + local_idx,
+                    url=eval_url,
+                )
+
         # Place preprocessor LLMs (port 8180+)
         for _ in range(cfg.world.replicas):
             for preprocessor_llm_idx in range(self.llms_per_preprocessor):
@@ -472,6 +521,10 @@ class WorldMap:
     def get_summarization_urls(self) -> list[str]:
         """Get URLs for summarization LLMs, returns empty list if none exist"""
         return [job.url for job in self.get_all_jobs() if job.kind == "summarization_llm"]
+
+    def get_evaluator_urls(self) -> list[str]:
+        """Get URLs for evaluator LLMs, returns empty list if none exist"""
+        return [job.url for job in self.get_all_jobs() if job.kind == "evaluator_llm"]
 
     def get_preprocessor_urls(self) -> list[str]:
         return [job.url for job in self.get_all_jobs() if job.kind == "preprocessor_llm"]

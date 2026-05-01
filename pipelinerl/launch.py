@@ -137,6 +137,69 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
         )
 
 
+def run_evaluator_llm(
+    cfg: DictConfig, evaluator_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
+):
+    """Launch a frozen evaluator vLLM server (e.g. for the latent_thought domain).
+
+    The evaluator model is independent of the policy: it reads `cfg.evaluator.model_path`,
+    not `cfg.model_path`. Weight updates are disabled.
+    """
+    if cfg.get("evaluator") is None or cfg.evaluator.get("model_path") is None:
+        raise ValueError("evaluator.model_path must be defined to launch evaluator LLMs")
+    model_id = cfg.evaluator.model_path
+    model_revision = cfg.evaluator.get("model_revision")
+
+    vllm_cfg = cfg.get("evaluator_vllm_config")
+    if vllm_cfg is None:
+        vllm_cfg = cfg.vllm_config
+    kwargs = vllm_cfg.vllm_kwargs.copy() if vllm_cfg.vllm_kwargs else {}
+
+    log_dir = exp_dir / f"evaluator_vllm_{evaluator_llm_idx}"
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Same custom entrypoint pattern as summarization LLMs (no weight updates)
+    entrypoint = (
+        "pipelinerl.entrypoints.run_vllm1"
+        if vllm_cfg.use_v1 else
+        "pipelinerl.entrypoints.run_vllm0"
+    )
+    cmd = [
+        "python",
+        "-m",
+        entrypoint,
+        "--model",
+        str(model_id),
+        "--port",
+        str(8300 + local_idx),  # Use 8300+ for evaluator LLMs
+        "--host",
+        "0.0.0.0",
+        "--seed",
+        str(cfg.seed + evaluator_llm_idx + 2000),
+        "--disable-weight-updates",  # Evaluator is frozen
+    ]
+    if model_revision:
+        cmd.extend(["--revision", str(model_revision)])
+
+    for k, v in kwargs.items():
+        cmd.append(f"--{k}")
+        if v not in [None, ""]:
+            cmd.append(str(v))
+
+    gpu_str = ",".join([str(gpu) for gpu in gpus])
+    logger.info(f"Running evaluator LLM with command: {' '.join(cmd)} with gpus: {gpu_str}")
+    save_command(log_dir, cmd)
+    log_file_path = os.path.join(log_dir, "stdout.log")
+    err_file_path = os.path.join(log_dir, "stderr.log")
+    with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
+        yield _popen(
+            cmd,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            stdout=log_file,
+            stderr=err_file,
+        )
+
+
 def run_summarization_llm(
     cfg: DictConfig, summarization_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path
 ):
@@ -390,6 +453,7 @@ def run_actor(world_map: WorldMap, actor_idx: int, exp_dir: Path):
     if actor_idx != 0:
         raise NotImplementedError("Can only do 1 actor yet")
     llm_urls = "+".join(world_map.get_actor_urls())
+    evaluator_llm_urls = world_map.get_evaluator_urls()
     cmd = [
         "python",
         "-m",
@@ -402,6 +466,8 @@ def run_actor(world_map: WorldMap, actor_idx: int, exp_dir: Path):
         f"hydra.run.dir={exp_dir}/actor",
         f"+me.llm_urls={llm_urls}",
     ]
+    if evaluator_llm_urls:
+        cmd.append(f"+me.evaluator_llm_urls={'+'.join(evaluator_llm_urls)}")
     logger.info(f"Running actor with command: {' '.join(cmd)}")
     save_command(exp_dir / "actor", cmd)
     yield _popen(
@@ -675,7 +741,7 @@ def debug_link_streams(cfg: DictConfig, topics: list[str]):
 def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | None = None):
     exp_dir = Path(cfg.output_dir)
     processes = []
-    all_job_kinds = ["rc_actor", "rc_actor_llm", "summarization_llm", "actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm", "finetune"]
+    all_job_kinds = ["rc_actor", "rc_actor_llm", "summarization_llm", "evaluator_llm", "actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm", "finetune"]
     # for rank in range(world_map.world_size):
     logger.info(f"Jobs on rank {world_map.my_rank}: {world_map.get_jobs_on_rank(world_map.my_rank)}")
     if job_kind_filter is None:
@@ -695,6 +761,10 @@ def launch_jobs(cfg: DictConfig, world_map: WorldMap, job_kind_filter: list | No
             if cfg.debug.use_existing_llms:
                 continue
             processes.extend(run_summarization_llm(cfg, job.replica_idx, job.local_idx, job.gpus, exp_dir))
+        elif job.kind == "evaluator_llm":
+            if cfg.debug.use_existing_llms:
+                continue
+            processes.extend(run_evaluator_llm(cfg, job.replica_idx, job.local_idx, job.gpus, exp_dir))
         elif job.kind == "actor":
             processes.extend(run_actor(world_map, job.replica_idx, exp_dir))
         elif job.kind == "environment":
@@ -1029,11 +1099,11 @@ def main(cfg: DictConfig):
     if cfg.debug.mode == "finetune":
         processes.extend(launch_jobs(cfg, world_map, ["finetune"]))
     elif cfg.debug.mode == "actor":
-        processes.extend(launch_jobs(cfg, world_map, ["actor", "environment", "actor_llm"]))
+        processes.extend(launch_jobs(cfg, world_map, ["actor", "environment", "actor_llm", "evaluator_llm"]))
     elif cfg.debug.mode == "preprocessor":
         processes.extend(launch_jobs(cfg, world_map, ["preprocessor", "preprocessor_llm"]))
     elif cfg.debug.mode == "actor+preprocessor":
-        processes.extend(launch_jobs(cfg, world_map, ["actor", "environment", "actor_llm", "preprocessor", "preprocessor_llm"]))       
+        processes.extend(launch_jobs(cfg, world_map, ["actor", "environment", "actor_llm", "evaluator_llm", "preprocessor", "preprocessor_llm"]))
     elif cfg.debug.mode == "finetune+preprocessor":
         processes.extend(launch_jobs(cfg, world_map, ["finetune", "preprocessor", "preprocessor_llm"]))
     elif cfg.debug.mode in ["", "open_loop"]:

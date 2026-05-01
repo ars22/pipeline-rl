@@ -140,10 +140,11 @@ async def generate_math_rollout(
             schema=schema_text,
             generation=generation_final_answer,
             prompt_name=getattr(cfg.llm_grader, "prompt_name", None),
-            model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
+            model=getattr(cfg.llm_grader, "name", None) if ("/" in getattr(cfg.llm_grader, "name", "") or getattr(cfg.llm_grader, "backend", "openai") != "openai") else os.getenv("HF_ENDPOINT_REPO"),
             sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
             log_wandb_metrics=cfg.wandb.use_wandb,
             collect_table_entry=bool(cfg.wandb.use_wandb and wandb_table_enabled),
+            backend=getattr(cfg.llm_grader, "backend", "openai"),
         )
         score = verification.score
         verifier_metrics = verification.metrics

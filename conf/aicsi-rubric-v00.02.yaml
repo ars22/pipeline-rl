@@ -1,0 +1,147 @@
+# ---------------------
+# Config for AI-CoScientist rubric-based RL training.
+# Reward = n_yes / n_criteria from evaluate_rubric.md judge.
+#   generation: 2 nodes
+#   grader: 0 node (use API instead)
+#   finetuning: 2 nodes
+# Base model: Qwen/Qwen3-4B-Thinking-2507
+# ---------------------
+defaults:
+    - base
+    - _self_
+
+model_path: Qwen/Qwen3-4B-Thinking-2507
+model_revision: main
+
+eval_every_n_versions: 12800
+
+preprocess:
+  shared_memory_entry_size: 2000000000
+
+finetune:
+  attempts: 8
+  train_batch_size: 32
+  valid_batch_size: 32
+  gradient_accumulation_passes: 32
+  seq_length: 51200
+  seq_parallel: 2
+  learning_rate: 1.0e-6
+  lr_scheduler_type: constant_with_warmup
+  num_warmup_steps: 0
+  rl:
+    entropy_bonus: 0.0001
+    final_entropy_bonus: ${finetune.rl.entropy_bonus}
+    overlong_filtering: false
+  save_checkpoint_steps: 10
+  push_to_hub: true
+  hub_model_id: lm-provers/QED-Nano-v1.6-dev
+  hub_model_revision: aicsi-rubric-v00.02
+  hub_ignore_patterns:
+    - "*.pt"
+    - "*.pth"
+
+llm:
+  parameters:
+    max_tokens: 49152
+    temperature: 0.8
+  reasoning_delimiters: ["</think>"]
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 32
+    log_every_n_groups: 32
+
+test_llm:
+  parameters:
+    max_tokens: 49152
+    temperature: 0.8
+    top_p: 0.95
+    top_k: 20
+
+llm_grader:
+  local: false
+  backend: openai
+  name: openai/gpt-oss-20b
+  vllm_kwargs:
+    num_nodes: 1
+    data-parallel-size: 8
+    tensor-parallel-size: 1
+    max-num-batched-tokens: 24576
+    max-num-seqs: 64
+    max-model-len: 98304
+    gpu-memory-utilization: 0.9
+  sampling_kwargs:
+    temperature: 0.0
+    max_output_tokens: 8192
+  reasoning_delimiters: ["</think>"]
+  # Rubric evaluation prompt from v3 eval pipeline
+  prompt_name: /mnt/weka/home/wen.ye/workspace_m2/workspace/AI-Scientist/eval/conf_v3/prompts/evaluate_rubric.md
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 32
+    log_every_n_groups: 32
+
+actor:
+  llm_max_rollouts: 20
+  max_retries: 10
+  shared_memory_entry_size: 2000000000
+  rollout_policy: pipelinerl.domains.aicsi_rubric.generate_aicsi_rubric_rollout
+  system_prompt: null
+  task_template: |-
+    {task}
+  discount_factor: 1
+
+environment:
+  _target_: pipelinerl.domains.aicsi_rubric.AicsIRubricEnvironment
+  model_name: ${llm_grader.name}
+  sampling_kwargs: ${llm_grader.sampling_kwargs}
+  prompt_name: ${llm_grader.prompt_name}
+  backend: ${llm_grader.backend}
+
+dataset_loader: pipelinerl.domains.aicsi_rubric.load_datasets
+dataset_loader_params:
+  seed: 42
+train_dataset_names:
+  - hub_id: ACSci/v3-train
+    split: eliminated_train
+test_dataset_names:
+  - hub_id: ACSci/v3-train
+    split: eliminated_test
+
+vllm_config:
+  use_v1: false
+  vllm_kwargs:
+    dtype: bfloat16
+    gpu-memory-utilization: 0.9
+    num-scheduler-steps: 1
+    disable-log-requests: ""
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 16384
+    max-model-len: ${finetune.seq_length}
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+world:
+  replicas: 1
+  actor_fraction: 24
+  preprocessor_fraction: 0
+  finetune_fraction: 8
+  env_replicas: 1
+  actor_group_port: 9000
+  environment_start_port: 7777
+
+wandb:
+  use_wandb: true
+  wandb_id: null
+  wandb_name: null
+  wandb_entity_name: null
+  wandb_project_name: AI-CSI
+  wandb_resume: always
+  wandb_use_basename: True
+  wandb_workspace_root: null
+  wandb_group: null
+  wandb_dir: null
+  tags: []
+  log_verifier_table: true

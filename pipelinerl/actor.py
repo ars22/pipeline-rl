@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 import math
 import multiprocessing as mp
@@ -310,6 +311,7 @@ async def schedule_rollouts(
     trainer_state: TrainerState,
     llms: list[TrainableLLM],
     scheduler_name: str,
+    evaluator_llms: list[TrainableLLM] | None = None,
 ):
     """This courotuine does the following.
 
@@ -331,6 +333,20 @@ async def schedule_rollouts(
     group_rollouts = {}
     rollout_policy = hydra.utils.get_method(cfg.actor.rollout_policy)
     logger.info(f"Use rollout policy: {rollout_policy}")
+
+    # If the rollout policy accepts an `evaluator_llm` kwarg and we have evaluator
+    # LLMs available, pass one in (round-robin over the pool, indexed by llm_index).
+    rollout_policy_needs_evaluator = (
+        bool(evaluator_llms)
+        and "evaluator_llm" in inspect.signature(rollout_policy).parameters
+    )
+    if rollout_policy_needs_evaluator:
+        logger.info(f"Using {len(evaluator_llms)} evaluator LLM(s) for rollout policy")
+    elif evaluator_llms and not rollout_policy_needs_evaluator:
+        logger.warning(
+            "Evaluator LLMs are configured but the rollout policy does not accept an "
+            "`evaluator_llm` kwarg; ignoring evaluator LLMs."
+        )
 
     max_retries = cfg.actor.get("max_retries", 3)
     retry_base_delay = cfg.actor.get("retry_base_delay", 1.0)
@@ -357,7 +373,13 @@ async def schedule_rollouts(
             last_error = None
             for attempt in range(max_retries):
                 try:
-                    rollout_result = await rollout_policy(cfg, llm, problem, session)
+                    if rollout_policy_needs_evaluator:
+                        evaluator_llm = evaluator_llms[llm_index % len(evaluator_llms)]
+                        rollout_result = await rollout_policy(
+                            cfg, llm, problem, session, evaluator_llm=evaluator_llm
+                        )
+                    else:
+                        rollout_result = await rollout_policy(cfg, llm, problem, session)
                     break
                 except Exception as e:
                     last_error = e
@@ -524,6 +546,7 @@ def rollout_maker_entrypoint(
     result_queue: SharedMemoryQueue,
     llms: list[TrainableLLM],
     scheduler_name: str,
+    evaluator_llms: list[TrainableLLM] | None = None,
 ):
     trainer_state = TrainerState(Path(cfg.output_dir))
     if cfg.debug.mode:
@@ -534,7 +557,10 @@ def rollout_maker_entrypoint(
     loop = uvloop.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(
-        schedule_rollouts(cfg, attempts, problem_queue, result_queue, trainer_state, llms, scheduler_name)
+        schedule_rollouts(
+            cfg, attempts, problem_queue, result_queue, trainer_state, llms, scheduler_name,
+            evaluator_llms=evaluator_llms,
+        )
     )
     loop.close()
     logger.info("Rollout maker loop closed")
@@ -605,12 +631,14 @@ class ActorLoop:
         stats_stream: StreamSpec,
         trainer_state: TrainerState,
         is_training: bool = True,
+        evaluator_llms: list[TrainableLLM] | None = None,
     ) -> None:
         self.data_stream = data_stream
         self.trainer_state = trainer_state
         self.stats_stream = stats_stream
         self.sliding_aggregator = SlidingWindowAggregator(window_size=cfg.actor.throughput_window_size)
         self.llms = llms
+        self.evaluator_llms = evaluator_llms or []
         self.loop_start_time = -1
         self.cfg = cfg
         self.is_training = is_training
@@ -694,7 +722,10 @@ class ActorLoop:
             )
             process = mp.Process(
                 target=rollout_maker_entrypoint,
-                args=(self.cfg, attempts, self.problem_queue, self.result_queue, llms, scheduler_name),
+                args=(
+                    self.cfg, attempts, self.problem_queue, self.result_queue, llms, scheduler_name,
+                    self.evaluator_llms,
+                ),
             )
             process.start()
             self.rollout_processes.append(process)
@@ -1187,7 +1218,35 @@ def run_actor_loop(cfg: DictConfig):
         for url in llm_urls
     ]
 
+    # Build optional evaluator LLM clients for rollout policies that need a
+    # frozen scoring model (e.g. the latent_thought domain).
+    evaluator_llm_urls: list[str] = []
+    evaluator_llms: list[TrainableLLM] = []
+    if "evaluator_llm_urls" in cfg.me and cfg.me.evaluator_llm_urls:
+        evaluator_llm_urls = str(cfg.me.evaluator_llm_urls).split("+")
+        eval_cfg = cfg.get("evaluator")
+        if eval_cfg is None or eval_cfg.get("model_path") is None:
+            raise ValueError(
+                "evaluator.model_path must be defined when evaluator LLM urls are present"
+            )
+        eval_model_path = eval_cfg.model_path
+        evaluator_llms = [
+            TrainableLLM(
+                base_url=url,
+                model_name=str(eval_model_path),
+                tokenizer_name=str(eval_model_path),
+                parameters={},
+                use_cache=False,
+                collect_logprobs=False,
+                observe_llm_calls=False,
+            )
+            for url in evaluator_llm_urls
+        ]
+        logger.info(f"Configured evaluator LLM URLs: {evaluator_llm_urls}")
+
     wait_for_inference_servers(llm_urls)
+    if evaluator_llm_urls:
+        wait_for_inference_servers(evaluator_llm_urls)
     wait_for_environments(cfg)
     trainer_state = TrainerState(exp_path)
     if cfg.debug.mode:
@@ -1212,7 +1271,12 @@ def run_actor_loop(cfg: DictConfig):
         train_stream_reader = None
         
     train_loop = ActorLoop(
-        data_stream=data_stream, cfg=cfg, trainer_state=trainer_state, stats_stream=stats_stream, llms=train_llms
+        data_stream=data_stream,
+        cfg=cfg,
+        trainer_state=trainer_state,
+        stats_stream=stats_stream,
+        llms=train_llms,
+        evaluator_llms=evaluator_llms,
     )
     train_loop_run = train_loop.run(
         dataset=train_dataset_final,
@@ -1224,6 +1288,7 @@ def run_actor_loop(cfg: DictConfig):
         stats_stream=test_stats_stream,
         llms=test_llms,
         is_training=False,
+        evaluator_llms=evaluator_llms,
     )
     test_loop_run = None
 

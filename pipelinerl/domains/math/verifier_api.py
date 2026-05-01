@@ -314,6 +314,9 @@ def _extract_reasoning_from_response(response: Any) -> str:
 
     See: https://platform.openai.com/docs/api-reference/responses/object
     """
+    # Dict responses (nvidia, gemini backends) have no structured reasoning output
+    if isinstance(response, dict):
+        return ""
     reasoning_chunks: list[str] = []
     for item in response.output or []:
         if getattr(item, "type", None) == "reasoning":
@@ -383,7 +386,84 @@ def get_openai_client():
             api_key=api_key,
             base_url=base_url,
         )
-    return _openai_client 
+    return _openai_client
+
+
+def _call_nvidia_api(prompt_text: str, model: str, sampling_kwargs: dict[str, Any] | None = None) -> dict:
+    """
+    Call NVIDIA inference API using raw HTTP requests.
+    Requires NVIDIA_API_KEY to be set in environment.
+    Returns a dict with 'output_text' and optionally 'usage'.
+    """
+    import requests
+
+    api_key = os.getenv("NVIDIA_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing NVIDIA_API_KEY environment variable")
+
+    url = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1/chat/completions")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    kwargs = dict(sampling_kwargs) if sampling_kwargs else {}
+    # Map sampling_kwargs to NVIDIA's expected fields
+    temperature = kwargs.pop("temperature", 1.0)
+    max_tokens = kwargs.pop("max_output_tokens", kwargs.pop("max_tokens", 4096))
+    # Remove OpenAI Responses API specific fields that NVIDIA doesn't support
+    kwargs.pop("reasoning", None)
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt_text}],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        **kwargs,
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=900)
+    resp.raise_for_status()
+    data = resp.json()
+    output_text = data["choices"][0]["message"]["content"]
+    usage = data.get("usage")
+    return {"output_text": output_text, "usage": usage}
+
+
+def _call_gemini_api(prompt_text: str, model: str, sampling_kwargs: dict[str, Any] | None = None) -> dict:
+    """
+    Call Google Gemini API using the google-generativeai SDK.
+    Requires GEMINI_API_KEY to be set in environment.
+    Returns a dict with 'output_text' and optionally 'usage'.
+    """
+    import google.generativeai as genai
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GEMINI_API_KEY environment variable")
+
+    genai.configure(api_key=api_key)
+
+    kwargs = dict(sampling_kwargs) if sampling_kwargs else {}
+    temperature = kwargs.pop("temperature", 1.0)
+    max_tokens = kwargs.pop("max_output_tokens", kwargs.pop("max_tokens", 4096))
+    # Remove fields that Gemini doesn't support
+    kwargs.pop("reasoning", None)
+
+    gen_model = genai.GenerativeModel(model)
+    resp = gen_model.generate_content(
+        prompt_text,
+        generation_config={"temperature": temperature, "max_output_tokens": max_tokens},
+    )
+    output_text = resp.text
+    # Gemini SDK exposes usage via resp.usage_metadata
+    usage = None
+    if hasattr(resp, "usage_metadata") and resp.usage_metadata is not None:
+        um = resp.usage_metadata
+        usage = {
+            "prompt_tokens": getattr(um, "prompt_token_count", None),
+            "completion_tokens": getattr(um, "candidates_token_count", None),
+        }
+    return {"output_text": output_text, "usage": usage}
+
 
 # =================================================
 # Proof evaluator: calls OpenAI-compatible endpoint
@@ -402,6 +482,7 @@ async def verify_proof(
     retry_backoff: list[int] = [15, 30, 60, 90, 120],
     log_wandb_metrics: bool | None = None,
     collect_table_entry: bool | None = None,
+    backend: str = "openai",
 ) -> ProofVerificationResult:
     """
     Evaluate a model-generated proof via Groq GPR model.
@@ -424,7 +505,10 @@ async def verify_proof(
             metrics=_merge_metrics({}, rollout_metrics),
         )
 
-    client = client or get_openai_client()
+    if backend == "openai":
+        client = client or get_openai_client()
+    elif backend not in ("nvidia", "gemini"):
+        raise ValueError(f"Unsupported backend: {backend!r}. Must be 'openai', 'nvidia', or 'gemini'.")
     if not isinstance(schema, str):
         raise TypeError("verify_proof expects schema as Markdown string; convert via parse_schema() first.")
 
@@ -441,7 +525,6 @@ async def verify_proof(
 
     loop = asyncio.get_event_loop()
 
-    # TODO: add support for chat completions API for other graders
     async def _call_openai():
         return await loop.run_in_executor(
             None,
@@ -452,6 +535,24 @@ async def verify_proof(
             ),
         )
 
+    async def _call_nvidia():
+        return await loop.run_in_executor(
+            None,
+            lambda: _call_nvidia_api(prompt_text, model, sampling_kwargs),
+        )
+
+    async def _call_gemini():
+        return await loop.run_in_executor(
+            None,
+            lambda: _call_gemini_api(prompt_text, model, sampling_kwargs),
+        )
+
+    _backend_callers = {
+        "openai": _call_openai,
+        "nvidia": _call_nvidia,
+        "gemini": _call_gemini,
+    }
+
     attempt_failure_causes: list[str] = []
     num_retries = 0
     runtime_metrics: dict[str, float | int] = {}
@@ -459,25 +560,30 @@ async def verify_proof(
     for attempt in range(1, max_retries + 1):
         attempt_start = time.perf_counter()
         try:
-            response = await asyncio.wait_for(_call_openai(), timeout=timeout_seconds)
+            response = await asyncio.wait_for(_backend_callers[backend](), timeout=timeout_seconds)
             latency_seconds = time.perf_counter() - attempt_start
             usage = getattr(response, "usage", None)
+            if usage is None and isinstance(response, dict):
+                usage = response.get("usage")
             output_tokens = None
             input_tokens = None
             if usage is not None:
                 output_tokens = getattr(usage, "output_tokens", None)
                 input_tokens = getattr(usage, "input_tokens", None)
                 if output_tokens is None and isinstance(usage, dict):
-                    output_tokens = usage.get("output_tokens")
+                    output_tokens = usage.get("output_tokens") or usage.get("completion_tokens")
                 if input_tokens is None and isinstance(usage, dict):
-                    input_tokens = usage.get("input_tokens")
+                    input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens")
             if collect_metrics:
                 runtime_metrics = {"verifier/runtime/latency_per_request": latency_seconds}
                 if output_tokens is not None:
                     runtime_metrics["verifier/runtime/output_tokens"] = output_tokens
                 if input_tokens is not None:
                     runtime_metrics["verifier/runtime/input_tokens"] = input_tokens
-            output_text = getattr(response, "output_text", None) or ""
+            if isinstance(response, dict):
+                output_text = response.get("output_text", "")
+            else:
+                output_text = getattr(response, "output_text", None) or ""
             match = re.search(r"<score>(\d+)</score>", output_text)
             if match:
                 score = int(match.group(1))
@@ -567,6 +673,7 @@ class MathProofEnvironment:
         sampling_kwargs: dict[str, Any] | None = None,
         use_wandb: bool | None = True,
         prompt_name: str | os.PathLike | None = None,
+        backend: str = "openai",
     ):
         self.model_name = model_name
         self.sampling_kwargs = sampling_kwargs
@@ -574,6 +681,7 @@ class MathProofEnvironment:
         if not prompt_name:
             raise ValueError("MathProofEnvironment requires llm_grader.prompt_name to be set")
         self.prompt_name = prompt_name
+        self.backend = backend
 
     def launch(self, port: int):
         """
@@ -599,7 +707,7 @@ class MathProofEnvironment:
             schema = parse_schema(request["schema"])
             generation = request["generation"]
 
-            client = get_openai_client()
+            client = get_openai_client() if self.backend == "openai" else None
             verification = await verify_proof(
                 problem=problem,
                 ref_solution=ref_solution,
@@ -611,6 +719,7 @@ class MathProofEnvironment:
                 sampling_kwargs=self.sampling_kwargs,
                 log_wandb_metrics=self.use_wandb,
                 collect_table_entry=False,
+                backend=self.backend,
             )
             return JSONResponse(content={"score": verification.score})
 
