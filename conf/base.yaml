@@ -64,6 +64,7 @@ test_llm:
     top_k: 50
 
 llm_grader:
+  score_threshold: null
   name: null
   vllm_kwargs:
     num_nodes: 1
