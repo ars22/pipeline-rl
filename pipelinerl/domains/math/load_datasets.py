@@ -9,6 +9,7 @@ import hydra
 from datasets import load_dataset
 from omegaconf import DictConfig, ListConfig, OmegaConf
 import pandas as pd
+import requests
 
 """
 math_verify expects the following LaTeX format for the gold answer (with $ or \\boxed).
@@ -21,6 +22,22 @@ and this will not parse:
 HUB_DATASETS = ["lm-provers/olympiads-proof-schema", "lm-provers/olympiads-proof-schema-benchmark", "lm-provers/olympiads-proof-schema-cleaned", "lm-provers/olympiads-proof-schema-cleaned-v2", "lm-provers/aops_cleaned_v2", "lm-provers/aops-olympiads"]
 
 logger = logging.getLogger(__name__)
+
+
+def _load_json_dataset(data_files: str, split: str = "train"):
+    if re.match(r"^https?://", data_files):
+        response = requests.get(data_files, timeout=300)
+        response.raise_for_status()
+        payload = response.json()
+        if isinstance(payload, list):
+            if payload and isinstance(payload[0], list):
+                payload = [{str(i): value for i, value in enumerate(row)} for row in payload]
+            return datasets.Dataset.from_list(payload)
+        if isinstance(payload, dict):
+            return datasets.Dataset.from_dict(payload)
+        raise ValueError(f"Unsupported remote JSON payload type: {type(payload)!r}")
+
+    return load_dataset("json", data_files=data_files, split=split)
 
 def process_proof_problem(dataset, dataset_name):
     for row in dataset:
@@ -190,7 +207,7 @@ def load_math(split):
         "prealgebra",
         "precalculus",
     ]:
-        dataset = load_dataset("EleutherAI/hendrycks_math", config, split=split, trust_remote_code=True)
+        dataset = load_dataset("EleutherAI/hendrycks_math", config, split=split)
         for sample in dataset:
             data.append(sample)
     return datasets.Dataset.from_list(data)
@@ -198,9 +215,9 @@ def load_math(split):
 
 def _load_aime_dataset(year: int, upsample_factor: int = 0) -> list[dict]:
     if year == 2025:
-        aime_dataset = load_dataset("MathArena/aime_2025", split="train", trust_remote_code=True)
+        aime_dataset = load_dataset("MathArena/aime_2025", split="train")
     else:
-        aime_dataset = load_dataset("AI-MO/aimo-validation-aime", split="train", trust_remote_code=True)
+        aime_dataset = load_dataset("AI-MO/aimo-validation-aime", split="train")
         aime_dataset = aime_dataset.filter(lambda x: str(year) in x["url"])
 
     dataset_name = f"aime_{year}" + ("" if upsample_factor > 0 else "_original")
@@ -218,7 +235,7 @@ def _load_aime_dataset(year: int, upsample_factor: int = 0) -> list[dict]:
 
 
 def _load_amc_dataset(year: int, upsample_factor: int = 0) -> list[dict]:
-    amc_dataset = load_dataset("AI-MO/aimo-validation-amc", split="train", trust_remote_code=True)
+    amc_dataset = load_dataset("AI-MO/aimo-validation-amc", split="train")
     amc_dataset = amc_dataset.filter(lambda x: str(year) in x["url"])
 
     dataset_name = f"amc_{year}" + ("" if upsample_factor > 0 else "_original")
@@ -278,11 +295,10 @@ def load_datasets(
                 raise ValueError("Hub dataset specs must include a 'hub_id' field.")
             config = dataset_spec.get("config")
             split = dataset_spec.get("split", "train")
-            trust_remote_code = dataset_spec.get("trust_remote_code", True)
             load_args: Tuple[Any, ...] = (hub_id,)
             if config is not None:
                 load_args += (config,)
-            dataset = load_dataset(*load_args, split=split, trust_remote_code=trust_remote_code)
+            dataset = load_dataset(*load_args, split=split)
             if hub_id in HUB_DATASETS:
                 samples = [s for s in process_proof_problem(dataset, hub_id.split("/")[-1]) if s is not None]
             else:
@@ -296,7 +312,7 @@ def load_datasets(
             )
             datasets += add_ids(samples)
         elif isinstance(dataset_spec, str) and "/" in dataset_spec:
-            dataset = load_dataset(dataset_spec, split="train", trust_remote_code=True)
+            dataset = load_dataset(dataset_spec, split="train")
             samples = [dict(row) for row in dataset]
             for sample in samples:
                 sample.setdefault("dataset", dataset_spec)
@@ -304,33 +320,33 @@ def load_datasets(
             datasets += add_ids(samples)
 
     if "eurus_train" in dataset_names:
-        dataset = load_dataset("PRIME-RL/Eurus-2-RL-Data", split="train", trust_remote_code=True)
+        dataset = load_dataset("PRIME-RL/Eurus-2-RL-Data", split="train")
         samples = [s for s in process_eurus(dataset) if s is not None]
         logger.info(f"Loading eurus train dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     # great for debugging since its much smaller than eurus train
     if "eurus_validation" in dataset_names:
-        dataset = load_dataset("PRIME-RL/Eurus-2-RL-Data", split="validation", trust_remote_code=True)
+        dataset = load_dataset("PRIME-RL/Eurus-2-RL-Data", split="validation")
         samples = [s for s in process_eurus(dataset) if s is not None]
         logger.info(f"Loading eurus validation dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "math_train" in dataset_names:
         # math_dataset = load_math("train")
-        dataset = load_dataset("hendrycks/competition_math", split="train", trust_remote_code=True)
+        dataset = load_dataset("hendrycks/competition_math", split="train")
         samples = [s for s in process_math(dataset, "math_train") if s is not None]
         logger.info(f"Loading math train dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "imo_proof_bench" in dataset_names:
-        dataset = load_dataset("Hwilner/imo-proofbench", split="train", trust_remote_code=True)
+        dataset = load_dataset("Hwilner/imo-proofbench", split="train")
         samples = [s for s in process_proofbench_problem(dataset, "imo_proof_bench") if s is not None]
         logger.info(f"Loading imo proof bench dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "imo_answer_bench" in dataset_names:
-        dataset = load_dataset("Hwilner/imo-answerbench", split="train", trust_remote_code=True)
+        dataset = load_dataset("Hwilner/imo-answerbench", split="train")
         samples = [s for s in process_answer_bench(dataset, "answer_bench") if s is not None]
         logger.info(f"Loading answer bench dataset: {len(samples)} samples")
         datasets += add_ids(samples)
@@ -339,11 +355,8 @@ def load_datasets(
         # SimpleRL MATH dataset
         #   level 3-5 math problems from both train and test sets of the original MATH dataset (excluding problems from MATH-500)
         # math_dataset = load_math("train")
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/hkust-nlp/simpleRL-reason/refs/heads/v0/train/data/math_level3to5_data_processed_with_qwen_prompt.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/hkust-nlp/simpleRL-reason/refs/heads/v0/train/data/math_level3to5_data_processed_with_qwen_prompt.json"
         )
         samples = [s for s in process_math(dataset, "math_simplerl_train") if s is not None]
         logger.info(f"Loading math simplerl train dataset: {len(samples)} samples")
@@ -353,11 +366,8 @@ def load_datasets(
         # SimpleRL MATH dataset subset
         #   level 3-5 math problems from both train and test sets of the original MATH dataset (excluding problems from MATH-500)
         # math_dataset = load_math("train")
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/hkust-nlp/simpleRL-reason/refs/heads/v0/train/data/math_level3to5_data_processed_with_qwen_prompt.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/hkust-nlp/simpleRL-reason/refs/heads/v0/train/data/math_level3to5_data_processed_with_qwen_prompt.json"
         )
         samples = [s for s in process_math(dataset, "math_simplerl_subset") if s is not None]
         if seed is not None:
@@ -368,44 +378,44 @@ def load_datasets(
         datasets += add_ids(samples)
 
     if "deepscaler_preview" in dataset_names:
-        dataset = load_dataset("agentica-org/DeepScaleR-Preview-Dataset", split="train", trust_remote_code=True)
+        dataset = load_dataset("agentica-org/DeepScaleR-Preview-Dataset", split="train")
         samples = [s for s in process_math(dataset, "deepscaler") if s is not None]
         logger.info(f"Loading deepscaler preview train dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "math_test" in dataset_names:
         # math_dataset = load_math("test")
-        dataset = load_dataset("hendrycks/competition_math", split="test", trust_remote_code=True)
+        dataset = load_dataset("hendrycks/competition_math", split="test")
         samples = [s for s in process_math(dataset, "math_test") if s is not None]
         logger.info(f"Loading math test dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "omni_math_500" in dataset_names:
-        dataset = load_dataset("reliable-agents/Omni-MATH-500", split="test", trust_remote_code=True)
+        dataset = load_dataset("reliable-agents/Omni-MATH-500", split="test")
         samples = [s for s in process_math(dataset, "omni_math_500") if s is not None]
         logger.info(f"Loading omni math 500 dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "math_500" in dataset_names:
-        dataset = load_dataset("HuggingFaceH4/MATH-500", split="test", trust_remote_code=True)
+        dataset = load_dataset("HuggingFaceH4/MATH-500", split="test")
         samples = [s for s in process_math(dataset, "math_500") if s is not None]
         logger.info(f"Loading math 500 dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "open_r1_math_220k" in dataset_names:
-        dataset = load_dataset("open-r1/OpenR1-Math-220k", split="default", trust_remote_code=True)
+        dataset = load_dataset("open-r1/OpenR1-Math-220k", split="default")
         samples = [s for s in process_math(dataset, "open_r1_math_220k") if s is not None]
         logger.info(f"Loading open r1 math 220k dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "gpqa_main" in dataset_names:
-        dataset = load_dataset("hendrydong/gpqa_main", split="test", trust_remote_code=True)
+        dataset = load_dataset("hendrydong/gpqa_main", split="test")
         samples = [s for s in process_gpqa(dataset, "gpqa_main") if s is not None]
         logger.info(f"Loading gpqa main dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "gpqa_diamond" in dataset_names:
-        dataset = load_dataset("hendrydong/gpqa_diamond", split="test", trust_remote_code=True)
+        dataset = load_dataset("hendrydong/gpqa_diamond", split="test")
         samples = [s for s in process_gpqa(dataset, "gpqa_diamond") if s is not None]
         logger.info(f"Loading gpqa diamond dataset: {len(samples)} samples")
         datasets += add_ids(samples)
@@ -414,19 +424,19 @@ def load_datasets(
         pass
 
     if "gsm8k_train" in dataset_names:
-        dataset = load_dataset("openai/gsm8k", "main", split="train", trust_remote_code=True)
+        dataset = load_dataset("openai/gsm8k", "main", split="train")
         samples = [s for s in process_gsm8k(dataset, "gsm8k_train") if s is not None]
         logger.info(f"Loading gsm8k train dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "gsm8k_test" in dataset_names:
-        dataset = load_dataset("openai/gsm8k", "main", split="test", trust_remote_code=True)
+        dataset = load_dataset("openai/gsm8k", "main", split="test")
         samples = [s for s in process_gsm8k(dataset, "gsm8k_test") if s is not None]
         logger.info(f"Loading gsm8k test dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "limo" in dataset_names:
-        dataset = load_dataset("GAIR/LIMO", split="train", trust_remote_code=True)
+        dataset = load_dataset("GAIR/LIMO", split="train")
         samples = [s for s in process_limo(dataset) if s is not None]
         logger.info(f"Loading limo dataset: {len(samples)} samples")
         datasets += add_ids(samples)
@@ -499,33 +509,24 @@ def load_datasets(
             datasets += add_ids(samples)
 
     if "open_reasoner_zero_57k" in dataset_names:
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_57k_collected.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_57k_collected.json"
         )
         samples = [s for s in process_open_reasoner(dataset, "open_reasoner_zero_57k") if s is not None]
         logger.info(f"Loading Open Reasoner Zero dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "open_reasoner_zero_extended_72k" in dataset_names:
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_72k_collection_extended.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_72k_collection_extended.json"
         )
         samples = [s for s in process_open_reasoner(dataset, "open_reasoner_zero_extended_72k") if s is not None]
         logger.info(f"Loading Open Reasoner Zero extended dataset: {len(samples)} samples")
         datasets += add_ids(samples)
 
     if "open_reasoner_zero_hard_13k" in dataset_names:
-        dataset = load_dataset(
-            "json",
-            data_files="https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_13k_collection_hard.json",
-            split="train",
-            trust_remote_code=True,
+        dataset = _load_json_dataset(
+            "https://raw.githubusercontent.com/Open-Reasoner-Zero/Open-Reasoner-Zero/refs/heads/main/data/orz_math_13k_collection_hard.json"
         )
         samples = [s for s in process_open_reasoner(dataset, "open_reasoner_zero_hard_13k") if s is not None]
         logger.info(f"Loading Open Reasoner Zero hard dataset: {len(samples)} samples")
@@ -575,9 +576,7 @@ def load_datasets(
             datasets += add_ids(samples)
 
     if "countdown" in dataset_names:
-        dataset = load_dataset(
-            "parquet", data_files="data/xiaoyin/train.parquet", trust_remote_code=True, split="train"
-        )
+        dataset = load_dataset("parquet", data_files="data/xiaoyin/train.parquet", split="train")
         samples = [s for s in process_countdown(dataset) if s is not None]
         logger.info(f"Loading countdown dataset: {len(samples)} samples")
         datasets += samples

@@ -1,0 +1,60 @@
+defaults:
+  - base
+  - _self_
+
+actor:
+  rollout_policy: pipelinerl.domains.math.generate_math_rollout
+  system_prompt: Please reason step by step, and put your final answer within \boxed{}.
+  task_template: |-
+    {task}
+environment:
+  _target_: pipelinerl.domains.math.MathEnvironment
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - gsm8k_train
+test_dataset_names:
+  - gsm8k_test
+
+finetune:
+  attempts: 4
+  train_batch_size: 2
+  seq_length: 8192
+  gradient_accumulation_passes: 128
+  learning_rate: 1.7e-5
+  weight_decay: 0.017
+  gradient_clipping_threshold: 1.0
+  lr_scheduler_type: constant_with_warmup
+  num_warmup_steps: 100
+  rl:
+    epsilon: 0.4
+    divide_advantage_by_std: true
+    entropy_bonus: 0.0
+    final_entropy_bonus: 0.0
+
+llm:
+  parameters:
+    max_tokens: 1024
+    temperature: 1.0
+
+test_llm:
+  parameters:
+    max_tokens: 1024
+    temperature: 1.0
+
+model_path: Qwen/Qwen3.4-2B
+model_revision: main
+
+vllm_config:
+  vllm_kwargs:
+    enforce-eager: ""
+    gpu-memory-utilization: 0.8
+    max-model-len: ${finetune.seq_length}
+
+world:
+  replicas: 1
+  actor_fraction: 4
+  preprocessor_fraction: 0
+  finetune_fraction: 4
+  env_replicas: 2
+  actor_group_port: 9000
+  environment_start_port: 7777

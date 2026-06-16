@@ -1,12 +1,29 @@
+"""
+Legacy vLLM V0 integration.
+
+This module only works with older vLLM releases that still ship the V0 worker and
+executor internals. Modern releases used in this repo should route through
+`pipelinerl.vllm1` instead.
+"""
 import asyncio
 import json
 import logging
 import os
 import signal
 import traceback
+
+from packaging import version as version_parser
 from pydantic import TypeAdapter
 import torch
 import uvloop
+import vllm
+
+if version_parser.parse(vllm.__version__) >= version_parser.parse("0.9.0"):
+    raise ImportError(
+        f"pipelinerl.vllm0 is not compatible with vLLM {vllm.__version__}. "
+        "Use pipelinerl.vllm1 instead."
+    )
+
 from vllm import AsyncLLMEngine
 from vllm.utils import FlexibleArgumentParser, set_ulimit
 from vllm.entrypoints.openai.cli_args import (
@@ -35,7 +52,7 @@ from vllm.worker.multi_step_model_runner import MultiStepModelRunner
 
 
 import torch.distributed as dist
-from pipelinerl.finetune_loop import TrainerMessage, WeightUpdateRequest
+from pipelinerl.trainer_messages import WeightUpdateRequest
 import pipelinerl.torch_utils
 
 logger = logging.getLogger(__name__)

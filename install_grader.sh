@@ -8,7 +8,7 @@
 # VLLM_VERSION=0.11.2 ./install.sh
 
 # Configuration
-VLLM_VERSION=${VLLM_VERSION:-0.11.2}
+VLLM_VERSION=${VLLM_VERSION:-0.17.1}
 
 set -e  # Exit on any error
 

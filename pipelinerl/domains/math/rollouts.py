@@ -5,10 +5,9 @@ import aiohttp
 import os
 from omegaconf import DictConfig
 from pydantic import BaseModel
+from pipelinerl.llm import Prompt, TrainableLLM
 from pipelinerl.rollouts import RolloutResult, BaseMetrics
 from pipelinerl.world import Job
-from tapeagents.core import Prompt
-from tapeagents.llms.trainable import TrainableLLM
 
 from pipelinerl.async_llm import llm_async_generate, make_training_text
 from .verifier_api import verify_answer_rpc, verify_proof, parse_schema
@@ -121,14 +120,19 @@ async def generate_math_rollout(
     # ===========================================================
     verifier_metrics: dict[str, float | int] = {}
     verifier_table_entry: dict[str, str | int] | None = None
-    if "schema" in problem:
+    schema = problem.get("schema")
+    if schema not in (None, "", []):
         llm_grader_cfg = cfg.get("llm_grader", None)
         wandb_table_cfg = llm_grader_cfg.get("wandb_table", None) if llm_grader_cfg is not None else None
         wandb_table_enabled = True
         if wandb_table_cfg is not None:
             wandb_table_enabled = bool(wandb_table_cfg.get("enabled", True))
+        timeout_seconds = int(llm_grader_cfg.get("timeout_seconds", 900)) if llm_grader_cfg is not None else 900
+        max_retries = int(llm_grader_cfg.get("max_retries", 3)) if llm_grader_cfg is not None else 3
+        retry_backoff = llm_grader_cfg.get("retry_backoff", None) if llm_grader_cfg is not None else None
+        retry_backoff = list(retry_backoff) if retry_backoff is not None else [15, 30, 60, 90, 120]
 
-        schema_text = parse_schema(problem["schema"])
+        schema_text = parse_schema(schema)
         
         # make sure original_problem is present when using RC stream, since generation prompt is not the same as the original problem but
         # we need to use the original problem for verification
@@ -142,6 +146,9 @@ async def generate_math_rollout(
             prompt_name=getattr(cfg.llm_grader, "prompt_name", None),
             model=getattr(cfg.llm_grader, "name", None) if "/" in getattr(cfg.llm_grader, "name", "") else os.getenv("HF_ENDPOINT_REPO"),
             sampling_kwargs=getattr(cfg.llm_grader, "sampling_kwargs", None),
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            retry_backoff=retry_backoff,
             log_wandb_metrics=cfg.wandb.use_wandb,
             collect_table_entry=bool(cfg.wandb.use_wandb and wandb_table_enabled),
         )

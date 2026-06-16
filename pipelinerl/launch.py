@@ -1,4 +1,3 @@
-import atexit
 import logging
 import math
 import os
@@ -6,15 +5,15 @@ import shutil
 import subprocess
 import sys
 import time
-import signal
-import urllib.request
 import re
 from pathlib import Path
-from typing import Any, List, TextIO
+from typing import List, TextIO
 
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
+from pipelinerl.grader_launch import start_llm_grader
+from pipelinerl.model_compat import is_qwen35_multimodal_model
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import SingleStreamSpec, connect_to_redis, read_stream, set_streams_backend, write_to_streams
 from pipelinerl.utils import terminate_with_children
@@ -23,15 +22,17 @@ from pipelinerl.world import Job, WorldMap
 logger = logging.getLogger(__name__)
 
 # All the launch commands in this file pass the environment to child processes
-os.environ["PYTHONPATH"] = f"/home/toolkit/TapeAgents"
 os.environ["NCCL_CUMEM_ENABLE"] = "0"
 os.environ["TORCH_DISABLE_SHARE_RDZV_TCP_STORE"] = "1"
 os.environ["HF_DATASETS_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
 os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 
-_GRADER_JOB_ID: str | None = None
-_GRADER_CLEANUP_REGISTERED = False
+_V1_UNSUPPORTED_VLLM_KWARGS = {"disable-log-requests", "num-scheduler-steps"}
+_ACTOR_VLLM_INTERNAL_PORT_BASE = 38000
+_RC_ACTOR_VLLM_INTERNAL_PORT_BASE = 39000
+_REF_VLLM_INTERNAL_PORT_BASE = 40000
+_SUMMARIZATION_VLLM_INTERNAL_PORT_BASE = 41000
 
 def _popen(
     cmd: list[str],
@@ -48,6 +49,39 @@ def _popen(
         stdout=stdout,
         stderr=stderr,
     )
+
+
+def _append_vllm_kwargs(cmd: list[str], use_v1: bool, kwargs: dict | None) -> None:
+    if not kwargs:
+        return
+
+    filtered_kwargs = dict(kwargs)
+    if use_v1:
+        for key in sorted(_V1_UNSUPPORTED_VLLM_KWARGS):
+            if key in filtered_kwargs:
+                logger.info("Ignoring V0-only vLLM kwarg on V1 path: --%s", key)
+                filtered_kwargs.pop(key, None)
+
+    for key, value in filtered_kwargs.items():
+        cmd.append(f"--{key}")
+        if value not in [None, ""]:
+            cmd.append(str(value))
+
+
+def _with_vllm_runtime_env(gpu_str: str, port_seed: int | None = None) -> dict[str, str]:
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str}
+    if port_seed is not None:
+        env["VLLM_PORT"] = str(port_seed)
+    return env
+
+
+def _is_finetune_process(proc: subprocess.Popen) -> bool:
+    args = proc.args
+    if isinstance(args, (list, tuple)):
+        command = " ".join(str(part) for part in args)
+    else:
+        command = str(args)
+    return "run_finetune.py" in command
 
 
 def validate_config(cfg: DictConfig):
@@ -82,13 +116,72 @@ def validate_config(cfg: DictConfig):
             raise ValueError("value_loss_coef must be greater than 0 when using causal-language-modeling-with-value-head")
 
 
+def _apply_model_compat_overrides(cfg: DictConfig) -> None:
+    model_path = cfg.get("model_path")
+    if not is_qwen35_multimodal_model(model_path):
+        return
+
+    if cfg.finetune.model_class == "causal-language-modeling":
+        if cfg.finetune.seq_packing:
+            logger.warning(
+                "Disabling sequence packing for %s because packed text-only Qwen3.5 training "
+                "is unstable, while unpacked flash attention is supported.",
+                model_path,
+            )
+            cfg.finetune.seq_packing = False
+
+    for config_name in (
+        "vllm_config",
+        "actor_vllm_config",
+        "rc_actor_vllm_config",
+        "summarization_vllm_config",
+    ):
+        vllm_cfg = cfg.get(config_name)
+        if vllm_cfg is None:
+            continue
+        if not getattr(vllm_cfg, "vllm_kwargs", None):
+            continue
+        if "language-model-only" in vllm_cfg.vllm_kwargs:
+            continue
+        with open_dict(vllm_cfg.vllm_kwargs):
+            vllm_cfg.vllm_kwargs["language-model-only"] = ""
+        logger.warning(
+            "Enabling --language-model-only for %s on %s to skip the vision encoder in text-only runs.",
+            model_path,
+            config_name,
+        )
+
+
+def _maybe_start_llm_grader(cfg: DictConfig, rank: int) -> None:
+    grader_cfg = cfg.get("llm_grader")
+    grader_name = grader_cfg.get("name") if grader_cfg else None
+    if not grader_name:
+        logger.info("LLM grader is not configured, skipping launch")
+        return
+
+    if grader_cfg.get("local") is False:
+        logger.info("LLM grader is not local, skipping launch")
+        return
+
+    if rank == 0:
+        start_llm_grader(
+            grader_name,
+            vllm_kwargs=getattr(grader_cfg, "vllm_kwargs", None),
+        )
+    else:
+        logger.info(
+            "Skipping LLM grader launch on rank %s; waiting for master to provision it",
+            rank,
+        )
+
+
 def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus: list[int], exp_dir: Path):
     # Use actor_vllm_config if available, else fall back to vllm_config
     actor_vllm_cfg = cfg.get("actor_vllm_config")
     if actor_vllm_cfg is None:
         actor_vllm_cfg = cfg.vllm_config
     kwargs = actor_vllm_cfg.vllm_kwargs
-    if kwargs["num-scheduler-steps"] > 1:
+    if kwargs.get("num-scheduler-steps", 1) > 1:
         kwargs["num-scheduler-steps"] = 1
         logger.warning("Set num-scheduler-steps to 1 for reference vLLM")
     log_dir = exp_dir / f"ref_vllm_{preprocessor_llm_idx}"
@@ -114,15 +207,8 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
     if model_revision:
         cmd.extend(["--revision", str(model_revision)])
 
-    model_revision = getattr(cfg, "model_revision", None)
-    if model_revision and not Path(str(cfg.model_path)).exists():
-        cmd.extend(["--revision", str(model_revision)])
-
     # Add vLLM kwargs as separate arguments
-    for k, v in kwargs.items():
-        cmd.append(f"--{k}")
-        if v not in [None, ""]:
-            cmd.append(str(v))
+    _append_vllm_kwargs(cmd, bool(getattr(actor_vllm_cfg, "use_v1", False)), kwargs)
 
     gpu_str = ",".join([str(gpu) for gpu in gpus])
     logger.info(f"Running reference LLM with command: {' '.join(cmd)} with gpus: {gpu_str}")
@@ -131,7 +217,10 @@ def run_ref_llm(cfg: DictConfig, preprocessor_llm_idx: int, local_idx: int, gpus
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
         yield _popen(
             cmd,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            env=_with_vllm_runtime_env(
+                gpu_str,
+                _REF_VLLM_INTERNAL_PORT_BASE + local_idx * 100,
+            ),
             stdout=log_file,
             stderr=err_file,
         )
@@ -186,10 +275,7 @@ def run_summarization_llm(
         cmd.extend(["--revision", str(model_revision)])
 
     # Add vLLM kwargs as separate arguments
-    for k, v in kwargs.items():
-        cmd.append(f"--{k}")
-        if v not in [None, ""]:
-            cmd.append(str(v))
+    _append_vllm_kwargs(cmd, bool(vllm_cfg.use_v1), kwargs)
 
     gpu_str = ",".join([str(gpu) for gpu in gpus])
     logger.info(f"Running summarization LLM with command: {' '.join(cmd)} with gpus: {gpu_str}")
@@ -199,7 +285,10 @@ def run_summarization_llm(
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
         yield _popen(
             cmd,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            env=_with_vllm_runtime_env(
+                gpu_str,
+                _SUMMARIZATION_VLLM_INTERNAL_PORT_BASE + local_idx * 100,
+            ),
             stdout=log_file,
             stderr=err_file,
         )
@@ -253,16 +342,8 @@ def run_actor_llm(
     if actor_model_revision:
         cmd.extend(["--revision", str(actor_model_revision)])
 
-    model_revision = getattr(cfg, "model_revision", None)
-    if model_revision and not Path(str(actor_model_path)).exists():
-        cmd.extend(["--revision", str(model_revision)])
-
     # Add vLLM kwargs as separate arguments
-    if vllm_cfg.vllm_kwargs:
-        for k, v in vllm_cfg.vllm_kwargs.items():
-            cmd.append(f"--{k}")
-            if v not in [None, ""]:
-                cmd.append(str(v))
+    _append_vllm_kwargs(cmd, bool(vllm_cfg.use_v1), vllm_cfg.vllm_kwargs)
 
     # Disable weight updates in debug mode or eval_only mode
     if cfg.debug.mode or cfg.get('eval_only', False):
@@ -276,7 +357,10 @@ def run_actor_llm(
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
         yield _popen(
             cmd,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            env=_with_vllm_runtime_env(
+                gpu_str,
+                _ACTOR_VLLM_INTERNAL_PORT_BASE + local_idx * 100,
+            ),
             stdout=log_file,
             stderr=err_file,
         )
@@ -331,11 +415,7 @@ def run_rc_actor_llm(
         cmd.extend(["--revision", str(rc_actor_model_revision)])
 
     # Add vLLM kwargs as separate arguments
-    if rc_actor_vllm_cfg.vllm_kwargs:
-        for k, v in rc_actor_vllm_cfg.vllm_kwargs.items():
-            cmd.append(f"--{k}")
-            if v not in [None, ""]:
-                cmd.append(str(v))
+    _append_vllm_kwargs(cmd, bool(rc_actor_vllm_cfg.use_v1), rc_actor_vllm_cfg.vllm_kwargs)
 
     # Disable weight updates in debug mode or eval_only mode
     if cfg.debug.mode or cfg.get('eval_only', False):
@@ -349,7 +429,10 @@ def run_rc_actor_llm(
     with open(log_file_path, "a") as log_file, open(err_file_path, "a") as err_file:
         yield _popen(
             cmd,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": gpu_str},
+            env=_with_vllm_runtime_env(
+                gpu_str,
+                _RC_ACTOR_VLLM_INTERNAL_PORT_BASE + local_idx * 100,
+            ),
             stdout=log_file,
             stderr=err_file,
         )
@@ -623,10 +706,13 @@ def watch_processes_running(exp_path: Path, processes: List[subprocess.Popen], d
         trainer_state = None
 
     # Wait for all processes to complete
-    def gently_stop_all_processes():
+    def gently_stop_all_processes(skip_pids: set[int] | None = None):
         logger.info("\nShutting down processes...")
         # Terminate all running processes
+        skip_pids = skip_pids or set()
         for proc in processes:
+            if proc.pid in skip_pids:
+                continue
             logger.info(f"Terminating {proc.args}")
             terminate_with_children(proc.pid)
 
@@ -641,9 +727,12 @@ def watch_processes_running(exp_path: Path, processes: List[subprocess.Popen], d
         while True:
             for proc in processes:
                 if (return_code := proc.poll()) is not None:
-                    # print which process terminate and with what code
+                    if return_code == 0 and _is_finetune_process(proc):
+                        logger.info("Finetune process exited cleanly; shutting down remaining processes.")
+                        gently_stop_all_processes(skip_pids={proc.pid})
+                        return
                     logger.error(f"Process {proc.args} terminated with code {proc.returncode}")
-                    gently_stop_all_processes()
+                    gently_stop_all_processes(skip_pids={proc.pid})
                     sys.exit(1)
             # TODO: make the watcdog code below more stable
             # if (trainer_state is not None
@@ -725,182 +814,6 @@ def setup_logging(log_file: Path):
     root_logger.addHandler(file_handler)
     logger.info("Logging setup complete")
 
-def _cancel_llm_grader_job():
-    global _GRADER_JOB_ID
-    if not _GRADER_JOB_ID:
-        return
-    job_id = _GRADER_JOB_ID
-    try:
-        subprocess.run(["scancel", job_id], capture_output=True, text=True, check=True)
-        logger.info(f"Cancelled local LLM grader Slurm job {job_id}")
-    except subprocess.CalledProcessError as exc:
-        logger.warning(f"Failed to cancel LLM grader job {job_id}: {exc}")
-    finally:
-        _GRADER_JOB_ID = None
-
-
-def _handle_exit_signal(signum, _frame):
-    logger.info(f"Received signal {signum}, cancelling LLM grader job before exit")
-    _cancel_llm_grader_job()
-    sys.exit(128 + signum)
-
-
-def _ensure_grader_cleanup_hooks():
-    global _GRADER_CLEANUP_REGISTERED
-    if _GRADER_CLEANUP_REGISTERED:
-        return
-    atexit.register(_cancel_llm_grader_job)
-    signal.signal(signal.SIGTERM, _handle_exit_signal)
-    signal.signal(signal.SIGINT, _handle_exit_signal)
-    _GRADER_CLEANUP_REGISTERED = True
-
-
-def _wait_for_slurm_nodes(job_id: str, timeout: int = 300, poll_interval: int = 5) -> str:
-    """Poll Slurm until a job is assigned to a node."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        result = subprocess.run(
-            ["squeue", "-j", job_id, "-h", "-o", "%N"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        nodes = result.stdout.strip()
-        if nodes and nodes not in {"(null)", "None"}:
-            return nodes
-        time.sleep(poll_interval)
-    raise TimeoutError(f"Timed out waiting for node assignment for Slurm job {job_id}")
-
-
-def _expand_slurm_node_list(nodes: str) -> list[str]:
-    """Expand a Slurm node-list string into concrete hostnames."""
-    try:
-        result = subprocess.run(
-            ["scontrol", "show", "hostnames", nodes],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"Unable to expand Slurm node list {nodes}: {exc}") from exc
-
-    hostnames = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    if not hostnames:
-        raise RuntimeError(f"Slurm returned no hostnames for node list {nodes}")
-    return hostnames
-
-
-def _wait_for_vllm_health(url: str, retries: int = 60, delay: int = 10, timeout: int = 5) -> None:
-    """Poll the vLLM health endpoint until it responds successfully."""
-    logger.info("Waiting for vLLM server health at %s", url)
-    last_error: Exception | None = None
-    for attempt in range(1, retries + 1):
-        try:
-            with urllib.request.urlopen(url, timeout=timeout) as response:  # nosec B310
-                if 200 <= response.status < 300:
-                    logger.info("vLLM health check succeeded on attempt %s", attempt)
-                    return
-        except Exception as exc:  # noqa: BLE001 - broad catch to keep retrying
-            last_error = exc
-        logger.info(
-            "Health check attempt %s/%s failed; retrying in %ss",
-            attempt,
-            retries,
-            delay,
-        )
-        time.sleep(delay)
-    raise RuntimeError(f"vLLM health check failed after {retries} attempts: {last_error}")
-
-
-def _to_dict(config: Any) -> dict[str, Any]:
-    if config is None:
-        return {}
-    if isinstance(config, DictConfig):
-        return OmegaConf.to_container(config, resolve=True)  # type: ignore[return-value]
-    if isinstance(config, dict):
-        return dict(config)
-    return dict(config)
-
-
-def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str = "HuggingFaceH4", timeout=900):
-    kwargs = _to_dict(vllm_kwargs)
-    num_nodes = int(kwargs.get("num_nodes", 1))
-    data_parallel_size = int(kwargs.get("data-parallel-size", 1))
-    tensor_parallel_size = int(kwargs.get("tensor-parallel-size", 1))
-    max_num_batched_tokens = kwargs.get("max-num-batched-tokens", 8192)
-    max_num_seqs = kwargs.get("max-num-seqs", 16)
-    max_model_len = kwargs.get("max-model-len", 32768)
-    gpu_memory_util = kwargs.get("gpu-memory-utilization", 0.85)
-    if "/" in name:
-        logger.info(f"Starting local LLM grader {name}...")
-        job_name = None
-        current_job_id = os.environ.get("SLURM_JOB_ID")
-        if current_job_id:
-            job_name = f"{current_job_id}-grader"
-        cmd = [
-            "sbatch",
-            "--parsable",
-            f"--nodes={num_nodes}"
-            ]
-        if job_name:
-            cmd.append(f"--job-name={job_name}")
-        cmd += [
-            "run_grader.slurm",
-            "--model",
-            name,
-            "--data-parallel-size",
-            str(data_parallel_size),
-            "--tensor-parallel-size",
-            str(tensor_parallel_size),
-            "--max-num-batched-tokens",
-            str(max_num_batched_tokens),
-            "--max-num-seqs",
-            str(max_num_seqs),
-            "--max-model-len",
-            str(max_model_len),
-            "--gpu-memory-utilization",
-            str(gpu_memory_util),
-        ]
-        submission = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        job_id = submission.stdout.strip().split(";")[0]
-        if not job_id:
-            raise RuntimeError("sbatch did not return a job id for the LLM grader submission")
-        logger.info(f"Submitted local LLM grader with Slurm job ID: {job_id}")
-        global _GRADER_JOB_ID
-        _GRADER_JOB_ID = job_id
-        _ensure_grader_cleanup_hooks()
-        nodes = _wait_for_slurm_nodes(job_id, timeout=timeout)
-        node_candidates = _expand_slurm_node_list(nodes)
-        if not node_candidates:
-            raise RuntimeError(f"Unable to determine head node from Slurm node list: {nodes}")
-        node = node_candidates[0]
-        os.environ["OPENAI_BASE_URL"] = f"http://{node}:8000/v1"
-        os.environ["OPENAI_API_KEY"] = "grader"
-        health_url = f"http://{node}:8000/health"
-        health_retries = int(os.environ.get("HEALTH_CHECK_RETRIES", "90"))
-        health_delay = int(os.environ.get("HEALTH_CHECK_DELAY", "10"))
-        _wait_for_vllm_health(health_url, retries=health_retries, delay=health_delay)
-        logger.info(
-            "LLM grader job %s scheduled on node(s): %s; OPENAI_BASE_URL=%s",
-            job_id,
-            nodes,
-            os.environ["OPENAI_BASE_URL"],
-        )
-    else:
-        from huggingface_hub import get_inference_endpoint, get_token
-        endpoint = get_inference_endpoint(name=name, namespace=namespace)
-        if endpoint.status == "running":
-            logger.info(f"LLM grader endpoint {name} is already running at URL: {endpoint.url}")
-        else:
-            logger.info(f"Waking up Hugging Face endpoint {name}...")
-            endpoint.resume()
-            endpoint.wait(timeout=timeout)
-            logger.info(f"LLM grader endpoint {name} is now running at URL: {endpoint.url}")
-        os.environ["OPENAI_BASE_URL"] = f"{endpoint.url}/v1"
-        os.environ["OPENAI_API_KEY"] = get_token()
-        # The OpenAI client expects the repo name, so we propagate it as well
-        os.environ["HF_ENDPOINT_REPO"] = endpoint.repository
-
 
 @hydra.main(
     config_path="../conf/",
@@ -908,6 +821,8 @@ def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str =
     version_base="1.3.2",
 )
 def main(cfg: DictConfig):
+    _apply_model_compat_overrides(cfg)
+
     # Resolve all interpolations in config (e.g., ${actor.problem_queue_size} // ${world.actor_fraction})
     resolved_cfg = OmegaConf.to_container(cfg, resolve=True)
     
@@ -925,21 +840,7 @@ def main(cfg: DictConfig):
     validate_config(cfg)
 
     rank = int(os.environ.get("RANK", "0"))
-
-    # Spin up LLM grader if specified
-    if "local" in cfg.llm_grader and not cfg.llm_grader.local:
-        logger.info(f"LLM grader is not local, skipping launch")
-    else:
-        if rank == 0:
-            start_llm_grader(
-                cfg.llm_grader.name,
-                vllm_kwargs=getattr(cfg.llm_grader, "vllm_kwargs", None),
-            )
-        else:
-            logger.info(
-                "Skipping LLM grader launch on rank %s; waiting for master to provision it",
-                rank,
-            )
+    _maybe_start_llm_grader(cfg, rank)
 
     exp_dir = Path(cfg.output_dir)
     config_dir = exp_dir / "conf"

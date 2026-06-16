@@ -45,17 +45,17 @@ def load_problems(dataset_names: List[str] | str | None) -> List[dict]:
     datasets_list = []
     
     if "chartqa_train" in dataset_names:
-        dataset = load_dataset("HuggingFaceM4/ChartQA", split="train", trust_remote_code=True)
+        dataset = load_dataset("HuggingFaceM4/ChartQA", split="train")
         samples = list(process_chartqa(dataset, "chartqa_train"))
         datasets_list += add_ids(samples)
     
     if "chartqa_test" in dataset_names:
-        dataset = load_dataset("HuggingFaceM4/ChartQA", split="test", trust_remote_code=True)
+        dataset = load_dataset("HuggingFaceM4/ChartQA", split="test")
         samples = list(process_chartqa(dataset, "chartqa_test"))
         datasets_list += add_ids(samples)
     
     if "chartqa_val" in dataset_names:
-        dataset = load_dataset("HuggingFaceM4/ChartQA", split="val", trust_remote_code=True)
+        dataset = load_dataset("HuggingFaceM4/ChartQA", split="val")
         samples = list(process_chartqa(dataset, "chartqa_val"))
         datasets_list += add_ids(samples)
 

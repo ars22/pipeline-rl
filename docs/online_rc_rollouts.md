@@ -6,46 +6,46 @@ This document describes the online rollout functionality in `rc_actor.py`.
 
 ### Prerequisites
 
-Before running the RC actor, you need a running vLLM inference server:
+For local smoke validation, use the standalone RC harness. It launches the
+required vLLM and environment processes for you:
 
 ```bash
-# Start vLLM server (in a separate terminal)
-vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8000
+python -m pipelinerl.test_rc_actor --config-name rc_smoke output_dir=scratch/rc_smoke
 ```
 
 ### Running the RC Actor
 
-Run the RC actor with a test configuration:
+Run the RC actor with the fast smoke configuration:
 
 ```bash
-python -m pipelinerl.test_rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor
+python -m pipelinerl.test_rc_actor --config-name rc_smoke output_dir=scratch/rc_smoke
 ```
 
 Override parameters on the command line:
 
 ```bash
-python -m pipelinerl.test_rc_actor --config-name test_rc output_dir=/tmp/results/test_rc_actor actor.num_reasoning_steps=5
-
+python -m pipelinerl.test_rc_actor --config-name rc_smoke output_dir=scratch/rc_smoke rc_actor.num_reasoning_steps=5
+```
 
 **Using the Test Script:**
 
 For easier testing with automatic vLLM server management:
 
 ```bash
-python test_rc_actor.py --config-name test_rc
+python -m pipelinerl.test_rc_actor --config-name rc_smoke output_dir=scratch/rc_smoke
 ```
 
 The test script (`test_rc_actor.py`) automatically:
 - Creates `llm_urls` programmatically (same pattern as `launch.py`)
-- Starts vLLM servers on ports 8080+
+- Starts RC actor vLLM servers on ports 8000+ and summarization vLLM servers on ports 8200+
 - Waits for servers to be ready
 - Runs the RC actor
 - Cleans up servers on exit
 
 **Important Requirements:**
 - `output_dir`: Where results are saved (set in YAML or command line)
-- `me.llm_urls`: URL of the vLLM inference server (default: `http://localhost:8000/v1`)
-- A running vLLM server at the specified URL
+- `me.llm_urls`: Base URL of the RC actor vLLM inference servers (for example `http://localhost:8000`)
+- The standalone smoke harness populates these automatically
 
 ## Overview
 
@@ -132,7 +132,7 @@ model_path: Qwen/Qwen3-4B-Instruct-2507
 # LLM inference server URLs (REQUIRED when running rc_actor.py directly)
 # Note: test_rc_actor.py sets this automatically
 # For direct runs, must be provided via command line:
-#   me.llm_urls=http://localhost:8000/v1
+#   me.llm_urls=http://localhost:8000
 
 # Dataset configuration (REQUIRED)
 dataset_loader: pipelinerl.domains.math.load_datasets
@@ -248,7 +248,8 @@ debug:
   mode: true
 ```
 
-See `conf/test_rc.yaml` for a complete example configuration.
+Use `conf/rc_smoke.yaml` for the fast local smoke configuration and `conf/rc_test.yaml`
+or `conf/rc_proof_qwen3-4b-thinking_v18.00.yaml` for proof-oriented RC runs.
 
 ## Metadata
 
@@ -285,4 +286,3 @@ This metadata allows you to:
 - Weight different turns differently (e.g., higher weight for later turns)
 - Analyze performance by turn number
 - Track progression through the reasoning/summarization cycles
-

@@ -5,26 +5,34 @@ import os
 import shutil
 import sys
 import time
-from pathlib import Path
 import traceback
-from typing import Dict, Mapping, List, Any, Union, Tuple
+from importlib.metadata import distributions
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Tuple, Union
+
 import numpy as np
-from omegaconf import DictConfig
 import psutil
 import requests
-from importlib.metadata import distributions
-from transformers import PreTrainedTokenizer
-from collections import defaultdict
-
-from pipelinerl.world import Job
-from tapeagents.llms import LLMOutput
-from tapeagents.core import Prompt
-
 import wandb
-from wandb.sdk import wandb_run
+from omegaconf import DictConfig
+from transformers import PreTrainedTokenizer
+from transformers.tokenization_utils_base import BatchEncoding
+
+from pipelinerl.llm import LLMOutput, Prompt
+from pipelinerl.world import Job
 
 logger = logging.getLogger(__name__)
 _REPO_CONF_DIR = (Path(__file__).resolve().parents[1] / "conf").resolve()
+
+
+def _normalize_token_ids(token_ids):
+    if isinstance(token_ids, BatchEncoding):
+        token_ids = token_ids["input_ids"]
+    if isinstance(token_ids, np.ndarray):
+        token_ids = token_ids.tolist()
+    if token_ids and isinstance(token_ids[0], list):
+        return list(token_ids[0])
+    return list(token_ids)
 
 def strip_chat_template_tokens(text: str) -> str:
     """
@@ -53,7 +61,7 @@ def strip_chat_template_tokens(text: str) -> str:
     
     return result.strip()
 
-def _maybe_upload_config_to_wandb(cfg: DictConfig, run: wandb_run.Run) -> None:
+def _maybe_upload_config_to_wandb(cfg: DictConfig, run: Any) -> None:
     """Upload the experiment config file to W&B."""
     config_path = Path(cfg.output_dir) / "conf" / "exp_config.yaml"
     if not config_path.exists():
@@ -75,7 +83,7 @@ def init_wandb(
     cfg: DictConfig,
     run_dir: Path,
     config_for_wandb: DictConfig | dict,
-) -> wandb_run.Run:
+) -> Any:
     """Initialize W&B.
 
     config_for_wandb is the configuration that will be logged to W&B.
@@ -126,7 +134,7 @@ def init_wandb(
             tags=cfg.wandb.tags,
             settings=wandb.Settings(init_timeout=300, start_method="thread"),  # Increase timeout to 5 minutes
         )
-        if not isinstance(run, wandb_run.Run):
+        if run is None or getattr(run, "id", None) is None:
             raise ValueError("W&B init failed")
         _maybe_upload_config_to_wandb(cfg, run)
         return run
@@ -324,12 +332,12 @@ def calculate_stats(stats: List | Dict[Any, Any]) -> Dict[str, float]:
 def get_tokens_from_hf_tokenizer(tokenizer: PreTrainedTokenizer | None, prompt: Prompt, output: LLMOutput) -> list:
     if not tokenizer:
         return []
-    prompt_token_ids = tokenizer.apply_chat_template(
+    prompt_token_ids = _normalize_token_ids(tokenizer.apply_chat_template(
         conversation=prompt.messages, tokenize=True, add_generation_prompt=True
-    )
-    text_token_ids = tokenizer.apply_chat_template(
+    ))
+    text_token_ids = _normalize_token_ids(tokenizer.apply_chat_template(
         prompt.messages + [{"role": "assistant", "content": output.content}], tokenize=True
-    )
+    ))
     output_token_ids = text_token_ids[len(prompt_token_ids) :]
     output_tokens = [tokenizer.decode(output_token_id) for output_token_id in output_token_ids]
     return output_tokens

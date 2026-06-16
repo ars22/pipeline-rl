@@ -1,0 +1,174 @@
+defaults:
+  - rc_proof_qwen3-4b-thinking_v18.00
+  - _self_
+
+seed: 42
+
+# 1-node main job:
+#   2 RC actor GPUs
+#   1 summarization GPU
+#   3 actor GPUs
+#   2 finetune GPUs
+# plus 1 separate local grader node
+
+model_path: Qwen/Qwen3.5-2B
+model_revision: main
+
+summarization_model_path: Qwen/Qwen3.5-2B
+summarization_model_revision: main
+
+n_problems_per_batch: 2
+
+# The v18 proof train/eval datasets currently expose Hub metadata that this
+# environment's `datasets` version cannot deserialize (`Feature type 'List'`).
+# Use proof-oriented datasets that load cleanly for the smoke run.
+train_dataset_names:
+  - hub_id: lm-provers/olympiads-proof-schema
+    split: train
+test_dataset_names:
+  - imo_proof_bench
+
+finetune:
+  attempts: 1
+  train_batch_size: 1
+  valid_batch_size: 1
+  gradient_accumulation_passes: 2
+  seq_length: 2048
+  seq_parallel: 1
+  use_flash_attention: true
+  attn_implementation: flash_attention_2
+  seq_packing: false
+  save_checkpoint_steps: 10
+  push_to_hub: false
+  interrupt_train_steps: 10
+  rl:
+    temperature: 1.0
+
+eval_only: false
+skip_first_eval: true
+eval_every_n_versions: 0
+
+world:
+  rc_actor_fraction: 2
+  summarization_fraction: 1
+  finetune_fraction: 2
+  actor_fraction: 3
+  preprocessor_fraction: 0
+  env_replicas: 1
+
+rc_actor:
+  problem_queue_size: 2
+  result_queue_size: ${rc_actor.problem_queue_size}
+  llm_max_rollouts: 1
+  summarization_max_rollouts: 1
+  throughput_window_size: 10
+  max_retries: 3
+  num_reasoning_steps: 1
+
+actor:
+  rc_stream_samples_per_batch: 1
+  result_queue_size: 4
+  llm_max_rollouts: 1
+  throughput_window_size: 10
+  max_retries: 3
+
+preprocess:
+  n_workers: 4
+  input_queue_size: 16
+  output_queue_size: 16
+  ring_buffer_size: 64
+  max_ready_samples_per_lead: 64
+
+llm:
+  parameters:
+    max_tokens: 64
+    temperature: 0.0
+  reasoning_delimiters: []
+  wandb_table:
+    enabled: true
+    keep_last_k_groups: 16
+    log_every_n_groups: 1
+
+actor_llm:
+  parameters:
+    max_tokens: 64
+    temperature: 0.0
+  reasoning_delimiters: []
+
+test_llm:
+  parameters:
+    max_tokens: 64
+    temperature: 0.0
+
+summarization_llm:
+  parameters:
+    max_tokens: 64
+    temperature: 0.0
+
+rc_actor_vllm_config:
+  vllm_kwargs:
+    enforce-eager: ""
+    gpu-memory-utilization: 0.75
+    max-num-seqs: ${rc_actor.llm_max_rollouts}
+    max-num-batched-tokens: 2048
+    max-model-len: ${finetune.seq_length}
+    pipeline-parallel-size: 1
+    attention-backend: FLASH_ATTN
+
+summarization_vllm_config:
+  vllm_kwargs:
+    enforce-eager: ""
+    gpu-memory-utilization: 0.75
+    max-num-seqs: ${rc_actor.summarization_max_rollouts}
+    max-num-batched-tokens: 2048
+    max-model-len: ${finetune.seq_length}
+    pipeline-parallel-size: 1
+    attention-backend: FLASH_ATTN
+
+vllm_config:
+  vllm_kwargs:
+    enforce-eager: ""
+    gpu-memory-utilization: 0.75
+    max-num-seqs: ${actor.llm_max_rollouts}
+    max-num-batched-tokens: 2048
+    max-model-len: ${finetune.seq_length}
+    pipeline-parallel-size: 1
+    attention-backend: FLASH_ATTN
+
+train_subset:
+  begin: 0
+  end: 16
+
+wandb:
+  tags:
+    - rc_tiny
+    - smoke
+    - qwen3.5-2b
+
+llm_grader:
+  # Smoke-run stability:
+  # - avoid the multi-replica DP path that is tripping vLLM/Ray on single-node runs
+  # - fail fast so one wedged grader request cannot stall training indefinitely
+  timeout_seconds: 60
+  max_retries: 1
+  retry_backoff: [5]
+  vllm_kwargs:
+    data-parallel-size: 1
+    tensor-parallel-size: 2
+    max-num-batched-tokens: 4096
+    max-num-seqs: 4
+    max-model-len: 32768
+    gpu-memory-utilization: 0.85
+    enforce-eager: ""
+  sampling_kwargs:
+    max_output_tokens: 2048
+    temperature: 0.0
+    reasoning:
+      effort: low
+  # Qwen3.5-2B is not a thinking checkpoint, so proof text should not be
+  # stripped when </think> is absent.
+  reasoning_delimiters: []
+  wandb_table:
+      enabled: true
+      keep_last_k_groups: 32
+      log_every_n_groups: 2

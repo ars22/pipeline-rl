@@ -23,6 +23,14 @@ Install the required dependencies from the root directory as follows:
 ./install_grader.sh
 ```
 
+`vllm` and `flash-attn` are intentionally installed by the setup scripts into the repo-local `prl` environment, so they should not be added to `pyproject.toml`.
+Activate `prl` before running project commands. If you want to use `uv run`, use it only as a launcher into the active environment:
+
+```sh
+source prl/bin/activate
+uv run --active python -m pipelinerl.launch --config-name=guessing output_dir=tmp/results/test_run/
+```
+
 Then make sure you are authenticated with the Hugging Face Hub:
 
 ```sh
@@ -110,6 +118,28 @@ llm_grader:
     max-num-seqs: 16                # concurrent sequences
     max-model-len: 32768            # prompt + output budget
     gpu-memory-utilization: 0.85    # fraction of GPU memory vLLM can use
+```
+
+Any additional `llm_grader.vllm_kwargs` entries are passed through to `vllm serve` for the grader. Use `""` for bare flags, and use structured YAML for JSON-valued options:
+
+```yaml
+llm_grader:
+  name: stepfun-ai/Step-3.5-Flash
+  vllm_kwargs:
+    num_nodes: 1
+    data-parallel-size: 1
+    tensor-parallel-size: 8
+    enable-expert-parallel: ""
+    disable-cascade-attn: ""
+    reasoning-parser: step3p5
+    enable-auto-tool-choice: ""
+    tool-call-parser: step3p5
+    hf-overrides:
+      num_nextn_predict_layers: 1
+    speculative-config:
+      method: step3p5_mtp
+      num_speculative_tokens: 1
+    trust-remote-code: ""
 ```
 
 > [!NOTE]

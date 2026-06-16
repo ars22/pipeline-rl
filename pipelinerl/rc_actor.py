@@ -36,7 +36,7 @@ TRANSIENT_EXCEPTIONS = (
 MAX_REQUEUE_ATTEMPTS = 10
 from omegaconf import DictConfig
 from pydantic import BaseModel, Field
-from tapeagents.llms import TrainableLLM
+from pipelinerl.llm import TrainableLLM
 
 import wandb
 from pipelinerl.finetune.logging_ import flatten_dict_config, init_wandb
@@ -252,8 +252,11 @@ class InferenceProblemState:
             sample.metadata["sample_id"] = self.sample_id
             sample.metadata["answer"] = self.answer
             sample.metadata["dataset_name"] = self.dataset_name
-            sample.metadata["schema"] = self.schema
-            sample.metadata["original_problem"] = f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
+            if self.schema is not None:
+                sample.metadata["schema"] = self.schema
+                sample.metadata["original_problem"] = (
+                    f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
+                )
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -293,8 +296,11 @@ class InferenceProblemState:
             sample.metadata["sample_id"] = self.sample_id
             sample.metadata["answer"] = self.answer
             sample.metadata["dataset_name"] = self.dataset_name
-            sample.metadata["schema"] = self.schema
-            sample.metadata["original_problem"] = f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
+            if self.schema is not None:
+                sample.metadata["schema"] = self.schema
+                sample.metadata["original_problem"] = (
+                    f"Generate a rigorous proof to the following question:\n\n{self.problem_text}"
+                )
             sample.group_id = group_id
         
         # Increment overall cycle step
@@ -659,9 +665,10 @@ async def schedule_rollouts(
                             "answer": problem_state.answer,
                             "dataset": problem_state.dataset_name,
                             "id": problem_state.problem_id,
-                            "schema": problem_state.schema,
-                            "original_problem": problem_state.problem_text,
                         }
+                        if problem_state.schema is not None:
+                            reasoning_problem["schema"] = problem_state.schema
+                            reasoning_problem["original_problem"] = problem_state.problem_text
                         # logger.info(f"Reasoning problem: {reasoning_problem}")
                         
                         started_solution_rollouts[llm_index] += 1
@@ -1557,6 +1564,7 @@ def run_actor_loop(cfg: DictConfig):
             base_url=url,
             model_name=str(actor_model_path),
             tokenizer_name=str(actor_tokenizer_path),
+            tokenizer=actor_tokenizer,
             parameters=cfg.llm.parameters,
             use_cache=False,
             collect_logprobs=True,
@@ -1569,6 +1577,7 @@ def run_actor_loop(cfg: DictConfig):
             base_url=url,
             model_name=str(actor_model_path),
             tokenizer_name=str(actor_tokenizer_path),
+            tokenizer=actor_tokenizer,
             parameters=cfg.test_llm.parameters,
             use_cache=False,
             collect_logprobs=not eval_only_mode,  # Don't collect logprobs in eval-only mode
@@ -1586,6 +1595,7 @@ def run_actor_loop(cfg: DictConfig):
                 base_url=url,
                 model_name=str(summarization_model_path),
                 tokenizer_name=str(summarization_tokenizer_path),
+                tokenizer=summarization_tokenizer,
                 parameters=summarization_llm_params,
                 use_cache=False,
                 collect_logprobs=True,
@@ -1598,6 +1608,7 @@ def run_actor_loop(cfg: DictConfig):
                 base_url=url,
                 model_name=str(summarization_model_path),
                 tokenizer_name=str(summarization_tokenizer_path),
+                tokenizer=summarization_tokenizer,
                 parameters=summarization_llm_params,
                 use_cache=False,
                 collect_logprobs=not eval_only_mode,  # Don't collect logprobs in eval-only mode

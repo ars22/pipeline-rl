@@ -399,7 +399,7 @@ async def verify_proof(
     client=None,
     timeout_seconds: int = 900,
     max_retries: int = 3,
-    retry_backoff: list[int] = [15, 30, 60, 90, 120],
+    retry_backoff: list[int] | None = None,
     log_wandb_metrics: bool | None = None,
     collect_table_entry: bool | None = None,
 ) -> ProofVerificationResult:
@@ -424,6 +424,9 @@ async def verify_proof(
             metrics=_merge_metrics({}, rollout_metrics),
         )
 
+    if retry_backoff is None:
+        retry_backoff = [15, 30, 60, 90, 120]
+
     client = client or get_openai_client()
     if not isinstance(schema, str):
         raise TypeError("verify_proof expects schema as Markdown string; convert via parse_schema() first.")
@@ -443,9 +446,10 @@ async def verify_proof(
 
     # TODO: add support for chat completions API for other graders
     async def _call_openai():
+        request_client = client.with_options(timeout=float(timeout_seconds), max_retries=0)
         return await loop.run_in_executor(
             None,
-            lambda: client.responses.create(
+            lambda: request_client.responses.create(
                 model=model,
                 input=prompt_text,
                 **api_kwargs,

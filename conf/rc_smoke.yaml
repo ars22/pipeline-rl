@@ -1,0 +1,154 @@
+defaults:
+  - base
+  - _self_
+
+seed: 42
+
+model_path: Qwen/Qwen3.5-0.8B
+model_revision: main
+
+summarization_model_path: Qwen/Qwen3.5-0.8B
+summarization_model_revision: main
+
+eval_only: true
+skip_first_eval: true
+eval_every_n_versions: 0
+
+finetune:
+  attempts: 1
+  train_batch_size: 1
+  gradient_accumulation_passes: 1
+  seq_length: 4096
+
+world:
+  replicas: 1
+  rc_actor_fraction: 4
+  summarization_fraction: 4
+  actor_fraction: 0
+  preprocessor_fraction: 0
+  finetune_fraction: 0
+  env_replicas: 1
+  actor_group_port: 9000
+  environment_start_port: 7777
+
+rc_actor:
+  log_each_n_secs: 0
+  problem_queue_size: 8
+  result_queue_size: ${rc_actor.problem_queue_size}
+  llm_max_rollouts: 2
+  summarization_max_rollouts: 2
+  rollout_workers: 1
+  discount_factor: 1
+  throughput_window_size: 10
+  shared_memory_entry_size: 20000000
+  max_retries: 3
+  retry_base_delay: 1.0
+
+  num_reasoning_steps: 2
+  attempts: 1
+
+  solution_rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout_rc
+  summarization_rollout_policy: pipelinerl.domains.math.rollouts.generate_summarization_rollout
+
+  system_prompt: null
+  reasoning_prompt_file: prompts/rc_reasoning_prompt.txt
+  summarization_prompt_file: prompts/rc_summarization_prompt.txt
+
+  task_template: |-
+    {task}
+
+  use_think_tags: false
+  model_class: "qwen"
+  reasoning_prompt_style: "structured"
+  summarization_style: "summ"
+
+actor:
+  use_rc_stream: true
+  rc_stream_topic: "rc_actor"
+  rc_stream_samples_per_batch: 1
+  rollout_policy: pipelinerl.domains.math.rollouts.generate_math_rollout
+  system_prompt: null
+  task_template: |-
+    {task}
+
+llm:
+  parameters:
+    max_tokens: 512
+    temperature: 0.8
+
+test_llm:
+  parameters:
+    max_tokens: 512
+    temperature: 0.8
+
+summarization_llm:
+  parameters:
+    max_tokens: 256
+    temperature: 0.7
+
+rc_actor_vllm_config:
+  use_v1: true
+  vllm_kwargs:
+    enforce-eager: ""
+    gpu-memory-utilization: 0.75
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${rc_actor.llm_max_rollouts}
+    max-num-batched-tokens: 2048
+    max-model-len: ${finetune.seq_length}
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+summarization_vllm_config:
+  use_v1: true
+  vllm_kwargs:
+    enforce-eager: ""
+    gpu-memory-utilization: 0.75
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${rc_actor.summarization_max_rollouts}
+    max-num-batched-tokens: 2048
+    max-model-len: ${finetune.seq_length}
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+vllm_config:
+  use_v1: true
+  vllm_kwargs:
+    enforce-eager: ""
+    gpu-memory-utilization: 0.75
+    disable-frontend-multiprocessing: ""
+    max-num-seqs: ${rc_actor.llm_max_rollouts}
+    max-num-batched-tokens: 2048
+    max-model-len: ${finetune.seq_length}
+    return-tokens-as-token-ids: ""
+    tensor-parallel-size: 1
+    pipeline-parallel-size: 1
+    generation-config: vllm
+
+output_dir: ???
+force_restart: false
+pop_old_data: true
+max_lag: null
+attempts: ${rc_actor.attempts}
+train_subset: null
+
+dataset_loader: pipelinerl.domains.math.load_datasets
+train_dataset_names:
+  - gsm8k_test
+test_dataset_names:
+  - gsm8k_test
+
+environment:
+  _target_: pipelinerl.domains.math.MathEnvironment
+
+debug:
+  mode: ""
+  streams_from: null
+  place_inference_workers: true
+  use_existing_llms: false
+
+wandb:
+  use_wandb: false

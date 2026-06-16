@@ -194,7 +194,7 @@ summarization_llm:
 
 # vLLM configuration for RC actor LLMs
 rc_actor_vllm_config:
-  use_v1: false
+  use_v1: true
   vllm_kwargs:
     dtype: bfloat16
     gpu-memory-utilization: 0.85
@@ -212,7 +212,7 @@ rc_actor_vllm_config:
 
 # vLLM configuration for summarization LLMs 
 summarization_vllm_config:
-  use_v1: false
+  use_v1: true
   vllm_kwargs:
     dtype: bfloat16
     gpu-memory-utilization: 0.85
@@ -231,7 +231,7 @@ summarization_vllm_config:
 
 # vLLM configuration for generation/actor LLMs
 vllm_config:
-  use_v1: false
+  use_v1: true
   vllm_kwargs:
     dtype: bfloat16
     gpu-memory-utilization: 0.85
@@ -335,7 +335,7 @@ llm_grader:
     max-num-batched-tokens: 24576
     max-num-seqs: 64
     max-model-len: 49152
-    gpu-memory-utilization: 0.9
+    gpu-memory-utilization: 0.85
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 40960

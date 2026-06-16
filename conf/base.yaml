@@ -50,7 +50,7 @@ llm:
     # changed
     temperature: 0.8
     # 1.0
-  reasoning_delimiters: ["</think>"]
+  reasoning_delimiters: [] #["</think>"]
   wandb_table:
     enabled: true
     keep_last_k_groups: 32
@@ -76,7 +76,7 @@ llm_grader:
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 4096
-  reasoning_delimiters: ["</think>"]
+  reasoning_delimiters: [] #["</think>"]
   prompt_name: v1
   wandb_table:
     enabled: true
@@ -84,12 +84,10 @@ llm_grader:
     log_every_n_groups: 32
 
 vllm_config:
-  use_v1: false
+  use_v1: true
   vllm_kwargs:
     dtype: bfloat16
     gpu-memory-utilization: 0.9
-    num-scheduler-steps: 1
-    disable-log-requests: ""
     disable-frontend-multiprocessing: ""
     max-num-seqs: ${actor.llm_max_rollouts}
     max-num-batched-tokens: 1024
