@@ -25,7 +25,7 @@ START_TIME=$(date +%s)
 echo "START TIME: $(date)"
 
 usage() {
-  echo "Usage: sbatch run_grader.slurm --model MODEL [--data-parallel-size DATA_PARALLEL] [--tensor-parallel-size TENSOR_PARALLEL] [--ray-port PORT] [--vllm-port PORT] [--max-num-batched-tokens TOKENS] [--max-num-seqs SEQS] [--max-model-len TOKENS] [--gpu-memory-utilization FRACTION]" >&2
+  echo "Usage: sbatch run_grader.slurm --model MODEL [--data-parallel-size DATA_PARALLEL] [--tensor-parallel-size TENSOR_PARALLEL] [--ray-port PORT] [--vllm-port PORT] [--max-num-batched-tokens TOKENS] [--max-num-seqs SEQS] [--max-model-len TOKENS] [--gpu-memory-utilization FRACTION] [-- EXTRA_VLLM_ARGS...]" >&2
   exit 1
 }
 
@@ -38,6 +38,7 @@ MAX_NUM_BATCHED_TOKENS=8192
 MAX_NUM_SEQS=16
 MAX_MODEL_LEN=32768
 GPU_MEMORY_UTILIZATION=0.85
+EXTRA_VLLM_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -76,6 +77,11 @@ while [[ $# -gt 0 ]]; do
     --gpu-memory-utilization)
       GPU_MEMORY_UTILIZATION="${2:-}"
       shift 2
+      ;;
+    --)
+      shift
+      EXTRA_VLLM_ARGS=("$@")
+      break
       ;;
     *)
       echo "Unknown option: $1" >&2
@@ -223,6 +229,7 @@ echo "GPU memory utilization: $GPU_MEMORY_UTILIZATION"
 echo "All nodes:"
 echo "$NODES"
 echo "vLLM log: $VLLM_LOG"
+echo "Extra vLLM args: ${#EXTRA_VLLM_ARGS[@]}"
 echo "================================================================"
 
 CLEANED_UP=0
@@ -325,22 +332,32 @@ echo "Server command log: $VLLM_LOG"
 # - we use a large max-num-batched-tokens to improve throughput for long inputs / outputs
 # - setting gpu-memory-utilization to values >0.85 can lead to OOMs
 # TODO: expose more of these as config args.
-vllm serve "$MODEL" \
-  --host 0.0.0.0 \
-  --port $VLLM_PORT \
-  --distributed-executor-backend ray \
-  --data-parallel-backend ray \
-  --data-parallel-address "$HEAD_NODE_IP" \
-  --data-parallel-size $DATA_PARALLEL_SIZE \
-  --data-parallel-size-local $DATA_PARALLEL_PER_NODE \
-  --tensor-parallel-size $TENSOR_PARALLEL_SIZE \
-  --no-enable-prefix-caching \
-  --enable-chunked-prefill \
-  --max-num-batched-tokens $MAX_NUM_BATCHED_TOKENS \
-  --max-num-seqs $MAX_NUM_SEQS \
-  --max-model-len $MAX_MODEL_LEN \
-  --gpu-memory-utilization $GPU_MEMORY_UTILIZATION
-  &> "$VLLM_LOG" &
+VLLM_CMD=(
+  vllm serve "$MODEL"
+  --host 0.0.0.0
+  --port "$VLLM_PORT"
+  --distributed-executor-backend ray
+  --data-parallel-backend ray
+  --data-parallel-address "$HEAD_NODE_IP"
+  --data-parallel-size "$DATA_PARALLEL_SIZE"
+  --data-parallel-size-local "$DATA_PARALLEL_PER_NODE"
+  --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
+  --no-enable-prefix-caching
+  --enable-chunked-prefill
+  --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
+  --max-num-seqs "$MAX_NUM_SEQS"
+  --max-model-len "$MAX_MODEL_LEN"
+  --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
+)
+
+if (( ${#EXTRA_VLLM_ARGS[@]} > 0 )); then
+  VLLM_CMD+=("${EXTRA_VLLM_ARGS[@]}")
+fi
+
+printf -v VLLM_CMD_RENDERED '%q ' "${VLLM_CMD[@]}"
+echo "vLLM command: ${VLLM_CMD_RENDERED}"
+
+"${VLLM_CMD[@]}" &> "$VLLM_LOG" &
 VLLM_PID=$!
 
 echo "vLLM server started (PID: $VLLM_PID). Listening on ${HEAD_NODE_IP}:${VLLM_PORT}."

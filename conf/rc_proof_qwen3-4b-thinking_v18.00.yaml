@@ -335,7 +335,8 @@ llm_grader:
     max-num-batched-tokens: 24576
     max-num-seqs: 64
     max-model-len: 49152
-    gpu-memory-utilization: 0.9
+    gpu-memory-utilization: 0.85
+    api-server-count: 8
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 40960

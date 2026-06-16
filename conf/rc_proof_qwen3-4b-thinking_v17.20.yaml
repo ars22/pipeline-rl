@@ -1,8 +1,8 @@
 # ---------------------
 # Config for:
-#   generation: 3 nodes (5 rc_actor, 1 summarizer, 22 actor)
-#   grader: api (set llm_grader.local to false to run via inference endpoints)
-#   finetuning: 4 cards
+#   generation: 10 nodes (12 rc_actor, 8 summarizer, 60 actor)
+#   grader: 1 node (set llm_grader.local to false to run via inference endpoints)
+#   finetuning: 4 nodes
 # ---------------------
 
 defaults:
@@ -14,8 +14,8 @@ defaults:
 seed: 42
 
 # Main model path for RC actor and regular actor
-model_path: lm-provers/Qwen3-4B-Thinking-2507-Proof
-model_revision: v05.01-step-000100
+model_path: lm-provers/Qwen3-4B-Thinking-2507-SFT-Merges
+model_revision: v08.00-step-000000372_main_linear_weights-0.6-0.4
 
 # Separate model for summarization (optional)
 # If not set or null, uses the same model as RC actor
@@ -27,9 +27,9 @@ n_problems_per_batch: 64
 
 finetune:
   seed: ${seed}
-  attempts: 4
-  train_batch_size: 8
-  valid_batch_size: 8
+  attempts: 16
+  train_batch_size: 32
+  valid_batch_size: 32
   gradient_accumulation_passes: 32
   lr_scheduler_type: constant_with_warmup
   config_name: ${model_path}
@@ -38,14 +38,14 @@ finetune:
   rl:
     entropy_bonus: 0.0001
     final_entropy_bonus: ${finetune.rl.entropy_bonus}
-    overlong_filtering: false
-  seq_length: 53000
+    overlong_filtering: true
+  seq_length: 84072
   seq_parallel: 4
   learning_rate: 1.0e-6
-  save_checkpoint_steps: 10
+  save_checkpoint_steps: 5
   push_to_hub: true
-  hub_model_id: lm-provers/Qwen3-4B-Thinking-2507-Proof-RC
-  hub_model_revision: yuxiao_v07.02
+  hub_model_id: lm-provers/Qwen3-4B-Thinking-2507-Proof
+  hub_model_revision: rc_v17.20
   hub_ignore_patterns:
     - "*.pt"
     - "*.pth"
@@ -53,16 +53,16 @@ finetune:
 # evaluation settings
 eval_only: false # set to true to only evaluate the model with RC actor
 skip_first_eval: true
-eval_every_n_versions: 51200
+eval_every_n_versions: 0 #25600 # evaluate every 25600 / 1024 = 25 steps
 
 # world configuration for a 4 node (32 H100 GPU) setup
 world:
   replicas: 1
   # GPU allocation fractions (must sum to <= 8 per node)
-  rc_actor_fraction: 5  # GPUs for RC actor LLMs
-  summarization_fraction: 1  # Set to >0 to use separate summarization LLMs
-  finetune_fraction: 4
-  actor_fraction: 22    # GPUs for regular actor LLMs
+  rc_actor_fraction: 9  # GPUs for RC actor LLMs
+  summarization_fraction: 6  # Set to >0 to use separate summarization LLMs
+  finetune_fraction: 32
+  actor_fraction: 41    # GPUs for regular actor LLMs
   preprocessor_fraction: 0
 
   env_replicas: 2
@@ -73,10 +73,10 @@ world:
 # RC Actor configuration
 rc_actor:
   log_each_n_secs: 0
-  problem_queue_size: 32
+  problem_queue_size: 16
   result_queue_size: ${rc_actor.problem_queue_size} 
-  llm_max_rollouts: 20  
-  summarization_max_rollouts: 60 # llm_max_rollouts * world.rc_actor_fraction / world.summarization_fraction 
+  llm_max_rollouts: 12  
+  summarization_max_rollouts: 18 # llm_max_rollouts * world.rc_actor_fraction / world.summarization_fraction 
   rollout_workers: 1
   discount_factor: 1
   throughput_window_size: 50
@@ -86,7 +86,7 @@ rc_actor:
   retry_base_delay: 1.0
   
   # RC-specific configuration
-  num_reasoning_steps: 2  # Number of reasoning/summarization cycles
+  num_reasoning_steps: 3  # Number of reasoning/summarization cycles
   attempts: 1  # Number of attempts per problem (for training use 1)
 
   # Solution and summarization rollout policies
@@ -118,7 +118,7 @@ actor:
   log_each_n_secs: 0
   problem_queue_size: ${n_problems_per_batch} 
   result_queue_size: 128  # Increased to prevent blocking when groups complete
-  llm_max_rollouts: 24  
+  llm_max_rollouts: 16
   rollout_workers: 1
   discount_factor: 1
   throughput_window_size: 50
@@ -134,8 +134,6 @@ actor:
   # task template for formatting the problem
   task_template: |-
     {task}
-
-
 preprocess:
   input: actor  # Preprocessor reads from regular actor as before
   output: training_data
@@ -160,7 +158,7 @@ preprocess:
 # LLM parameters for RC actor (solution generation)
 llm:
   parameters:
-    max_tokens: 49152 
+    max_tokens: 79827 
     temperature: 0.8 
   reasoning_delimiters: ["</think>"]
   wandb_table:
@@ -170,7 +168,7 @@ llm:
 
 actor_llm:
   parameters:
-    max_tokens: 49152
+    max_tokens: 79827
     temperature: 0.8
   reasoning_delimiters: ["</think>"]
   wandb_table:
@@ -180,7 +178,7 @@ actor_llm:
 
 test_llm:
   parameters: 
-    max_tokens: 49152
+    max_tokens: 79827
     temperature: 0.8
     top_p: 0.95
     top_k: 20
@@ -278,21 +276,12 @@ dataset_loader: pipelinerl.domains.math.load_datasets
 dataset_loader_params:
   seed: 42
 train_dataset_names:
-  - hub_id: lm-provers/olympiads-proof-schema-cleaned-v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
-    split: train
-  - hub_id: lm-provers/aops_cleaned_v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-gt-0.08
+  - hub_id: lm-provers/aops-olympiads
+    config: sft-merge_v08-0.6-0.4_reward@16_mad-gte-1_no-extremes_reward-lte-0.7
     split: train
 test_dataset_names:
   - hub_id: lm-provers/olympiads-proof-schema-benchmark
     split: IMO2025
-  - hub_id: lm-provers/olympiads-proof-schema-cleaned-v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-lt-0.08
-    split: train
-  - hub_id: lm-provers/aops_cleaned_v2
-    config: qwen3-4b-thinking_reward@128-lt-0.7_std-lt-0.08
-    split: train
 
 
 debug:
@@ -337,23 +326,25 @@ environment:
   prompt_name: ${llm_grader.prompt_name}
   
 llm_grader:
-  local: false # set to false to run via inference endpoints
-  name: openai/gpt-oss-20b # or gpt-oss-120b-twj if running via inference endpoints
-  vllm_kwargs:
-    num_nodes: 1
+  local: true # set to false to run via inference endpoints
+  name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+  vllm_kwargs: # settings from https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16#vllm
+    num_nodes: 2
     data-parallel-size: 8
-    tensor-parallel-size: 1
+    tensor-parallel-size: 2
+    attention-backend: TRITON_ATTN
+    mamba-ssm-cache-dtype: float16
+    trust-remote-code: ""
     max-num-batched-tokens: 24576
     max-num-seqs: 64
-    max-model-len: 98304
+    max-model-len: 49152
     gpu-memory-utilization: 0.85
   sampling_kwargs:
     temperature: 1.0
-    max_output_tokens: 81920
-    reasoning:
-      effort: medium
+    top_p: 0.95
+    max_output_tokens: 40960
   reasoning_delimiters: ["</think>"]
-  prompt_name: v2
+  prompt_name: v1
   wandb_table:
     enabled: true
     keep_last_k_groups: 32

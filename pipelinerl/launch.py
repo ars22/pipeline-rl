@@ -1,4 +1,3 @@
-import atexit
 import logging
 import math
 import os
@@ -6,15 +5,14 @@ import shutil
 import subprocess
 import sys
 import time
-import signal
-import urllib.request
 import re
 from pathlib import Path
-from typing import Any, List, TextIO
+from typing import List, TextIO
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
+from pipelinerl.grader_launch import start_llm_grader
 from pipelinerl.state import TrainerState
 from pipelinerl.streams import SingleStreamSpec, connect_to_redis, read_stream, set_streams_backend, write_to_streams
 from pipelinerl.utils import terminate_with_children
@@ -29,9 +27,6 @@ os.environ["TORCH_DISABLE_SHARE_RDZV_TCP_STORE"] = "1"
 os.environ["HF_DATASETS_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
 os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
-
-_GRADER_JOB_ID: str | None = None
-_GRADER_CLEANUP_REGISTERED = False
 
 def _popen(
     cmd: list[str],
@@ -724,182 +719,6 @@ def setup_logging(log_file: Path):
     root_logger = logging.getLogger()
     root_logger.addHandler(file_handler)
     logger.info("Logging setup complete")
-
-def _cancel_llm_grader_job():
-    global _GRADER_JOB_ID
-    if not _GRADER_JOB_ID:
-        return
-    job_id = _GRADER_JOB_ID
-    try:
-        subprocess.run(["scancel", job_id], capture_output=True, text=True, check=True)
-        logger.info(f"Cancelled local LLM grader Slurm job {job_id}")
-    except subprocess.CalledProcessError as exc:
-        logger.warning(f"Failed to cancel LLM grader job {job_id}: {exc}")
-    finally:
-        _GRADER_JOB_ID = None
-
-
-def _handle_exit_signal(signum, _frame):
-    logger.info(f"Received signal {signum}, cancelling LLM grader job before exit")
-    _cancel_llm_grader_job()
-    sys.exit(128 + signum)
-
-
-def _ensure_grader_cleanup_hooks():
-    global _GRADER_CLEANUP_REGISTERED
-    if _GRADER_CLEANUP_REGISTERED:
-        return
-    atexit.register(_cancel_llm_grader_job)
-    signal.signal(signal.SIGTERM, _handle_exit_signal)
-    signal.signal(signal.SIGINT, _handle_exit_signal)
-    _GRADER_CLEANUP_REGISTERED = True
-
-
-def _wait_for_slurm_nodes(job_id: str, timeout: int = 300, poll_interval: int = 5) -> str:
-    """Poll Slurm until a job is assigned to a node."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        result = subprocess.run(
-            ["squeue", "-j", job_id, "-h", "-o", "%N"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        nodes = result.stdout.strip()
-        if nodes and nodes not in {"(null)", "None"}:
-            return nodes
-        time.sleep(poll_interval)
-    raise TimeoutError(f"Timed out waiting for node assignment for Slurm job {job_id}")
-
-
-def _expand_slurm_node_list(nodes: str) -> list[str]:
-    """Expand a Slurm node-list string into concrete hostnames."""
-    try:
-        result = subprocess.run(
-            ["scontrol", "show", "hostnames", nodes],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"Unable to expand Slurm node list {nodes}: {exc}") from exc
-
-    hostnames = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    if not hostnames:
-        raise RuntimeError(f"Slurm returned no hostnames for node list {nodes}")
-    return hostnames
-
-
-def _wait_for_vllm_health(url: str, retries: int = 60, delay: int = 10, timeout: int = 5) -> None:
-    """Poll the vLLM health endpoint until it responds successfully."""
-    logger.info("Waiting for vLLM server health at %s", url)
-    last_error: Exception | None = None
-    for attempt in range(1, retries + 1):
-        try:
-            with urllib.request.urlopen(url, timeout=timeout) as response:  # nosec B310
-                if 200 <= response.status < 300:
-                    logger.info("vLLM health check succeeded on attempt %s", attempt)
-                    return
-        except Exception as exc:  # noqa: BLE001 - broad catch to keep retrying
-            last_error = exc
-        logger.info(
-            "Health check attempt %s/%s failed; retrying in %ss",
-            attempt,
-            retries,
-            delay,
-        )
-        time.sleep(delay)
-    raise RuntimeError(f"vLLM health check failed after {retries} attempts: {last_error}")
-
-
-def _to_dict(config: Any) -> dict[str, Any]:
-    if config is None:
-        return {}
-    if isinstance(config, DictConfig):
-        return OmegaConf.to_container(config, resolve=True)  # type: ignore[return-value]
-    if isinstance(config, dict):
-        return dict(config)
-    return dict(config)
-
-
-def start_llm_grader(name: str, vllm_kwargs: Any | None = None, namespace: str = "HuggingFaceH4", timeout=900):
-    kwargs = _to_dict(vllm_kwargs)
-    num_nodes = int(kwargs.get("num_nodes", 1))
-    data_parallel_size = int(kwargs.get("data-parallel-size", 1))
-    tensor_parallel_size = int(kwargs.get("tensor-parallel-size", 1))
-    max_num_batched_tokens = kwargs.get("max-num-batched-tokens", 8192)
-    max_num_seqs = kwargs.get("max-num-seqs", 16)
-    max_model_len = kwargs.get("max-model-len", 32768)
-    gpu_memory_util = kwargs.get("gpu-memory-utilization", 0.85)
-    if "/" in name:
-        logger.info(f"Starting local LLM grader {name}...")
-        job_name = None
-        current_job_id = os.environ.get("SLURM_JOB_ID")
-        if current_job_id:
-            job_name = f"{current_job_id}-grader"
-        cmd = [
-            "sbatch",
-            "--parsable",
-            f"--nodes={num_nodes}"
-            ]
-        if job_name:
-            cmd.append(f"--job-name={job_name}")
-        cmd += [
-            "run_grader.slurm",
-            "--model",
-            name,
-            "--data-parallel-size",
-            str(data_parallel_size),
-            "--tensor-parallel-size",
-            str(tensor_parallel_size),
-            "--max-num-batched-tokens",
-            str(max_num_batched_tokens),
-            "--max-num-seqs",
-            str(max_num_seqs),
-            "--max-model-len",
-            str(max_model_len),
-            "--gpu-memory-utilization",
-            str(gpu_memory_util),
-        ]
-        submission = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        job_id = submission.stdout.strip().split(";")[0]
-        if not job_id:
-            raise RuntimeError("sbatch did not return a job id for the LLM grader submission")
-        logger.info(f"Submitted local LLM grader with Slurm job ID: {job_id}")
-        global _GRADER_JOB_ID
-        _GRADER_JOB_ID = job_id
-        _ensure_grader_cleanup_hooks()
-        nodes = _wait_for_slurm_nodes(job_id, timeout=timeout)
-        node_candidates = _expand_slurm_node_list(nodes)
-        if not node_candidates:
-            raise RuntimeError(f"Unable to determine head node from Slurm node list: {nodes}")
-        node = node_candidates[0]
-        os.environ["OPENAI_BASE_URL"] = f"http://{node}:8000/v1"
-        os.environ["OPENAI_API_KEY"] = "grader"
-        health_url = f"http://{node}:8000/health"
-        health_retries = int(os.environ.get("HEALTH_CHECK_RETRIES", "90"))
-        health_delay = int(os.environ.get("HEALTH_CHECK_DELAY", "10"))
-        _wait_for_vllm_health(health_url, retries=health_retries, delay=health_delay)
-        logger.info(
-            "LLM grader job %s scheduled on node(s): %s; OPENAI_BASE_URL=%s",
-            job_id,
-            nodes,
-            os.environ["OPENAI_BASE_URL"],
-        )
-    else:
-        from huggingface_hub import get_inference_endpoint, get_token
-        endpoint = get_inference_endpoint(name=name, namespace=namespace)
-        if endpoint.status == "running":
-            logger.info(f"LLM grader endpoint {name} is already running at URL: {endpoint.url}")
-        else:
-            logger.info(f"Waking up Hugging Face endpoint {name}...")
-            endpoint.resume()
-            endpoint.wait(timeout=timeout)
-            logger.info(f"LLM grader endpoint {name} is now running at URL: {endpoint.url}")
-        os.environ["OPENAI_BASE_URL"] = f"{endpoint.url}/v1"
-        os.environ["OPENAI_API_KEY"] = get_token()
-        # The OpenAI client expects the repo name, so we propagate it as well
-        os.environ["HF_ENDPOINT_REPO"] = endpoint.repository
 
 
 @hydra.main(

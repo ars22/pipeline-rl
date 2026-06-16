@@ -199,7 +199,7 @@ rc_actor_vllm_config:
   use_v1: false
   vllm_kwargs:
     dtype: bfloat16
-    gpu-memory-utilization: 0.9
+    gpu-memory-utilization: 0.85
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
@@ -217,7 +217,7 @@ summarization_vllm_config:
   use_v1: false
   vllm_kwargs:
     dtype: bfloat16
-    gpu-memory-utilization: 0.9
+    gpu-memory-utilization: 0.85
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
@@ -236,7 +236,7 @@ vllm_config:
   use_v1: false
   vllm_kwargs:
     dtype: bfloat16
-    gpu-memory-utilization: 0.9
+    gpu-memory-utilization: 0.85
     num-scheduler-steps: 1
     disable-log-requests: ""
     disable-frontend-multiprocessing: ""
@@ -347,7 +347,7 @@ llm_grader:
     max-num-batched-tokens: 24576
     max-num-seqs: 64
     max-model-len: 98304
-    gpu-memory-utilization: 0.9
+    gpu-memory-utilization: 0.85
   sampling_kwargs:
     temperature: 1.0
     max_output_tokens: 81920
